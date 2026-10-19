@@ -12,8 +12,9 @@ add_executable(roadmap_unit_tests
   unit/test_filter.cpp
   unit/test_property.cpp
   unit/test_jira_check.cpp
+  unit/test_controller.cpp
 )
-target_link_libraries(roadmap_unit_tests PRIVATE roadmap_core roadmap_test_main)
+target_link_libraries(roadmap_unit_tests PRIVATE roadmap_core roadmap_controller roadmap_test_main)
 target_compile_definitions(roadmap_unit_tests PRIVATE ROADMAP_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/golden")
 roadmap_set_warnings(roadmap_unit_tests)
 add_test(NAME unit COMMAND roadmap_unit_tests)
@@ -32,17 +33,17 @@ function(roadmap_cli_golden name expect)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/golden/cli_compare.cmake)
 endfunction()
 foreach(s regulation_roadmap hierarchy_demo leveling_demo)
-  roadmap_cli_golden(${s}_base ${s}.base.json schedule samples/${s}.csv)
-  roadmap_cli_golden(${s}_level1 ${s}.level1.json schedule samples/${s}.csv --level 1)
-  roadmap_cli_golden(${s}_level2 ${s}.level2.json schedule samples/${s}.csv --level 2)
+  roadmap_cli_golden(${s}_base ${s}.base.json schedule samples/${s}.csv --base 2026-10-19)
+  roadmap_cli_golden(${s}_level1 ${s}.level1.json schedule samples/${s}.csv --base 2026-10-19 --level 1)
+  roadmap_cli_golden(${s}_level2 ${s}.level2.json schedule samples/${s}.csv --base 2026-10-19 --level 2)
   roadmap_cli_golden(${s}_base_1102 ${s}.base_1102.json schedule samples/${s}.csv --base 2026-11-02)
   roadmap_cli_golden(${s}_roundtrip ${s}.roundtrip.csv import-export samples/${s}.csv)
-  roadmap_cli_golden(${s}_jira ${s}.jira.csv import-export samples/${s}.csv --format jira)
+  roadmap_cli_golden(${s}_jira ${s}.jira.csv import-export samples/${s}.csv --format jira --base 2026-10-19)
 endforeach()
-roadmap_cli_golden(regulation_roadmap_scn_nb regulation_roadmap.scn_nb.json schedule samples/regulation_roadmap.csv --scenario "第三者(NB)")
+roadmap_cli_golden(regulation_roadmap_scn_nb regulation_roadmap.scn_nb.json schedule samples/regulation_roadmap.csv --base 2026-10-19 --scenario "第三者(NB)")
 add_test(NAME cli_check_jira COMMAND rmcli check-jira --raw ${PROJECT_SOURCE_DIR}/golden/regulation_roadmap.jira.csv
   ${PROJECT_SOURCE_DIR}/golden/hierarchy_demo.jira.csv ${PROJECT_SOURCE_DIR}/golden/leveling_demo.jira.csv)
-add_test(NAME cli_check_jira_samples COMMAND rmcli check-jira ${PROJECT_SOURCE_DIR}/golden/samples/regulation_roadmap.csv
+add_test(NAME cli_check_jira_samples COMMAND rmcli check-jira --base 2026-10-19 ${PROJECT_SOURCE_DIR}/golden/samples/regulation_roadmap.csv
   ${PROJECT_SOURCE_DIR}/golden/samples/hierarchy_demo.csv ${PROJECT_SOURCE_DIR}/golden/samples/leveling_demo.csv)
 add_test(NAME cli_help COMMAND rmcli --help)
 add_test(NAME cli_bad_input COMMAND rmcli validate ${PROJECT_SOURCE_DIR}/README.md)

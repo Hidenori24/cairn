@@ -20,8 +20,8 @@
 #include "roadmap/filestore.hpp"
 #include "roadmap/gen.hpp"
 #include "roadmap/jira_check.hpp"
+#include "roadmap/clock.hpp"
 #include "roadmap/project_io.hpp"
-#include "roadmap/samples.hpp"
 #include "roadmap/store.hpp"
 #include "roadmap/schedule.hpp"
 
@@ -114,7 +114,7 @@ Loaded load(const Args& a, const std::string& path) {
     L.defaultHolidays = false;
   }
   L.cal = Calendar::fromText(hol);
-  const std::string base = a.get("base", samples::kSampleBase);
+  const std::string base = a.get("base", SystemClock().todayIso());
   auto b = parseIso(base);
   if (!b) throw InputError("--base は YYYY-MM-DD で指定してください: " + base);
   L.opt.base = *b;
@@ -134,7 +134,7 @@ const char* const kHelpSchedule =
     "使い方: rmcli schedule <CSV> [--base YYYY-MM-DD] [--scenario 名前] [--level 同時件数]\n"
     "                       [--holidays 休業日ファイル] [-o 出力.json]\n"
     "  CSV を取り込んでスケジュールを計算し、golden と同じ形式の JSON を出します。\n"
-    "  --base     基準日（既定 2026-10-19）\n"
+    "  --base     基準日（既定は今日）\n"
     "  --scenario シナリオ名（既定「標準」）\n"
     "  --level    担当者ごとの同時作業の制限をオンにし、同時に持てる件数を指定\n"
     "  --holidays 休業日（1行に1日）。省略時は既定の33日\n";

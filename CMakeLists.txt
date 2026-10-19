@@ -22,17 +22,21 @@ if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
+if(ROADMAP_BUILD_TESTS OR ROADMAP_UI_TESTS)
+  enable_testing()
+endif()
+
 include(cmake/Warnings.cmake)
 include(cmake/Dependencies.cmake)
 
 add_subdirectory(core)
 add_subdirectory(cli)
+add_subdirectory(app/controller)
 
 if(ROADMAP_BUILD_APP OR ROADMAP_UI_TESTS)
   add_subdirectory(app)
 endif()
 
 if(ROADMAP_BUILD_TESTS)
-  enable_testing()
   add_subdirectory(tests)
 endif()

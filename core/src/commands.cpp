@@ -107,13 +107,27 @@ bool Session::mutate(const std::function<void(ProjectData&)>& fn, const std::fun
     ++version_;
     return false;
   }
-  if (!(snapshot() == snap)) {
+  if (batchDepth_ == 0 && !(snapshot() == snap)) {
     undo_.push_back(std::move(snap));
     if (undo_.size() > kUndoMax) undo_.pop_front();
     redo_.clear();
   }
   persist();
   return true;
+}
+
+void Session::beginBatch() {
+  if (batchDepth_++ == 0) batchSnap_ = snapshot();
+}
+
+void Session::endBatch() {
+  if (batchDepth_ == 0 || --batchDepth_ > 0) return;
+  if (batchSnap_ && !(snapshot() == *batchSnap_)) {
+    undo_.push_back(std::move(*batchSnap_));
+    if (undo_.size() > kUndoMax) undo_.pop_front();
+    redo_.clear();
+  }
+  batchSnap_.reset();
 }
 
 bool Session::undo() {
@@ -159,7 +173,7 @@ Issue Session::newIssue(const std::string& parentId, const std::string& name) co
   return o;
 }
 
-void Session::setCollapsed(const std::string& id, bool c) {
+void Session::setCollapsed(std::string id, bool c) {
   Json& ui = P_.settings.ui;
   if (!ui.contains("collapsed") || !ui["collapsed"].is_object()) ui["collapsed"] = Json::object();
   ui["collapsed"][id] = c;
@@ -175,7 +189,7 @@ bool Session::isCollapsed(const std::string& id) const {
 
 void Session::touchUi() { persist(); }
 
-std::string Session::addIssue(const std::string& parentId, const std::string& afterId, const std::string& name) {
+std::string Session::addIssue(std::string parentId, std::string afterId, std::string name) {
   Issue o = newIssue(parentId, name);
   const std::string id = o.id;
   const bool ok = mutate([&](ProjectData& P) {
@@ -220,7 +234,7 @@ std::vector<std::string> Session::siblings(const std::string& id) const {
   return out;
 }
 
-bool Session::deleteIssues(const std::vector<std::string>& ids) {
+bool Session::deleteIssues(std::vector<std::string> ids) {
   std::unordered_set<std::string> gone;
   for (const auto& id : ids) {
     gone.insert(id);
@@ -241,7 +255,7 @@ bool Session::deleteIssues(const std::vector<std::string>& ids) {
   return ok;
 }
 
-bool Session::moveIssue(const std::string& id, int dir) {
+bool Session::moveIssue(std::string id, int dir) {
   const auto sb = siblings(id);
   const auto it = std::find(sb.begin(), sb.end(), id);
   if (it == sb.end()) return false;
@@ -255,7 +269,7 @@ bool Session::moveIssue(const std::string& id, int dir) {
   });
 }
 
-bool Session::reparent(const std::string& id, const std::string& newParent) {
+bool Session::reparent(std::string id, std::string newParent) {
   if (!issue(id)) return false;
   return mutate([&](ProjectData& P) {
     const auto idx = indexOf(P.issues, id);
@@ -267,14 +281,14 @@ bool Session::reparent(const std::string& id, const std::string& newParent) {
   });
 }
 
-bool Session::indent(const std::string& id) {
+bool Session::indent(std::string id) {
   const auto sb = siblings(id);
   const auto it = std::find(sb.begin(), sb.end(), id);
   if (it == sb.end() || it == sb.begin()) return false;
   return reparent(id, *(it - 1));
 }
 
-bool Session::outdent(const std::string& id) {
+bool Session::outdent(std::string id) {
   if (!comp_) return false;
   const Tree& T = comp_->T;
   const int i = T.find(id);
@@ -292,7 +306,7 @@ bool Session::outdent(const std::string& id) {
   });
 }
 
-bool Session::relocate(const std::string& id, const std::string& target, RelocateWhere where) {
+bool Session::relocate(std::string id, std::string target, RelocateWhere where) {
   if (id == target || !issue(id) || !issue(target)) return false;
   const auto ds = descendantsOf(id);
   if (std::find(ds.begin(), ds.end(), target) != ds.end()) return false;
@@ -313,12 +327,12 @@ bool Session::relocate(const std::string& id, const std::string& target, Relocat
   });
 }
 
-bool Session::setField(const std::string& id, const std::function<void(Issue&)>& fn) {
+bool Session::setField(std::string id, const std::function<void(Issue&)>& fn) {
   if (!issue(id)) return false;
   return mutate([&](ProjectData& P) { fn(P.issues[indexOf(P.issues, id)]); });
 }
 
-bool Session::setStatus(const std::string& id, const std::string& st) {
+bool Session::setStatus(std::string id, std::string st) {
   if (!issue(id)) return false;
   const Day v = std::min(todayDay(), baseDay());
   return mutate([&](ProjectData& P) {
@@ -330,7 +344,7 @@ bool Session::setStatus(const std::string& id, const std::string& st) {
   });
 }
 
-bool Session::setTag(const std::string& id, const std::string& tagIn) {
+bool Session::setTag(std::string id, std::string tagIn) {
   const Issue* cur = issue(id);
   if (!cur || !comp_) return false;
   std::string tag;
@@ -353,7 +367,7 @@ bool Session::setTag(const std::string& id, const std::string& tagIn) {
   });
 }
 
-bool Session::setName(const std::string& id, const std::string& name) {
+bool Session::setName(std::string id, std::string name) {
   if (!issue(id)) return false;
   return mutate([&](ProjectData& P) {
     Issue& o = P.issues[indexOf(P.issues, id)];
@@ -362,7 +376,7 @@ bool Session::setName(const std::string& id, const std::string& name) {
   });
 }
 
-bool Session::setDuration(const std::string& id, double w) {
+bool Session::setDuration(std::string id, double w) {
   if (!issue(id)) return false;
   return mutate([&](ProjectData& P) {
     Issue& o = P.issues[indexOf(P.issues, id)];
@@ -371,12 +385,12 @@ bool Session::setDuration(const std::string& id, double w) {
   });
 }
 
-bool Session::removeScenarioValue(const std::string& id) {
+bool Session::removeScenarioValue(std::string id) {
   if (!issue(id)) return false;
   return mutate([&](ProjectData& P) { P.issues[indexOf(P.issues, id)].alt.erase(P.settings.scenario); });
 }
 
-bool Session::setEarliest(const std::string& id, OptDay day) {
+bool Session::setEarliest(std::string id, OptDay day) {
   if (!issue(id)) return false;
   return mutate([&](ProjectData& P) { P.issues[indexOf(P.issues, id)].notBefore = day; },
                 [&](Session& s) {
@@ -388,7 +402,7 @@ bool Session::setEarliest(const std::string& id, OptDay day) {
                 });
 }
 
-bool Session::setDeadline(const std::string& id, OptDay day) {
+bool Session::setDeadline(std::string id, OptDay day) {
   if (!issue(id)) return false;
   std::vector<std::pair<std::string, OptDay>> own;
   if (!P_.meta.hasDeadlineCol && comp_)
@@ -404,7 +418,7 @@ bool Session::setDeadline(const std::string& id, OptDay day) {
   });
 }
 
-bool Session::addLink(const std::string& from, const std::string& to) {
+bool Session::addLink(std::string from, std::string to) {
   if (from == to) {
     notify("自分自身には依存できません");
     return false;
@@ -418,7 +432,7 @@ bool Session::addLink(const std::string& from, const std::string& to) {
   return mutate([&](ProjectData& P) { P.issues[indexOf(P.issues, from)].blocks.push_back(to); });
 }
 
-bool Session::removeLink(const std::string& from, const std::string& to) {
+bool Session::removeLink(std::string from, std::string to) {
   if (!issue(from)) return false;
   return mutate([&](ProjectData& P) {
     auto& b = P.issues[indexOf(P.issues, from)].blocks;
@@ -426,7 +440,7 @@ bool Session::removeLink(const std::string& from, const std::string& to) {
   });
 }
 
-bool Session::addComment(const std::string& id, const std::string& textIn, const std::string& whoIn) {
+bool Session::addComment(std::string id, std::string textIn, std::string whoIn) {
   const std::string t = text::trim(textIn);
   if (t.empty() || !issue(id)) return false;
   const std::string who = text::replaceAll(whoIn.empty() ? "自分" : whoIn, ";", "；");
@@ -434,7 +448,7 @@ bool Session::addComment(const std::string& id, const std::string& textIn, const
   return mutate([&](ProjectData& P) { P.issues[indexOf(P.issues, id)].comments.push_back({at, who, t}); });
 }
 
-bool Session::delComment(const std::string& id, std::size_t index) {
+bool Session::delComment(std::string id, std::size_t index) {
   const Issue* o = issue(id);
   if (!o || index >= o->comments.size()) return false;
   return mutate([&](ProjectData& P) {
@@ -443,7 +457,7 @@ bool Session::delComment(const std::string& id, std::size_t index) {
   });
 }
 
-bool Session::bulk(const std::vector<std::string>& ids, const std::function<void(Issue&)>& fn) {
+bool Session::bulk(std::vector<std::string> ids, const std::function<void(Issue&)>& fn) {
   return mutate([&](ProjectData& P) {
     for (const auto& id : ids) {
       const auto i = indexOf(P.issues, id);
@@ -452,7 +466,7 @@ bool Session::bulk(const std::vector<std::string>& ids, const std::function<void
   });
 }
 
-int Session::applyTemplate(const std::vector<std::string>& parentIds, const Template& tpl) {
+int Session::applyTemplate(std::vector<std::string> parentIds, const Template& tpl) {
   if (tpl.items.empty() || parentIds.empty() || !comp_) return 0;
   int made = 0;
   const Tree T = comp_->T;  // 編集前のツリー（JS版と同じく、配下の数・表示名はここから）

@@ -60,31 +60,34 @@ class Session {
   bool undo();
   bool redo();
   void clearHistory();
+  // 複数の操作を Undo 1回にまとめる（入れ子可）
+  void beginBatch();
+  void endBatch();
   std::size_t undoSize() const { return undo_.size(); }
   static constexpr std::size_t kUndoMax = 100;
 
   // ---- 課題の操作（すべて mutate を通る）----
-  std::string addIssue(const std::string& parentId, const std::string& afterId, const std::string& name = "");
-  bool deleteIssues(const std::vector<std::string>& ids);
-  bool moveIssue(const std::string& id, int dir);
-  bool reparent(const std::string& id, const std::string& newParent);
-  bool indent(const std::string& id);
-  bool outdent(const std::string& id);
-  bool relocate(const std::string& id, const std::string& target, RelocateWhere where);
-  bool setField(const std::string& id, const std::function<void(Issue&)>& fn);
-  bool setStatus(const std::string& id, const std::string& st);
-  bool setTag(const std::string& id, const std::string& tag);
-  bool setName(const std::string& id, const std::string& name);
-  bool setDuration(const std::string& id, double w);
-  bool removeScenarioValue(const std::string& id);
-  bool setEarliest(const std::string& id, OptDay day);
-  bool setDeadline(const std::string& id, OptDay day);
-  bool addLink(const std::string& from, const std::string& to);
-  bool removeLink(const std::string& from, const std::string& to);
-  bool addComment(const std::string& id, const std::string& text, const std::string& who);
-  bool delComment(const std::string& id, std::size_t index);
-  bool bulk(const std::vector<std::string>& ids, const std::function<void(Issue&)>& fn);
-  int applyTemplate(const std::vector<std::string>& parentIds, const Template& tpl);
+  std::string addIssue(std::string parentId, std::string afterId, std::string name = "");
+  bool deleteIssues(std::vector<std::string> ids);
+  bool moveIssue(std::string id, int dir);
+  bool reparent(std::string id, std::string newParent);
+  bool indent(std::string id);
+  bool outdent(std::string id);
+  bool relocate(std::string id, std::string target, RelocateWhere where);
+  bool setField(std::string id, const std::function<void(Issue&)>& fn);
+  bool setStatus(std::string id, std::string st);
+  bool setTag(std::string id, std::string tag);
+  bool setName(std::string id, std::string name);
+  bool setDuration(std::string id, double w);
+  bool removeScenarioValue(std::string id);
+  bool setEarliest(std::string id, OptDay day);
+  bool setDeadline(std::string id, OptDay day);
+  bool addLink(std::string from, std::string to);
+  bool removeLink(std::string from, std::string to);
+  bool addComment(std::string id, std::string text, std::string who);
+  bool delComment(std::string id, std::size_t index);
+  bool bulk(std::vector<std::string> ids, const std::function<void(Issue&)>& fn);
+  int applyTemplate(std::vector<std::string> parentIds, const Template& tpl);
 
   // ---- 設定の変更（取り消しの対象外。保存はする）----
   void setBaseDate(const std::string& iso);
@@ -95,7 +98,7 @@ class Session {
   void setNameKey(const std::string& name, const std::string& key);
   Json& ui() { return P_.settings.ui; }
   void touchUi();  // ui を書き換えたら呼ぶ（保存の予約）
-  void setCollapsed(const std::string& id, bool collapsed);
+  void setCollapsed(std::string id, bool collapsed);
   bool isCollapsed(const std::string& id) const;
   // 置き換えの取り込み（Undo で戻せる）
   void replaceIssues(std::vector<Issue> issues, ProjectMeta meta, std::vector<std::string> warns);
@@ -136,6 +139,8 @@ class Session {
   std::vector<Snapshot> redo_;
   std::vector<Notice> notices_;
   std::uint64_t version_ = 0;
+  int batchDepth_ = 0;
+  std::optional<Snapshot> batchSnap_;
 };
 
 // 日本語を意識した簡易照合（カタカナをひらがなに寄せてからコードポイント順。SPEC 14-2）
