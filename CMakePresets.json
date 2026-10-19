@@ -1,0 +1,52 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base", "hidden": true, "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}"
+    },
+    {
+      "name": "windows-release", "inherits": "base", "displayName": "Windows / MSVC / Release（exe）",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "ROADMAP_BUILD_APP": "ON", "ROADMAP_WERROR": "ON" }
+    },
+    {
+      "name": "windows-debug", "inherits": "base", "displayName": "Windows / MSVC / Debug",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "ROADMAP_BUILD_APP": "ON" }
+    },
+    {
+      "name": "linux-release", "inherits": "base", "displayName": "Linux / core+cli / Release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "ROADMAP_BUILD_APP": "OFF", "ROADMAP_WERROR": "ON" }
+    },
+    {
+      "name": "linux-asan", "inherits": "base", "displayName": "Linux / core+cli / ASan+UBSan",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "ROADMAP_BUILD_APP": "OFF", "ROADMAP_WERROR": "ON", "ROADMAP_SANITIZE": "ON" }
+    },
+    {
+      "name": "linux-ui", "inherits": "base", "displayName": "Linux / UIの煙テスト（ImGuiヘッドレス）",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "ROADMAP_BUILD_APP": "OFF", "ROADMAP_UI_TESTS": "ON" }
+    },
+    {
+      "name": "mingw-cross", "inherits": "base", "displayName": "Linux → Windows クロスビルド（MinGW-w64。コンパイル確認用）",
+      "toolchainFile": "${sourceDir}/cmake/mingw-w64.cmake",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "ROADMAP_BUILD_APP": "ON", "ROADMAP_BUILD_TESTS": "OFF" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-release", "configurePreset": "windows-release" },
+    { "name": "windows-debug", "configurePreset": "windows-debug" },
+    { "name": "linux-release", "configurePreset": "linux-release" },
+    { "name": "linux-asan", "configurePreset": "linux-asan" },
+    { "name": "linux-ui", "configurePreset": "linux-ui" },
+    { "name": "mingw-cross", "configurePreset": "mingw-cross" }
+  ],
+  "testPresets": [
+    { "name": "windows-release", "configurePreset": "windows-release", "output": { "outputOnFailure": true } },
+    { "name": "windows-debug", "configurePreset": "windows-debug", "output": { "outputOnFailure": true } },
+    { "name": "linux-release", "configurePreset": "linux-release", "output": { "outputOnFailure": true } },
+    { "name": "linux-asan", "configurePreset": "linux-asan", "output": { "outputOnFailure": true } },
+    { "name": "linux-ui", "configurePreset": "linux-ui", "output": { "outputOnFailure": true } }
+  ]
+}
