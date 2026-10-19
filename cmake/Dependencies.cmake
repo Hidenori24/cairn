@@ -3,6 +3,12 @@
 # ネットワークのない環境では -DFETCHCONTENT_SOURCE_DIR_<NAME>=<展開済みのソース> で差し替えられる。
 include(FetchContent)
 
+# doctest v2.4.11 の CMakeLists は cmake_minimum_required(VERSION 3.0) で、CMake 4 は 3.5 未満の互換を
+# 削除したため構成に失敗する（GitHub Actions の windows-latest）。依存の構成だけ 3.5 の互換として扱う。
+if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+endif()
+
 FetchContent_Declare(nlohmann_json
   GIT_REPOSITORY https://github.com/nlohmann/json.git
   GIT_TAG v3.11.3
