@@ -1,0 +1,8 @@
+Issue Id,Issue Type,Summary,Parent,Priority,Status,Assignee,Start date,Due date,Labels,Description,Outward issue link (Blocks),Deadline,Duration (weeks)
+1,Epic,資源制約デモ,,Medium,,,,,デモ,同じ担当者の作業が重なるとき、工数制約オンで後ろにずれることを確かめる,,2026-12-25,
+2,Task,[A-1] 設計,1,High,To Do,田中,,,デモ,,5,,2
+3,Task,[A-2] 実装X,1,High,To Do,田中,,,デモ,,5,,2
+4,Task,[A-3] 実装Y,1,Medium,To Do,田中,,,デモ,,5,,2
+5,Task,[A-4] 結合テスト,1,Medium,To Do,佐藤,,,デモ,,6,,1
+6,Task,[A-5] 別件（担当なし）,1,Low,To Do,,,,デモ,,6,,3
+7,Milestone,[M-1] リリース,1,Highest,To Do,,,,デモ,,,2026-12-25,0

@@ -1,0 +1,23 @@
+Issue Id,Issue key,Issue Type,Summary,Parent,Epic Name,Epic Link,Priority,Status,Assignee,Start date,Due date,Resolved,Original estimate,Labels,Description,Outward issue link (Blocks),Outward issue link (Blocks),Outward issue link (Blocks),Deadline,Remaining (weeks),Duration (weeks)
+1,DEV-1,Epic,セキュアブート対応（組込み機器FW）,,セキュアブート対応（組込み機器FW）,,High,,,,,,,デモ,起動時にファームウェアの署名を検証する仕組みを入れる。Epicに置いた期限は配下すべての課題に効く。,,,,2027-03-12,,
+2,DEV-2,Story,署名検証の方式設計,1,,セキュアブート対応（組込み機器FW）,High,,田中,,,,,デモ,,,,,,,
+3,DEV-3,Task,鍵管理方式の決定,2,,,High,,田中,,,,,デモ,配下の「子」「孫」「ひ孫」「玄孫」までが終わってから、後続（実装）が始まる。親に付けた依存関係は配下の全作業に効く。,12,13,16,,,
+4,DEV-4,Sub-task,要件の整理,3,,,Medium,Done,田中,2026-10-05,,2026-10-09,,デモ,完了済み。実績の日付に固定され、余裕の集計から外れる。,5,,,,,1
+5,DEV-5,Sub-task,方式の比較,3,,,High,,佐藤,,,,,デモ,さらに下の階層（玄孫）を持つ。,8,,,,,
+6,DEV-6,Sub-sub-task,候補の洗い出し,5,,,Medium,In Progress,佐藤,2026-10-12,,,,デモ,進行中。開始日と残り週数で、これからの作業量を反映する。,7,,,,0.4,1
+7,DEV-7,Sub-sub-task,評価（性能・コスト）,5,,,Medium,,佐藤,,,,,デモ,,,,,,,2
+8,DEV-8,Sub-task,決定とレビュー,3,,,High,,田中,,,,,デモ,,,,,,,1
+9,DEV-9,Task,署名フォーマットの定義,2,,,High,,田中,,,,,デモ,,11,,,,,2
+10,DEV-10,Story,ブートローダ改修,1,,セキュアブート対応（組込み機器FW）,High,,,,,,,デモ,,,,,,,
+11,DEV-11,Task,検証処理の実装,10,,,High,,鈴木,,,,,デモ,,17,19,,,,
+12,DEV-12,Sub-task,署名検証ライブラリの組み込み,11,,,High,,鈴木,,,,,デモ,,14,,,,,3
+13,DEV-13,Sub-task,鍵ストア領域の追加,11,,,Medium,,鈴木,,,,,デモ,,14,,,,,2
+14,DEV-14,Sub-task,単体テスト,11,,,Medium,,鈴木,,,,,デモ,,,,,,,2
+15,DEV-15,Task,起動シーケンスの変更,10,,,High,,佐藤,,,,,デモ,,19,,,,,
+16,DEV-16,Sub-task,失敗時の挙動の設計,15,,,Medium,,佐藤,,,,,デモ,,17,,,,,1
+17,DEV-17,Sub-task,実装,15,,,High,,佐藤,,,,,デモ,,,,,,,3
+18,DEV-18,Story,検証・リリース,1,,セキュアブート対応（組込み機器FW）,High,,,,,,,デモ,,,,,,,
+19,DEV-19,Task,結合テスト,18,,,High,,鈴木,,,,,デモ,,20,,,,,4
+20,DEV-20,Task,第三者レビュー・脆弱性診断,18,,,Medium,,田中,,,,,デモ,,21,,,,,3
+21,DEV-21,Milestone,量産リリース判定,18,,,High,,,,,,,デモ,期間0週のマイルストーン。,,,,,,0
+22,DEV-22,Task,社内への周知（親を持たない単独の課題）,,,,Low,,鈴木,,,,,デモ,どの親にも属さない単独の課題。,,,,2026-12-18,,1

@@ -1,0 +1,9 @@
+/build/
+/out/
+/.vs/
+/.vscode/
+CMakeUserPresets.json
+/data/
+compile_commands.json
+*.user
+reference-js/tools/node_modules/

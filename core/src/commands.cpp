@@ -1,0 +1,660 @@
+#include "roadmap/commands.hpp"
+
+#include <algorithm>
+#include <unordered_set>
+
+#include "roadmap/text.hpp"
+
+namespace roadmap {
+
+namespace {
+const SystemClock& systemClock() {
+  static const SystemClock c;
+  return c;
+}
+
+void eraseId(std::vector<Issue>& v, std::size_t idx) { v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); }
+
+std::ptrdiff_t indexOf(const std::vector<Issue>& v, const std::string& id) {
+  for (std::size_t i = 0; i < v.size(); ++i)
+    if (v[i].id == id) return static_cast<std::ptrdiff_t>(i);
+  return -1;
+}
+
+// afterId の配下の最後の後ろの位置
+std::size_t afterSubtree(const std::vector<Issue>& v, std::ptrdiff_t i, const std::string& rootId) {
+  std::size_t j = static_cast<std::size_t>(i + 1);
+  std::unordered_set<std::string> sub{rootId};
+  while (j < v.size() && sub.count(v[j].parent)) {
+    sub.insert(v[j].id);
+    ++j;
+  }
+  return j;
+}
+}  // namespace
+
+Session::Session(ProjectData data, const IClock* clock, std::vector<std::string> loadWarns)
+    : P_(std::move(data)), clock_(clock ? clock : &systemClock()), loadWarns_(std::move(loadWarns)) {
+  if (!P_.settings.ui.is_object()) P_.settings.ui = Json::object();
+  rebuild();
+}
+
+Day Session::baseDay() const {
+  if (auto d = parseIso(P_.settings.baseDate)) return *d;
+  if (auto d = csv::parseDate(P_.settings.baseDate)) return *d;
+  return clock_->today();
+}
+
+int Session::find(const std::string& id) const {
+  if (!comp_) {
+    const auto i = indexOf(P_.issues, id);
+    return static_cast<int>(i);
+  }
+  return comp_->T.find(id);
+}
+
+const Issue* Session::issue(const std::string& id) const {
+  const int i = find(id);
+  return i < 0 ? nullptr : &P_.issues[i];
+}
+
+std::vector<Notice> Session::takeNotices() {
+  std::vector<Notice> out;
+  out.swap(notices_);
+  return out;
+}
+void Session::notify(std::string t, NoticeAction a) { notices_.push_back({std::move(t), a}); }
+
+std::optional<std::string> Session::rebuild() {
+  cal_ = Calendar::fromText(P_.settings.holidays);
+  auto t = buildTree(P_.issues, P_.meta);
+  if (comp_) retired_.push_back(comp_);
+  if (retired_.size() > 64) retired_.erase(retired_.begin());  // releaseFrame が呼ばれない使い方でも増えすぎないように
+  if (!t) {
+    comp_.reset();
+    error_ = t.error();
+    return error_;
+  }
+  error_.clear();
+  const auto& sc = t->scenarios;
+  if (std::find(sc.begin(), sc.end(), P_.settings.scenario) == sc.end()) P_.settings.scenario = kStdScenario;
+  ScheduleOptions o;
+  o.base = baseDay();
+  o.scenario = P_.settings.scenario;
+  o.resource = P_.settings.resource;
+  auto c = std::make_shared<Computed>();
+  c->T = std::move(t).value();
+  c->R = computeSchedule(c->T, P_.issues, cal_, o);
+  c->issues = P_.issues;
+  comp_ = std::move(c);
+  return std::nullopt;
+}
+
+void Session::restore(Snapshot s) {
+  P_.issues = std::move(s.issues);
+  P_.meta = std::move(s.meta);
+  P_.settings.scenario = std::move(s.scn);
+}
+
+bool Session::mutate(const std::function<void(ProjectData&)>& fn, const std::function<void(Session&)>& post) {
+  Snapshot snap = snapshot();
+  fn(P_);
+  auto err = rebuild();
+  if (!err && post) {
+    post(*this);
+    err = rebuild();
+  }
+  if (err) {
+    restore(snap);
+    rebuild();
+    notify("その編集はできません: " + *err);
+    ++version_;
+    return false;
+  }
+  if (batchDepth_ == 0 && !(snapshot() == snap)) {
+    undo_.push_back(std::move(snap));
+    if (undo_.size() > kUndoMax) undo_.pop_front();
+    redo_.clear();
+  }
+  persist();
+  return true;
+}
+
+void Session::beginBatch() {
+  if (batchDepth_++ == 0) batchSnap_ = snapshot();
+}
+
+void Session::endBatch() {
+  if (batchDepth_ == 0 || --batchDepth_ > 0) return;
+  if (batchSnap_ && !(snapshot() == *batchSnap_)) {
+    undo_.push_back(std::move(*batchSnap_));
+    if (undo_.size() > kUndoMax) undo_.pop_front();
+    redo_.clear();
+  }
+  batchSnap_.reset();
+}
+
+bool Session::undo() {
+  if (undo_.empty()) return false;
+  redo_.push_back(snapshot());
+  restore(std::move(undo_.back()));
+  undo_.pop_back();
+  rebuild();
+  persist();
+  return true;
+}
+
+bool Session::redo() {
+  if (redo_.empty()) return false;
+  undo_.push_back(snapshot());
+  restore(std::move(redo_.back()));
+  redo_.pop_back();
+  rebuild();
+  persist();
+  return true;
+}
+
+void Session::clearHistory() {
+  undo_.clear();
+  redo_.clear();
+}
+
+Day Session::todayDay() const { return clock_->today(); }
+std::string Session::nowDT() const { return clock_->nowDT(); }
+
+Issue Session::newIssue(const std::string& parentId, const std::string& name) const {
+  const Issue* p = parentId.empty() ? nullptr : issue(parentId);
+  Issue o;
+  o.id = nextIssueId(P_.issues);
+  o.key = P_.settings.key.empty() ? "" : P_.settings.key + "-" + o.id;
+  o.type = !p ? "Epic" : (isEpic(*p) ? "Task" : "Sub-task");
+  o.summary = name.empty() ? "新しい課題" : name;
+  o.parent = parentId;
+  o.prio = "Medium";
+  o.status = "To Do";
+  o.durW = 1;
+  o.extra.assign(P_.meta.extraHeaders.size(), "");
+  return o;
+}
+
+void Session::setCollapsed(std::string id, bool c) {
+  Json& ui = P_.settings.ui;
+  if (!ui.contains("collapsed") || !ui["collapsed"].is_object()) ui["collapsed"] = Json::object();
+  ui["collapsed"][id] = c;
+}
+
+bool Session::isCollapsed(const std::string& id) const {
+  const Json& ui = P_.settings.ui;
+  if (!ui.contains("collapsed") || !ui["collapsed"].is_object()) return false;
+  const auto& c = ui["collapsed"];
+  auto it = c.find(id);
+  return it != c.end() && it->is_boolean() && it->get<bool>();
+}
+
+void Session::touchUi() { persist(); }
+
+std::string Session::addIssue(std::string parentId, std::string afterId, std::string name) {
+  Issue o = newIssue(parentId, name);
+  const std::string id = o.id;
+  const bool ok = mutate([&](ProjectData& P) {
+    if (!afterId.empty()) {
+      const auto i = indexOf(P.issues, afterId);
+      const std::size_t j = afterSubtree(P.issues, i, afterId);
+      P.issues.insert(P.issues.begin() + static_cast<std::ptrdiff_t>(j), std::move(o));
+    } else {
+      P.issues.push_back(std::move(o));
+    }
+    if (!parentId.empty()) setCollapsed(parentId, false);
+  });
+  return ok ? id : std::string();
+}
+
+std::vector<std::string> Session::descendantsOf(const std::string& id) const {
+  std::vector<std::string> out;
+  if (!comp_) return out;
+  const Tree& T = comp_->T;
+  const int i = T.find(id);
+  if (i < 0) return out;
+  std::vector<int> st{i};
+  while (!st.empty()) {
+    const int x = st.back();
+    st.pop_back();
+    for (int k : T.kids[x]) {
+      out.push_back(T.ids[k]);
+      st.push_back(k);
+    }
+  }
+  return out;
+}
+
+std::vector<std::string> Session::siblings(const std::string& id) const {
+  std::vector<std::string> out;
+  if (!comp_) return out;
+  const Tree& T = comp_->T;
+  const int i = T.find(id);
+  if (i < 0) return out;
+  const int p = T.parentOf[i];
+  for (int k : p >= 0 ? T.kids[p] : T.roots) out.push_back(T.ids[k]);
+  return out;
+}
+
+bool Session::deleteIssues(std::vector<std::string> ids) {
+  std::unordered_set<std::string> gone;
+  for (const auto& id : ids) {
+    gone.insert(id);
+    for (const auto& k : descendantsOf(id)) gone.insert(k);
+  }
+  const std::size_t n = gone.size();
+  const bool ok = mutate([&](ProjectData& P) {
+    std::vector<Issue> keep;
+    keep.reserve(P.issues.size());
+    for (auto& o : P.issues)
+      if (!gone.count(o.id)) keep.push_back(std::move(o));
+    P.issues = std::move(keep);
+    for (auto& o : P.issues)
+      o.blocks.erase(std::remove_if(o.blocks.begin(), o.blocks.end(), [&](const std::string& b) { return gone.count(b) > 0; }),
+                     o.blocks.end());
+  });
+  if (ok) notify(std::to_string(n) + "件を削除しました", NoticeAction::Undo);
+  return ok;
+}
+
+bool Session::moveIssue(std::string id, int dir) {
+  const auto sb = siblings(id);
+  const auto it = std::find(sb.begin(), sb.end(), id);
+  if (it == sb.end()) return false;
+  const auto i = it - sb.begin();
+  const auto j = i + dir;
+  if (j < 0 || j >= static_cast<std::ptrdiff_t>(sb.size())) return false;
+  return mutate([&](ProjectData& P) {
+    const auto a = indexOf(P.issues, sb[i]);
+    const auto b = indexOf(P.issues, sb[j]);
+    std::swap(P.issues[a], P.issues[b]);
+  });
+}
+
+bool Session::reparent(std::string id, std::string newParent) {
+  if (!issue(id)) return false;
+  return mutate([&](ProjectData& P) {
+    const auto idx = indexOf(P.issues, id);
+    Issue o = std::move(P.issues[idx]);
+    eraseId(P.issues, static_cast<std::size_t>(idx));
+    o.parent = newParent;
+    P.issues.push_back(std::move(o));
+    if (!newParent.empty()) setCollapsed(newParent, false);
+  });
+}
+
+bool Session::indent(std::string id) {
+  const auto sb = siblings(id);
+  const auto it = std::find(sb.begin(), sb.end(), id);
+  if (it == sb.end() || it == sb.begin()) return false;
+  return reparent(id, *(it - 1));
+}
+
+bool Session::outdent(std::string id) {
+  if (!comp_) return false;
+  const Tree& T = comp_->T;
+  const int i = T.find(id);
+  if (i < 0 || T.parentOf[i] < 0) return false;
+  const int p = T.parentOf[i];
+  const std::string pid = T.ids[p];
+  const std::string gp = T.parentOf[p] >= 0 ? T.ids[T.parentOf[p]] : "";
+  return mutate([&](ProjectData& P) {
+    const auto idx = indexOf(P.issues, id);
+    Issue o = std::move(P.issues[idx]);
+    eraseId(P.issues, static_cast<std::size_t>(idx));
+    o.parent = gp;
+    const auto pi = indexOf(P.issues, pid);
+    P.issues.insert(P.issues.begin() + (pi + 1), std::move(o));
+  });
+}
+
+bool Session::relocate(std::string id, std::string target, RelocateWhere where) {
+  if (id == target || !issue(id) || !issue(target)) return false;
+  const auto ds = descendantsOf(id);
+  if (std::find(ds.begin(), ds.end(), target) != ds.end()) return false;
+  return mutate([&](ProjectData& P) {
+    const auto idx = indexOf(P.issues, id);
+    Issue o = std::move(P.issues[idx]);
+    eraseId(P.issues, static_cast<std::size_t>(idx));
+    if (where == RelocateWhere::Into) {
+      o.parent = target;
+      P.issues.push_back(std::move(o));
+      setCollapsed(target, false);
+      return;
+    }
+    auto ti = indexOf(P.issues, target);
+    o.parent = P.issues[ti].parent;
+    if (where == RelocateWhere::After) ti = static_cast<std::ptrdiff_t>(afterSubtree(P.issues, ti, target));
+    P.issues.insert(P.issues.begin() + ti, std::move(o));
+  });
+}
+
+bool Session::setField(std::string id, const std::function<void(Issue&)>& fn) {
+  if (!issue(id)) return false;
+  return mutate([&](ProjectData& P) { fn(P.issues[indexOf(P.issues, id)]); });
+}
+
+bool Session::setStatus(std::string id, std::string st) {
+  if (!issue(id)) return false;
+  const Day v = std::min(todayDay(), baseDay());
+  return mutate([&](ProjectData& P) {
+    Issue& o = P.issues[indexOf(P.issues, id)];
+    const Cat c = statusCat(st);
+    o.status = st;
+    if (c == Cat::Done && !o.resolved) o.resolved = v;
+    if (c == Cat::Prog && !o.start) o.start = v;
+  });
+}
+
+bool Session::setTag(std::string id, std::string tagIn) {
+  const Issue* cur = issue(id);
+  if (!cur || !comp_) return false;
+  std::string tag;
+  for (char c : tagIn)
+    if (c != '[' && c != ']') tag += c;
+  tag = text::trim(tag);
+  const TagName t = tagOf(cur->summary);
+  if (tag == t.tag) return true;
+  if (!tag.empty()) {
+    const Tree& T = comp_->T;
+    const std::string low = text::toLower(tag);
+    for (int i = 0; i < T.n; ++i)
+      if (T.ids[i] != id && text::toLower(T.did[i]) == low) {
+        notify("「" + tag + "」はすでに別の課題（" + T.name[i] + "）で使われています");
+        return false;
+      }
+  }
+  return mutate([&](ProjectData& P) {
+    P.issues[indexOf(P.issues, id)].summary = (tag.empty() ? "" : "[" + tag + "] ") + t.name;
+  });
+}
+
+bool Session::setName(std::string id, std::string name) {
+  if (!issue(id)) return false;
+  return mutate([&](ProjectData& P) {
+    Issue& o = P.issues[indexOf(P.issues, id)];
+    const TagName t = tagOf(o.summary);
+    o.summary = (t.tag.empty() ? "" : "[" + t.tag + "] ") + (name.empty() ? std::string("（無題）") : name);
+  });
+}
+
+bool Session::setDuration(std::string id, double w) {
+  if (!issue(id)) return false;
+  return mutate([&](ProjectData& P) {
+    Issue& o = P.issues[indexOf(P.issues, id)];
+    if (P.settings.scenario == kStdScenario) o.durW = w;
+    else o.alt.set(P.settings.scenario, w);
+  });
+}
+
+bool Session::removeScenarioValue(std::string id) {
+  if (!issue(id)) return false;
+  return mutate([&](ProjectData& P) { P.issues[indexOf(P.issues, id)].alt.erase(P.settings.scenario); });
+}
+
+bool Session::setEarliest(std::string id, OptDay day) {
+  if (!issue(id)) return false;
+  return mutate([&](ProjectData& P) { P.issues[indexOf(P.issues, id)].notBefore = day; },
+                [&](Session& s) {
+                  const int i = s.find(id);
+                  if (day && s.comp_ && i >= 0 && s.comp_->R[i].asapStart != *day) {
+                    s.P_.issues[indexOf(s.P_.issues, id)].notBefore = std::nullopt;
+                    s.notify("その日には動かせません（先行や、同じ担当者の作業が終わるまで待つため）");
+                  }
+                });
+}
+
+bool Session::setDeadline(std::string id, OptDay day) {
+  if (!issue(id)) return false;
+  std::vector<std::pair<std::string, OptDay>> own;
+  if (!P_.meta.hasDeadlineCol && comp_)
+    for (int i = 0; i < comp_->T.n; ++i)
+      if (comp_->T.ownDl[i]) own.emplace_back(comp_->T.ids[i], comp_->T.ownDl[i]);
+  return mutate([&](ProjectData& P) {
+    // Deadline 列の無いCSVでは、これまで期限として使っていた Due date を Deadline 列へ移してから設定する
+    if (!P.meta.hasDeadlineCol) {
+      for (const auto& [k, d] : own) P.issues[indexOf(P.issues, k)].deadline = d;
+      P.meta.hasDeadlineCol = true;
+    }
+    P.issues[indexOf(P.issues, id)].deadline = day;
+  });
+}
+
+bool Session::addLink(std::string from, std::string to) {
+  if (from == to) {
+    notify("自分自身には依存できません");
+    return false;
+  }
+  const Issue* f = issue(from);
+  if (!f || !issue(to)) return false;
+  if (std::find(f->blocks.begin(), f->blocks.end(), to) != f->blocks.end()) {
+    notify("すでに設定されています");
+    return false;
+  }
+  return mutate([&](ProjectData& P) { P.issues[indexOf(P.issues, from)].blocks.push_back(to); });
+}
+
+bool Session::removeLink(std::string from, std::string to) {
+  if (!issue(from)) return false;
+  return mutate([&](ProjectData& P) {
+    auto& b = P.issues[indexOf(P.issues, from)].blocks;
+    b.erase(std::remove(b.begin(), b.end(), to), b.end());
+  });
+}
+
+bool Session::addComment(std::string id, std::string textIn, std::string whoIn) {
+  const std::string t = text::trim(textIn);
+  if (t.empty() || !issue(id)) return false;
+  const std::string who = text::replaceAll(whoIn.empty() ? "自分" : whoIn, ";", "；");
+  const std::string at = nowDT();
+  return mutate([&](ProjectData& P) { P.issues[indexOf(P.issues, id)].comments.push_back({at, who, t}); });
+}
+
+bool Session::delComment(std::string id, std::size_t index) {
+  const Issue* o = issue(id);
+  if (!o || index >= o->comments.size()) return false;
+  return mutate([&](ProjectData& P) {
+    auto& c = P.issues[indexOf(P.issues, id)].comments;
+    c.erase(c.begin() + static_cast<std::ptrdiff_t>(index));
+  });
+}
+
+bool Session::bulk(std::vector<std::string> ids, const std::function<void(Issue&)>& fn) {
+  return mutate([&](ProjectData& P) {
+    for (const auto& id : ids) {
+      const auto i = indexOf(P.issues, id);
+      if (i >= 0) fn(P.issues[i]);
+    }
+  });
+}
+
+int Session::applyTemplate(std::vector<std::string> parentIds, const Template& tpl) {
+  if (tpl.items.empty() || parentIds.empty() || !comp_) return 0;
+  int made = 0;
+  const auto keep = comp_;  // 編集前のツリー（JS版と同じく、配下の数・表示名はここから）
+  const Tree& T = keep->T;
+  const bool ok = mutate([&](ProjectData& P) {
+    for (const auto& pid : parentIds) {
+      const auto parIdx = indexOf(P.issues, pid);
+      if (parIdx < 0) continue;
+      const Issue par = P.issues[parIdx];
+      const std::string ptag = tagOf(par.summary).tag;
+      const int ti = T.find(pid);
+      const std::string pname = ti >= 0 ? T.name[ti] : par.summary;
+      std::unordered_map<std::string, int> cnt;
+      cnt[pid] = ti >= 0 ? static_cast<int>(T.kids[ti].size()) : 0;
+      std::unordered_map<std::string, std::string> tagOfId;
+      tagOfId[pid] = ptag;
+      std::size_t at = afterSubtree(P.issues, parIdx, pid);
+      std::vector<std::string> made1;
+      std::vector<std::string> lastAt;
+      for (const auto& it : tpl.items) {
+        const int lv = std::max(0, std::min(it.lv, static_cast<int>(lastAt.size())));
+        const std::string up = lv == 0 ? pid : lastAt[lv - 1];
+        const Issue* upObj = nullptr;
+        if (lv == 0) upObj = &par;
+        Issue o;
+        // newIssue（採番は配列の現在の状態から）
+        o.id = nextIssueId(P.issues);
+        o.key = P.settings.key.empty() ? "" : P.settings.key + "-" + o.id;
+        o.parent = up;
+        o.prio = "Medium";
+        o.status = "To Do";
+        o.extra.assign(P.meta.extraHeaders.size(), "");
+        if (!upObj) {
+          const auto ui = indexOf(P.issues, up);
+          if (ui >= 0) upObj = &P.issues[ui];
+        }
+        o.type = !it.t.empty() ? it.t : (upObj && isEpic(*upObj) ? "Task" : "Sub-task");
+        cnt[up] += 1;
+        const std::string& upTag = tagOfId[up];
+        const std::string tag = upTag.empty() ? "" : upTag + "-" + std::to_string(cnt[up]);
+        tagOfId[o.id] = tag;
+        o.summary = (tag.empty() ? "" : "[" + tag + "] ") + text::replaceAll(it.n, "{名前}", pname);
+        o.durW = it.w ? *it.w : 1.0;
+        o.labels = it.lab;
+        o.desc = it.d;
+        made1.push_back(o.id);
+        lastAt.resize(static_cast<std::size_t>(lv));
+        lastAt.push_back(o.id);
+        P.issues.insert(P.issues.begin() + static_cast<std::ptrdiff_t>(at++), std::move(o));
+        ++made;
+      }
+      for (std::size_t i = 0; i < tpl.items.size(); ++i)
+        for (int j : tpl.items[i].after) {
+          if (j < 0 || j >= static_cast<int>(made1.size()) || j == static_cast<int>(i)) continue;
+          auto& b = P.issues[indexOf(P.issues, made1[j])].blocks;
+          if (std::find(b.begin(), b.end(), made1[i]) == b.end()) b.push_back(made1[i]);
+        }
+      setCollapsed(pid, false);
+    }
+  });
+  if (ok) notify(std::to_string(made) + "件の子タスクを追加しました", NoticeAction::Undo);
+  return ok ? made : 0;
+}
+
+// ---------------------------------------------------------------- 設定
+void Session::setBaseDate(const std::string& iso) {
+  P_.settings.baseDate = iso;
+  rebuild();
+  persist();
+}
+void Session::setHolidays(const std::string& t) {
+  P_.settings.holidays = t;
+  rebuild();
+  persist();
+}
+void Session::setResource(ResourceLimit r) {
+  P_.settings.resource = r;
+  rebuild();
+  persist();
+}
+void Session::setScenario(const std::string& name) {
+  P_.settings.scenario = name.empty() ? kStdScenario : name;
+  rebuild();
+  persist();
+}
+void Session::addScenario(const std::string& nameIn) {
+  const std::string name = text::trim(nameIn);
+  if (name.empty() || name == kStdScenario) return;
+  auto& sc = P_.meta.scenarios;
+  if (std::find(sc.begin(), sc.end(), name) == sc.end()) sc.push_back(name);
+  P_.settings.scenario = name;
+  rebuild();
+  persist();
+  notify("シナリオ「" + name + "」を追加しました。期間を変えると、このシナリオだけに保存されます");
+}
+void Session::setNameKey(const std::string& name, const std::string& key) {
+  if (!name.empty()) P_.settings.name = name;
+  P_.settings.key = text::toUpper(key);
+  persist();
+}
+
+void Session::replaceIssues(std::vector<Issue> issues, ProjectMeta meta, std::vector<std::string> warns) {
+  Snapshot snap = snapshot();
+  P_.issues = std::move(issues);
+  P_.meta = std::move(meta);
+  P_.settings.ui["collapsed"] = Json::object();
+  P_.settings.ui["hide"] = Json::object();
+  P_.settings.scenario = kStdScenario;
+  rebuild();
+  undo_.push_back(std::move(snap));
+  if (undo_.size() > kUndoMax) undo_.pop_front();
+  redo_.clear();
+  loadWarns_ = std::move(warns);
+  persist();
+  notify(std::to_string(P_.issues.size()) + "件を読み込みました（置き換え）");
+}
+
+// ---------------------------------------------------------------- 参照
+std::optional<std::string> Session::resolveRef(const std::string& in) const {
+  if (!comp_) return std::nullopt;
+  const Tree& T = comp_->T;
+  const std::string s = text::trim(in);
+  if (s.empty()) return std::nullopt;
+  for (int i = 0; i < T.n; ++i)
+    if (T.did[i] == s || P_.issues[i].key == s || P_.issues[i].id == s) return P_.issues[i].id;
+  const std::string low = text::toLower(s);
+  for (int i = 0; i < T.n; ++i)
+    if (text::toLower(T.did[i]) == low || text::toLower(P_.issues[i].key) == low) return P_.issues[i].id;
+  int hit = -1, count = 0;
+  for (int i = 0; i < T.n; ++i)
+    if (text::toLower(T.name[i]).find(low) != std::string::npos) {
+      hit = i;
+      ++count;
+    }
+  if (count == 1) return P_.issues[hit].id;
+  return std::nullopt;
+}
+
+std::vector<VisibleRow> Session::visibleRows(const Filter& f) const {
+  if (!comp_) return {};
+  return roadmap::visibleRows(comp_->T, comp_->issues, comp_->R, viewStateFromUi(comp_->T, P_.settings.ui), f);
+}
+
+std::vector<int> Session::visibleLeaves(const Filter& f) const {
+  if (!comp_) return {};
+  return roadmap::visibleLeaves(comp_->T, comp_->issues, comp_->R, viewStateFromUi(comp_->T, P_.settings.ui), f);
+}
+
+Summary Session::summary() const { return comp_ ? summarize(comp_->T, comp_->R) : Summary{}; }
+
+std::string Session::exportText(ExportKind kind) const {
+  if (kind == ExportKind::App) return exportAppCsv(P_.issues, P_.meta);
+  return exportJiraCsv(P_.issues, P_.meta, comp_.get());
+}
+
+std::vector<std::string> Session::assignees() const {
+  std::vector<std::string> out;
+  std::unordered_set<std::string> seen;
+  for (const auto& o : P_.issues) {
+    const std::string a = text::trim(o.assignee);
+    if (!a.empty() && seen.insert(a).second) out.push_back(a);
+  }
+  std::stable_sort(out.begin(), out.end(), [](const std::string& a, const std::string& b) { return jaCompare(a, b) < 0; });
+  return out;
+}
+
+std::vector<std::string> Session::allWarns() const {
+  std::vector<std::string> out;
+  if (comp_) out = comp_->T.warns;
+  out.insert(out.end(), loadWarns_.begin(), loadWarns_.end());
+  return out;
+}
+
+int jaCompare(const std::string& a, const std::string& b) {
+  const auto key = [](const std::string& s) {
+    std::u32string u = text::toU32(text::toLower(s));
+    for (char32_t& c : u)
+      if (c >= 0x30A1 && c <= 0x30F6) c -= 0x60;  // カタカナ → ひらがな
+    return u;
+  };
+  const auto ka = key(a), kb = key(b);
+  if (ka < kb) return -1;
+  if (kb < ka) return 1;
+  return a < b ? -1 : (b < a ? 1 : 0);
+}
+
+}  // namespace roadmap

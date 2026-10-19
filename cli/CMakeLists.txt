@@ -1,0 +1,10 @@
+add_executable(rmcli main.cpp)
+target_link_libraries(rmcli PRIVATE roadmap_core)
+roadmap_set_warnings(rmcli)
+if(WIN32)
+  target_link_libraries(rmcli PRIVATE shell32)
+endif()
+if(MSVC)
+  # 日本語の出力のため UTF-8 のコードページで動かす
+  target_sources(rmcli PRIVATE rmcli.manifest)
+endif()
