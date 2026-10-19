@@ -23,7 +23,7 @@ jobs:
       matrix:
         compiler: [gcc, clang]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build
       - name: configure
@@ -42,7 +42,7 @@ jobs:
     name: linux (UI の煙テスト)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build
       - name: configure
@@ -56,7 +56,7 @@ jobs:
     name: clang-tidy
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build clang-tidy
       - name: configure
@@ -70,12 +70,12 @@ jobs:
     name: windows (MSVC)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
       - name: configure
-        run: cmake --preset windows-release
+        run: cmake --preset windows-release -DROADMAP_UI_TESTS=ON
       - name: build
         run: cmake --build --preset windows-release
       - name: test
@@ -86,7 +86,7 @@ jobs:
           $exe = Get-Item build/windows-release/app/ProjectRoadmap.exe
           "{0:N1} MB" -f ($exe.Length / 1MB)
           if ($exe.Length -gt 10MB) { throw "exe が 10MB を超えています" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ProjectRoadmap-windows
           path: |
@@ -100,7 +100,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: ProjectRoadmap-windows
           path: dist
