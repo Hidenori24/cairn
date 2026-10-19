@@ -390,7 +390,6 @@ std::string emptyCsv() {
 // ---------------------------------------------------------------- 取り込み
 namespace {
 
-using Pred = bool (*)(const std::string&);
 
 bool eqAny(const std::string& h, std::initializer_list<const char*> syn) {
   for (const char* s : syn)

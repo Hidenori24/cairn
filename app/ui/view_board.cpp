@@ -150,7 +150,7 @@ void drawBoardView(Frame& f, ImVec2 size) {
   }
   const float pad = u.m.s(12);
   const int nc = static_cast<int>(colNames.size());
-  const float colW = std::max(u.m.s(200), (size.x - pad * (nc + 1) - u.m.s(14)) / static_cast<float>(nc));
+  const float colW = std::max(u.m.s(200), (size.x - pad * static_cast<float>(nc + 1) - u.m.s(14)) / static_cast<float>(nc));
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 origin = ImGui::GetCursorScreenPos();
   // 列の見出し

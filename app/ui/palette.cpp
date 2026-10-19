@@ -53,12 +53,12 @@ std::vector<Cmd> buildCommands(Frame& f) {
     add("表示", "リストを表示", "3", [&c] { c.setView(app::View::List); });
     add("表示", "ギャップを表示", "4", [&c] { c.setView(app::View::Goals); });
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"day", "日"}, {"week", "週"}, {"month", "月"}, {"all", "全体"}})
-      add("表示", std::string("ガントの拡大率: ") + l, nullptr, [&c, &u, k = std::string(k)] {
-        c.setUi("zoom", k);
+      add("表示", std::string("ガントの拡大率: ") + l, nullptr, [&c, &u, key = std::string(k)] {
+        c.setUi("zoom", key);
         u.scrollToBase = true;
       });
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"root", "Epic"}, {"float", "余裕"}, {"asg", "担当者"}})
-      add("表示", std::string("バーの色分け: ") + l, nullptr, [&c, k = std::string(k)] { c.setUi("colorBy", k); });
+      add("表示", std::string("バーの色分け: ") + l, nullptr, [&c, key = std::string(k)] { c.setUi("colorBy", key); });
     add("表示", "すべて開く", nullptr, [&c] { c.setUi("collapsed", Json::object()); });
     add("表示", "すべて閉じる", nullptr, [&c] {
       const Tree* T = c.session()->tree();
