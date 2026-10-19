@@ -160,6 +160,7 @@ void AppController::openSession(const std::string& id, bool keepHistory) {
     toast("このプロジェクトを開けません: " + h.error());
     return;
   }
+  if (session_) retiredSessions_.push_back(std::move(session_));
   session_ = std::make_unique<Session>(std::move(h->data), &clock_, std::move(h->warns));
   if (!session_->error().empty()) toast("このプロジェクトを計算できません: " + session_->error());
   absorbNotices();
@@ -228,7 +229,7 @@ bool AppController::deleteCurrentProject() {
     return false;
   }
   if (!stem.empty()) toast("フォルダの「" + stem + ".csv」を「_削除済み」に移しました");
-  session_.reset();
+  retiredSessions_.push_back(std::move(session_));
   currentId_.clear();
   if (ws_.entries().empty()) {
     firstRun_ = true;
@@ -337,6 +338,11 @@ std::string AppController::exportFileName(const std::string& kind) const {
   if (kind == "share") return name + ".json";
   if (kind == "jira") return name + "_jira.csv";
   return name + ".csv";
+}
+
+void AppController::releaseFrame() {
+  retiredSessions_.clear();
+  if (session_) session_->releaseFrame();
 }
 
 // ---------------------------------------------------------------- 表示状態

@@ -140,6 +140,9 @@ class AppController {
 
   // 編集の後に呼ぶ（UI は操作のたびに呼ばなくてもよい。tick でも拾う）
   void afterEdit();
+  // フレームの終わりに呼ぶ。描画中に差し替えたプロジェクト・計算結果をここで捨てる
+  // （それまでは古いものを残し、描画中の参照が壊れないようにする）
+  void releaseFrame();
 
  private:
   void openSession(const std::string& id, bool keepHistory);
@@ -153,6 +156,7 @@ class AppController {
   std::string prefsPath_;
   Prefs prefs_;
   std::unique_ptr<Session> session_;
+  std::vector<std::unique_ptr<Session>> retiredSessions_;
   std::string currentId_;
   std::uint64_t seenVersion_ = 0;
   bool firstRun_ = false;

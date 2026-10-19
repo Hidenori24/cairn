@@ -5,6 +5,8 @@
 #include <imgui.h>
 #include <imgui_stdlib.h>
 
+#include <imgui_internal.h>  // ActivateItemByID
+
 #include "roadmap/text.hpp"
 #include "ui/icons.hpp"
 #include "ui/internal.hpp"
@@ -99,12 +101,10 @@ void beginEdit(Frame& f, const std::string& id, EditField field, bool fresh) {
 }
 
 namespace {
-// Tab をフィルタで拾う（AllowTabInput で受けて、文字としては捨てる）
-int tabFilter(ImGuiInputTextCallbackData* d) {
-  if (d->EventChar == '\t') {
-    *static_cast<int*>(d->UserData) = ImGui::GetIO().KeyShift ? -1 : 1;
-    return 1;
-  }
+// Tab を拾う。CallbackCompletion を使うと Tab で入力欄から抜けず、ここが呼ばれる
+// （AllowTabInput は SetKeyboardFocusHere による編集開始を打ち消してしまうので使わない）
+int tabCallback(ImGuiInputTextCallbackData* d) {
+  if (d->EventFlag == ImGuiInputTextFlags_CallbackCompletion) *static_cast<int*>(d->UserData) = ImGui::GetIO().KeyShift ? -1 : 1;
   return 0;
 }
 
@@ -140,14 +140,15 @@ bool drawInlineEdit(Frame& f, float w) {
   ImGui::PushID("inline-edit");
   ImGui::SetNextItemWidth(w);
   if (u.editFocus) {
-    ImGui::SetKeyboardFocusHere();
+    // SetKeyboardFocusHere はナビゲーション経由で不確実なので、入力欄を直接アクティブにする
+    ImGui::SetWindowFocus();
+    ImGui::ActivateItemByID(ImGui::GetID("##e"));
     u.editFocus = false;
   }
   int tab = 0;
-  ImGuiInputTextFlags fl = ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_AllowTabInput |
-                           ImGuiInputTextFlags_CallbackCharFilter;
+  ImGuiInputTextFlags fl = ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_CallbackCompletion;
   if (u.editField == EditField::Dur) fl |= ImGuiInputTextFlags_CharsDecimal;
-  ImGui::InputText("##e", &u.editBuf, fl, tabFilter, &tab);
+  ImGui::InputText("##e", &u.editBuf, fl, tabCallback, &tab);
   const bool active = ImGui::IsItemActive();
   const bool deactivated = ImGui::IsItemDeactivated();
   ImGui::PopID();
@@ -224,7 +225,7 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
   UiState& u = f.u;
   Session* s = f.c.session();
   const Tree& T = *s->tree();
-  const Issue& is = s->issues()[r.id];
+  const Issue& is = s->viewIssues()[r.id];
   const std::string& id = is.id;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   float x = pos.x + (o.indent ? u.m.s(14) * static_cast<float>(r.depth) : 0);
@@ -385,7 +386,7 @@ void drawTopBar(Frame& f) {
     // ゴールボタン（ルート課題が1つもなければ出さない）
     const Tree& T = *s->tree();
     bool anyRoot = false;
-    for (int r : T.roots) anyRoot |= !T.kids[r].empty() || isEpic(s->issues()[r]);
+    for (int r : T.roots) anyRoot |= !T.kids[r].empty() || isEpic(s->viewIssues()[r]);
     if (anyRoot) {
       ImGui::SameLine(0, u.m.s(6));
       ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
@@ -988,7 +989,7 @@ void collectGlyphs(const AppController& c, std::set<ImWchar>& out) {
   };
   for (const auto& p : c.projects()) add(p.name);
   if (!s) return;
-  for (const auto& o : s->issues()) {
+  for (const auto& o : s->viewIssues()) {
     add(o.summary);
     add(o.assignee);
     add(o.desc);
@@ -1070,6 +1071,7 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
   handleKeys(f);
   ImGui::PopFont();
   c.afterEdit();
+  c.releaseFrame();
 }
 
 }  // namespace roadmap::ui

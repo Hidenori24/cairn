@@ -14,6 +14,7 @@
 #include "roadmap/schedule.hpp"
 #include "roadmap/text.hpp"
 #include "ui/app_ui.hpp"
+#include "ui/internal.hpp"
 
 using namespace roadmap;
 
@@ -122,6 +123,72 @@ int main() {
   h.key(ImGuiKey_K, true);  // パレット
   h.frame(2);
   h.key(ImGuiKey_Escape);
+  // その場編集: 入力して Enter で確定する（IME の変換中の Enter は無視）
+  {
+    h.c.setView(app::View::List);
+    h.frame(2);
+    ui::Frame fr{h.c, h.u, h.p};
+    ui::beginEdit(fr, "6", ui::EditField::Name);
+    h.frame(2);
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddKeyEvent(ImGuiMod_Ctrl, true);
+    io.AddKeyEvent(ImGuiKey_A, true);
+    h.frame();
+    io.AddKeyEvent(ImGuiKey_A, false);
+    io.AddKeyEvent(ImGuiMod_Ctrl, false);
+    io.AddInputCharactersUTF8("新しい名前");
+    h.frame();
+    // 変換中（プラットフォームが Enter を ImGui に渡さない）・確定直後のフレームは編集を続ける
+    h.u.imeComposing = true;
+    h.frame(2);
+    h.u.imeComposing = false;
+    h.u.imeCooldown = 2;
+    h.frame(1);
+    check(h.u.editField == ui::EditField::Name, "変換中は編集が続く");
+    h.frame(2);
+    h.key(ImGuiKey_Enter);
+    check(h.u.editField == ui::EditField::None, "Enter で編集が終わる");
+    const Issue* o = h.c.session()->issue("6");
+    check(o && o->summary == "[T01] 新しい名前", "Enter で件名が確定する");
+    // キーボードから編集を始める（F2）→ Esc で取り消し
+    h.c.select("7");
+    h.key(ImGuiKey_F2);
+    check(h.u.editField == ui::EditField::Name && h.u.editId == "7", "F2 で編集を始める");
+    io.AddInputCharactersUTF8("取り消す");
+    h.frame();
+    h.key(ImGuiKey_Escape);
+    check(h.u.editField == ui::EditField::None, "Esc で編集をやめる");
+    check(h.c.session()->issue("7")->summary.find("取り消す") == std::string::npos, "Esc では変更しない");
+    // N で追加して編集 → Enter（追加直後の行は次の行を追加して続ける）
+    h.c.select("7");
+    h.key(ImGuiKey_N);
+    check(h.u.editField == ui::EditField::Name && h.u.editFresh, "N で追加して編集");
+    const std::string first = h.u.editId;
+    h.frame();  // 入力欄がアクティブになってから打つ（人の入力の速さ）
+    io.AddInputCharactersUTF8("追加1");
+    h.frame();
+    h.key(ImGuiKey_Enter);
+    check(h.u.editField == ui::EditField::Name && h.u.editId != first, "追加直後の Enter で次の行");
+    h.key(ImGuiKey_Escape);
+    check(h.c.session()->issue(first) && h.c.session()->issue(first)->summary == "追加1", "追加した行の件名");
+  }
+  // ガントでも同じ（編集の確定で計算し直しても、同じフレームの描画が古い参照で壊れないこと）
+  {
+    h.c.setView(app::View::Gantt);
+    h.frame(2);
+    ui::Frame fr{h.c, h.u, h.p};
+    ui::beginEdit(fr, "8", ui::EditField::Name);
+    h.frame(3);
+    ImGui::GetIO().AddInputCharactersUTF8("ガントで編集");
+    h.frame();
+    h.key(ImGuiKey_Enter);
+    check(h.c.session()->issue("8")->summary == "[T03] ガントで編集", "ガントで件名が確定する");
+    h.key(ImGuiKey_Tab);  // 選択全体の階層を下げる → 元に戻す
+    h.key(ImGuiKey_Z, true);
+    h.key(ImGuiKey_Delete);  // 削除 → 元に戻す
+    h.key(ImGuiKey_Z, true);
+    check(h.c.session()->issue("8") != nullptr, "削除を元に戻せる");
+  }
   // 複数選択（まとめ編集バー）
   h.c.setSelection({"6", "7", "8"}, "8");
   h.frame(3);

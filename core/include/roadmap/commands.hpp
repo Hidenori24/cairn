@@ -4,6 +4,7 @@
 
 #include <deque>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -34,9 +35,14 @@ class Session {
   const std::vector<Issue>& issues() const { return P_.issues; }
   const ProjectMeta& meta() const { return P_.meta; }
   const ProjectSettings& settings() const { return P_.settings; }
+  // 計算結果（ツリー・日程）と、それを計算したときの課題の写し。
+  // 編集で作り直しても、古いものは releaseFrame() まで残す（描画中に参照が壊れないように）
   const Tree* tree() const { return comp_ ? &comp_->T : nullptr; }
   const std::vector<ScheduleRow>* rows() const { return comp_ ? &comp_->R : nullptr; }
-  const Computed* computed() const { return comp_ ? &*comp_ : nullptr; }
+  const Computed* computed() const { return comp_.get(); }
+  // tree()・rows() と同じ時点の課題（添字が T と一致する）。画面はこちらを使う
+  const std::vector<Issue>& viewIssues() const { return comp_ ? comp_->issues : P_.issues; }
+  void releaseFrame() { retired_.clear(); }
   const Calendar& calendar() const { return cal_; }
   const std::string& error() const { return error_; }
   const std::vector<std::string>& loadWarns() const { return loadWarns_; }
@@ -132,7 +138,8 @@ class Session {
   ProjectData P_;
   const IClock* clock_;
   Calendar cal_;
-  std::optional<Computed> comp_;
+  std::shared_ptr<Computed> comp_;
+  std::vector<std::shared_ptr<Computed>> retired_;
   std::string error_;
   std::vector<std::string> loadWarns_;
   std::deque<Snapshot> undo_;

@@ -388,7 +388,7 @@ void dlgWorkload(Frame& f) {
   UiState& u = f.u;
   Session* s = f.c.session();
   if (!s || !s->tree()) return close(f);
-  const auto wl = workload(*s->tree(), s->issues(), *s->rows(), s->calendar());
+  const auto wl = workload(*s->tree(), s->viewIssues(), *s->rows(), s->calendar());
   const int cap = s->settings().resource.cap;
   if (wl.empty()) {
     ImGui::TextDisabled("担当者が入った未完了の課題がありません");
@@ -518,7 +518,7 @@ void dlgTplSave(Frame& f) {
   app::AppController& c = f.c;
   Session* s = c.session();
   if (!s || !s->tree() || u.dTargets.empty() || s->find(u.dTargets[0]) < 0) return close(f);
-  const auto items = templateItemsFrom(*s->tree(), s->issues(), s->find(u.dTargets[0]), true);
+  const auto items = templateItemsFrom(*s->tree(), s->viewIssues(), s->find(u.dTargets[0]), true);
   ImGui::TextUnformatted("名前（必須）");
   ImGui::SetNextItemWidth(-1);
   ImGui::InputText("##tn", &u.dName);
@@ -561,7 +561,14 @@ void dlgConfirmQuit(Frame& f) {
 
 void drawDialogs(Frame& f) {
   UiState& u = f.u;
-  if (u.dlg == Dlg::None) return;
+  if (u.dlg == Dlg::None) {
+    // 状態と食い違って残ったモーダルがあれば閉じる（入力を塞がないように）
+    if (ImGui::BeginPopupModal("###dlg")) {
+      ImGui::CloseCurrentPopup();
+      ImGui::EndPopup();
+    }
+    return;
+  }
   const char* title = titleOf(u.dlg);
   const std::string id = std::string(title) + "###dlg";
   if (u.dlgOpening) {

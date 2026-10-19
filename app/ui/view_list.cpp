@@ -90,7 +90,7 @@ void drawTableRow(Frame& f, const VisibleRow& r, ImVec2 pos, float width, const 
   Session* s = c.session();
   const Tree& T = *s->tree();
   const auto& R = *s->rows();
-  const Issue& o = s->issues()[r.id];
+  const Issue& o = s->viewIssues()[r.id];
   const ScheduleRow& row = R[r.id];
   const std::string id = o.id;
   const float h = u.m.rowH();
@@ -199,7 +199,7 @@ namespace {
 std::vector<int> sortedLeaves(const Session& s, const std::vector<int>& leaves, const std::string& key, int dir) {
   const Tree& T = *s.tree();
   const auto& R = *s.rows();
-  const auto& I = s.issues();
+  const auto& I = s.viewIssues();
   std::vector<int> v = leaves;
   const auto catRank = [&](int id) { return T.cat[id] == Cat::Todo ? 0 : T.cat[id] == Cat::Prog ? 1 : 2; };
   // 「最後」に置く値は向きに関係なく最後
@@ -270,7 +270,7 @@ void drawListView(Frame& f, ImVec2 size) {
   ImGui::Dummy(ImVec2(width, headH + noteH + h * static_cast<float>(rows.size())));
   if (rows.empty()) {
     ImGui::SetCursorScreenPos(ImVec2(origin.x + u.m.s(24), origin.y + headH + noteH + u.m.s(24)));
-    ImGui::TextDisabled("%s", s->issues().empty() ? S::kEmptyProject : S::kNoMatch);
+    ImGui::TextDisabled("%s", s->viewIssues().empty() ? S::kEmptyProject : S::kNoMatch);
   }
   // 見える範囲の行だけを描く（仮想化）
   const float top = headH + noteH;

@@ -14,6 +14,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
 #endif
 
 #include "roadmap/encoding.hpp"
@@ -319,7 +320,24 @@ const char* const kHelp =
 
 int main(int argc, char** argv) {
 #ifdef _WIN32
+  // 引数は UTF-16 で受け取り UTF-8 に直す（ANSI のコードページに依存しない）
   SetConsoleOutputCP(CP_UTF8);
+  std::vector<std::string> wargs;
+  std::vector<char*> wargv;
+  {
+    int n = 0;
+    LPWSTR* w = CommandLineToArgvW(GetCommandLineW(), &n);
+    for (int i = 0; i < n; ++i) {
+      const int len = WideCharToMultiByte(CP_UTF8, 0, w[i], -1, nullptr, 0, nullptr, nullptr);
+      std::string u(static_cast<std::size_t>(std::max(len, 1)) - 1, '\0');
+      WideCharToMultiByte(CP_UTF8, 0, w[i], -1, u.data(), len, nullptr, nullptr);
+      wargs.push_back(std::move(u));
+    }
+    LocalFree(w);
+    for (auto& a : wargs) wargv.push_back(a.data());
+    argc = static_cast<int>(wargv.size());
+    argv = wargv.data();
+  }
 #endif
   if (argc < 2) {
     std::cout << kHelp;

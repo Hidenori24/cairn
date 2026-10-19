@@ -68,6 +68,8 @@ void Session::notify(std::string t, NoticeAction a) { notices_.push_back({std::m
 std::optional<std::string> Session::rebuild() {
   cal_ = Calendar::fromText(P_.settings.holidays);
   auto t = buildTree(P_.issues, P_.meta);
+  if (comp_) retired_.push_back(comp_);
+  if (retired_.size() > 64) retired_.erase(retired_.begin());  // releaseFrame が呼ばれない使い方でも増えすぎないように
   if (!t) {
     comp_.reset();
     error_ = t.error();
@@ -80,8 +82,10 @@ std::optional<std::string> Session::rebuild() {
   o.base = baseDay();
   o.scenario = P_.settings.scenario;
   o.resource = P_.settings.resource;
-  Computed c{std::move(t).value(), {}};
-  c.R = computeSchedule(c.T, P_.issues, cal_, o);
+  auto c = std::make_shared<Computed>();
+  c->T = std::move(t).value();
+  c->R = computeSchedule(c->T, P_.issues, cal_, o);
+  c->issues = P_.issues;
   comp_ = std::move(c);
   return std::nullopt;
 }
@@ -469,7 +473,8 @@ bool Session::bulk(std::vector<std::string> ids, const std::function<void(Issue&
 int Session::applyTemplate(std::vector<std::string> parentIds, const Template& tpl) {
   if (tpl.items.empty() || parentIds.empty() || !comp_) return 0;
   int made = 0;
-  const Tree T = comp_->T;  // 編集前のツリー（JS版と同じく、配下の数・表示名はここから）
+  const auto keep = comp_;  // 編集前のツリー（JS版と同じく、配下の数・表示名はここから）
+  const Tree& T = keep->T;
   const bool ok = mutate([&](ProjectData& P) {
     for (const auto& pid : parentIds) {
       const auto parIdx = indexOf(P.issues, pid);
@@ -606,19 +611,19 @@ std::optional<std::string> Session::resolveRef(const std::string& in) const {
 
 std::vector<VisibleRow> Session::visibleRows(const Filter& f) const {
   if (!comp_) return {};
-  return roadmap::visibleRows(comp_->T, P_.issues, comp_->R, viewStateFromUi(comp_->T, P_.settings.ui), f);
+  return roadmap::visibleRows(comp_->T, comp_->issues, comp_->R, viewStateFromUi(comp_->T, P_.settings.ui), f);
 }
 
 std::vector<int> Session::visibleLeaves(const Filter& f) const {
   if (!comp_) return {};
-  return roadmap::visibleLeaves(comp_->T, P_.issues, comp_->R, viewStateFromUi(comp_->T, P_.settings.ui), f);
+  return roadmap::visibleLeaves(comp_->T, comp_->issues, comp_->R, viewStateFromUi(comp_->T, P_.settings.ui), f);
 }
 
 Summary Session::summary() const { return comp_ ? summarize(comp_->T, comp_->R) : Summary{}; }
 
 std::string Session::exportText(ExportKind kind) const {
   if (kind == ExportKind::App) return exportAppCsv(P_.issues, P_.meta);
-  return exportJiraCsv(P_.issues, P_.meta, comp_ ? &*comp_ : nullptr);
+  return exportJiraCsv(P_.issues, P_.meta, comp_.get());
 }
 
 std::vector<std::string> Session::assignees() const {

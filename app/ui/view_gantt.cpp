@@ -82,7 +82,7 @@ void diamond(ImDrawList* dl, ImVec2 c, float r, ImU32 fill, ImU32 border) {
 std::vector<std::string> tipLines(const Session& s, int id) {
   const Tree& T = *s.tree();
   const ScheduleRow& r = (*s.rows())[id];
-  const Issue& o = s.issues()[id];
+  const Issue& o = s.viewIssues()[id];
   std::vector<std::string> L;
   L.push_back(T.did[id] + "  " + T.name[id]);
   L.push_back("計画 " + fmtLong(r.asapStart) + " 〜 " + fmtLong(r.asapFinish) + (r.leaf ? "（" + csv::fmtNum(r.weeks) + "週）" : ""));
@@ -121,7 +121,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
   if (!s->tree()) return;
   const Tree& T = *s->tree();
   const auto& R = *s->rows();
-  const auto& I = s->issues();
+  const auto& I = s->viewIssues();
   const Calendar& cal = s->calendar();
   const float RH = u.m.rowH();
   const std::string zoom = c.uiStr("zoom", "week");

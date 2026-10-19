@@ -21,7 +21,7 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, std::s
   Session* s = c.session();
   const Tree& T = *s->tree();
   const ScheduleRow& r = (*s->rows())[id];
-  const Issue& o = s->issues()[id];
+  const Issue& o = s->viewIssues()[id];
   const std::string& sid = T.ids[id];
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float lh = ImGui::GetTextLineHeight();
@@ -95,7 +95,7 @@ void drawBoardView(Frame& f, ImVec2 size) {
   Session* s = c.session();
   if (!s->tree()) return;
   const Tree& T = *s->tree();
-  const auto& I = s->issues();
+  const auto& I = s->viewIssues();
   const auto leaves = s->visibleLeaves(c.filter());
   u.order.clear();
   for (int id : leaves) u.order.push_back(T.ids[id]);

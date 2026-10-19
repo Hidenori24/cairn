@@ -72,7 +72,7 @@ void issuePill(Frame& f, int id, const std::function<void()>& onRemove) {
   Session* s = f.c.session();
   const Tree& T = *s->tree();
   ImGui::PushID(id);
-  typeIcon(u, s->issues()[id].type);
+  typeIcon(u, s->viewIssues()[id].type);
   ImGui::SameLine();
   const std::string l = T.did[id] + "  " + T.name[id];
   if (ImGui::Selectable(ellipsize(l, ImGui::GetContentRegionAvail().x - u.m.s(36)).c_str(), false, 0,
@@ -102,7 +102,7 @@ void detailTab(Frame& f, int i) {
   Session* s = c.session();
   const Tree& T = *s->tree();
   const auto& R = *s->rows();
-  const Issue& o = s->issues()[i];
+  const Issue& o = s->viewIssues()[i];
   const ScheduleRow& r = R[i];
   const std::string id = o.id;
   const bool leaf = T.isLeaf(i);
@@ -308,7 +308,7 @@ void linksTab(Frame& f, int i) {
   UiState& u = f.u;
   Session* s = c.session();
   const Tree& T = *s->tree();
-  const auto& I = s->issues();
+  const auto& I = s->viewIssues();
   const std::string id = I[i].id;
   static std::string addPred, addSucc;
   // 直接の先行 = この課題を blocks に持つ課題
@@ -368,7 +368,7 @@ void commentsTab(Frame& f, int i) {
   app::AppController& c = f.c;
   UiState& u = f.u;
   Session* s = c.session();
-  const Issue& o = s->issues()[i];
+  const Issue& o = s->viewIssues()[i];
   const std::string id = o.id;
   static std::string body;
   static std::string who;
@@ -434,7 +434,7 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
   }
   flushPending(T.ids[i], false);
   ImGui::PushID(T.ids[i].c_str());
-  const Issue& o = s->issues()[i];
+  const Issue& o = s->viewIssues()[i];
   const ScheduleRow& r = (*s->rows())[i];
   // 上部
   typeIcon(u, o.type);
@@ -474,7 +474,7 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
   if (iconButton(u, "close", "x", "閉じる")) u.detailOpen = false;
   // タブ
   int nPred = 0;
-  for (const auto& x : s->issues())
+  for (const auto& x : s->viewIssues())
     if (std::find(x.blocks.begin(), x.blocks.end(), o.id) != x.blocks.end()) ++nPred;
   const std::string tLinks = "依存関係 " + std::to_string(nPred + static_cast<int>(o.blocks.size())) + "###links";
   const std::string tCom = "コメント " + std::to_string(o.comments.size()) + "###comments";

@@ -207,9 +207,11 @@ void applyTheme() {
 LRESULT WINAPI wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   switch (msg) {
     case WM_IME_STARTCOMPOSITION:
+      vlog("WM_IME_STARTCOMPOSITION");
       if (gUi) gUi->imeComposing = true;
       break;
     case WM_IME_ENDCOMPOSITION:
+      vlog("WM_IME_ENDCOMPOSITION");
       if (gUi) {
         gUi->imeComposing = false;
         gUi->imeCooldown = 2;  // 確定の Enter で別の操作が走らないように
@@ -217,7 +219,11 @@ LRESULT WINAPI wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       break;
     default: break;
   }
-  if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam)) return true;
+  // IME の変換中・確定直後の Enter は ImGui に渡さない（確定の Enter で編集が終わったり行が増えたりしないように。付録D-1）
+  const bool imeEnter = (msg == WM_KEYDOWN || msg == WM_KEYUP) && wParam == VK_RETURN && gUi &&
+                        (gUi->imeComposing || gUi->imeCooldown > 0);
+  if (imeEnter) vlog("IME の変換中の Enter を無視");  // キーの中身（何を打ったか）はログに出さない
+  if (!imeEnter && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam)) return true;
   switch (msg) {
     case WM_SIZE:
       if (wParam == SIZE_MINIMIZED) return 0;
@@ -389,16 +395,18 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
       applyTheme();
       win::setDarkTitleBar(hwnd, uiState.t->dark);
     }
-    if (ctl.currentId() != lastProject || (ctl.session() && ctl.session()->version() != lastVersion)) {
-      lastProject = ctl.currentId();
-      lastVersion = ctl.session() ? ctl.session()->version() : 0;
-      checkGlyphs();
-    }
     if (gFontsDirty) {
       buildFonts(uiState);
       applyTheme();
       win::setDarkTitleBar(hwnd, uiState.t->dark);
       gFontsDirty = false;
+      lastProject = "\x01";  // 作り直したフォントで、データの文字をもう一度確かめる
+    }
+    // データにフォントにない文字があれば、次のフレームでフォントを作り直す
+    if (ctl.currentId() != lastProject || (ctl.session() && ctl.session()->version() != lastVersion)) {
+      lastProject = ctl.currentId();
+      lastVersion = ctl.session() ? ctl.session()->version() : 0;
+      checkGlyphs();
     }
     // ドロップされたファイル → 取り込みダイアログ（中身は読み込み済み）
     if (!gDroppedText.empty()) {

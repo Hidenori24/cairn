@@ -51,7 +51,7 @@ void stepRow(Frame& f, int id, const std::string& n) {
   Session* s = f.c.session();
   const Tree& T = *s->tree();
   const ScheduleRow& r = (*s->rows())[id];
-  const Issue& o = s->issues()[id];
+  const Issue& o = s->viewIssues()[id];
   ImGui::PushID(id);
   const ImVec2 p = ImGui::GetCursorScreenPos();
   const float w = ImGui::GetContentRegionAvail().x, h = u.m.s(30);
@@ -135,7 +135,7 @@ void goalCard(Frame& f, int id) {
   const Tree& T = *s->tree();
   const auto& R = *s->rows();
   const ScheduleRow& r = R[id];
-  const Issue& o = s->issues()[id];
+  const Issue& o = s->viewIssues()[id];
   const OptDay dl0 = T.dl[id];
   const Day fc = r.asapFinish;
   const auto chain = drivingChain(T, R, id);
@@ -236,7 +236,7 @@ void drawGoalsView(Frame& f, ImVec2 size) {
   if (!s->tree()) return;
   const Tree& T = *s->tree();
   const auto& R = *s->rows();
-  const auto& I = s->issues();
+  const auto& I = s->viewIssues();
   ImGui::BeginChild("##goals", size, ImGuiChildFlags_None);
   ImGui::SetCursorPos(ImVec2(u.m.s(24), u.m.s(16)));
   ImGui::BeginGroup();
@@ -308,11 +308,11 @@ void drawGoalPopover(Frame& f) {
   if (!ImGui::BeginPopup("##goalpop")) return;
   const Tree& T = *s->tree();
   const auto& R = *s->rows();
-  const auto rootIdx = rootIndexMap(T, s->issues());
+  const auto rootIdx = rootIndexMap(T, s->viewIssues());
   ImGui::TextUnformatted("ルート課題ごとの余裕");
   ImGui::Separator();
   for (int r : T.roots) {
-    if (T.kids[r].empty() && !isEpic(s->issues()[r])) continue;
+    if (T.kids[r].empty() && !isEpic(s->viewIssues()[r])) continue;
     const std::string& id = T.ids[r];
     ImGui::PushID(id.c_str());
     bool show = !c.uiBool("hide", id.c_str(), false);

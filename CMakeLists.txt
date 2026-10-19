@@ -17,6 +17,10 @@ option(ROADMAP_UI_TESTS "UI（ImGui）をヘッドレスで動かす煙テスト
 option(ROADMAP_WERROR "警告をエラーにする" OFF)
 option(ROADMAP_SANITIZE "ASan + UBSan（GCC/Clang）" OFF)
 
+if(MINGW)
+  # MinGW でも追加のDLLなしで動くように
+  add_link_options(-static)
+endif()
 if(MSVC)
   # 単一exe（静的CRT）
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

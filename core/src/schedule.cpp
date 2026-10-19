@@ -6,7 +6,7 @@ Result<Computed> computeAll(const std::vector<Issue>& issues, const ProjectMeta&
                             const ScheduleOptions& opt) {
   auto t = buildTree(issues, meta);
   if (!t) return Error{t.error()};
-  Computed c{std::move(t).value(), {}};
+  Computed c{std::move(t).value(), {}, {}};
   c.R = computeSchedule(c.T, issues, cal, opt);
   return c;
 }

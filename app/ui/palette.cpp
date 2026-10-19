@@ -119,7 +119,13 @@ std::vector<Cmd> buildCommands(Frame& f) {
 void drawPalette(Frame& f) {
   app::AppController& c = f.c;
   UiState& u = f.u;
-  if (!u.paletteOpen) return;
+  if (!u.paletteOpen) {
+    if (ImGui::BeginPopupModal("##palette")) {
+      ImGui::CloseCurrentPopup();
+      ImGui::EndPopup();
+    }
+    return;
+  }
   if (!ImGui::IsPopupOpen("##palette")) ImGui::OpenPopup("##palette");
   const ImGuiViewport* vp = ImGui::GetMainViewport();
   const float w = std::min(u.m.s(640), vp->WorkSize.x - u.m.s(40));

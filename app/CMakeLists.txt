@@ -71,4 +71,5 @@ if(ROADMAP_UI_TESTS)
   # 画面の確認用（テストではない。ImGui の描画データをソフトウェアで画像にする）
   add_executable(roadmap_ui_screens tests/ui_screens.cpp)
   target_link_libraries(roadmap_ui_screens PRIVATE roadmap_ui)
+  roadmap_set_warnings(roadmap_ui_screens)
 endif()
