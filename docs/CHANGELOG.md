@@ -33,11 +33,12 @@ SPEC 第13章の P0〜P7 を一通り実装した最初の版。
 - ガント・ボード・リスト・ギャップ・ゴールのポップオーバー・詳細パネル・コマンドパレット・全ダイアログ・通知・まとめ編集バー・はじめに
 - Win32: 高DPI・IME・日本語フォント（足りない字は作り直して追加）・ファイルのドロップ・ダイアログ・終了時の確認・ダーク/ライト
 - 単一 exe（MinGW のクロスビルドで 3.5MB、システムDLLのみ）
+- GitHub Actions の windows-latest（MSVC 19.51・/MT）でビルドとテスト 25 件が通る。exe は 1.9MB
 
 ### データ
 - サンプルの製品固有の語を一般的な表現に置き換え、golden を JS版のライブラリで作り直した（[spec-questions.md](spec-questions.md) の C）
 
 ### 未解決
-- Windows 実機（MSVC ビルド）での IME・高DPI・fps の確認（[ui-spike.md](ui-spike.md)）
+- Windows 実機での IME・高DPI・fps の確認（MSVC のビルドとテストは CI で確認済み）（[ui-spike.md](ui-spike.md)）
 - フォルダの常時監視（ReadDirectoryChangesW。任意）
 - 仕様の疑問は [spec-questions.md](spec-questions.md)
