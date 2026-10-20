@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <unordered_set>
 
+#include "roadmap/issue_name.hpp"
 #include "roadmap/text.hpp"
 
 namespace roadmap {
@@ -168,7 +169,7 @@ Issue Session::newIssue(const std::string& parentId, const std::string& name) co
   o.id = nextIssueId(P_.issues);
   o.key = P_.settings.key.empty() ? "" : P_.settings.key + "-" + o.id;
   o.type = !p ? "Epic" : (isEpic(*p) ? "Task" : "Sub-task");
-  o.summary = name.empty() ? "新しい課題" : name;
+  o.summary = name.empty() ? kDefaultIssueName : name;
   o.parent = parentId;
   o.prio = "Medium";
   o.status = "To Do";

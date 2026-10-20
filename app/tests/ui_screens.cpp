@@ -250,6 +250,10 @@ int main(int argc, char** argv) {
   u.dlgOpening = true;
   frames(2);
   shot("17_app_settings");
+  c.prefs().newNameFormat = "custom";
+  c.select("11");
+  shot("17b_app_settings_newname");
+  c.prefs().newNameFormat = "keep";
   u.pendingDir = "D:/共有/projects";
   u.pendingCount = 0;
   u.pendingCopy = true;
@@ -268,6 +272,37 @@ int main(int argc, char** argv) {
   c.session()->setResource({true, 1});
   c.afterEdit();
   shot("12_dark_leveling");
+  // 親の名前の見え方（並べ替え中の平らな一覧・その場編集・詳細パネル）を、ライト・ダーク・コンパクトで
+  const auto parentShots = [&](const std::string& tag) {
+    c.setView(app::View::List);
+    c.select("6");
+    u.sortKey = "asg";
+    u.sortDir = 1;
+    shot("30_flat_list_" + tag);
+    u.sortKey.clear();
+    u.sortDir = 0;
+    u.editField = ui::EditField::Name;
+    u.editId = "6";
+    u.editBuf = "候補の洗い出し";
+    u.editStartValue = u.editBuf;
+    u.editFocus = true;
+    shot("31_edit_parent_" + tag);
+    u.editField = ui::EditField::None;
+    u.editId.clear();
+    u.detailOpen = true;
+    shot("32_detail_path_" + tag);
+    u.detailOpen = false;
+  };
+  parentShots("dark");
+  u.t = &ui::lightTokens();
+  ui::applyStyle(*u.t, u.m);
+  parentShots("light");
+  c.setDensity("compact");
+  u.m.compact = true;  // Windows 版は毎フレーム prefs から入れている
+  ui::applyStyle(*u.t, u.m);
+  parentShots("compact");
+  u.m.compact = false;
+  c.setDensity("normal");
   c.createProject(app::SampleKind::EmbeddedSw, "組込みソフトウェア開発", "DEV");
   c.setView(app::View::Gantt);
   c.setUi("zoom", "all");

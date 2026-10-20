@@ -287,11 +287,16 @@ TEST_CASE("store: データフォルダの決定・prefs") {
   p.dimPercent = 45;
   p.confirmDelete = true;
   p.autoBaseToday = true;
+  CHECK(p.newNameFormat == "keep");  // 既定は今のまま
+  p.newNameFormat = "custom";
+  p.newNameCustom = "{親}の子 {n}";
   p.inherit.on = true;
   p.inherit.assignee = false;
   p.inherit.duration = false;
   REQUIRE(savePrefs(fs, "roadmap_prefs.json", p));
   Prefs q = loadPrefs(fs, "roadmap_prefs.json");
+  CHECK(q.newNameFormat == "custom");
+  CHECK(q.newNameCustom == "{親}の子 {n}");
   CHECK(q.me == "田中");
   CHECK(q.dataDir == "data/mine");
   CHECK(q.uiScale == 125);
@@ -314,6 +319,13 @@ TEST_CASE("store: データフォルダの決定・prefs") {
   CHECK(loadPrefs(fs, "low.json").uiScale == 70);
   CHECK(b.dimPercent == 10);
   CHECK(b.dataDir.empty());
+  // 新しい課題の名前: 知らない形式は今のまま、長すぎる自由入力は切る
+  REQUIRE(fs.writeAtomic("nn.json", R"({"newNameFormat": "zzz", "newNameCustom": 5})"));
+  const Prefs n1 = loadPrefs(fs, "nn.json");
+  CHECK(n1.newNameFormat == "keep");
+  CHECK(n1.newNameCustom == Prefs{}.newNameCustom);
+  REQUIRE(fs.writeAtomic("nn2.json", "{\"newNameCustom\": \"" + std::string(500, 'a') + "\"}"));
+  CHECK(loadPrefs(fs, "nn2.json").newNameCustom.size() == 200);
 }
 
 TEST_CASE("store: 共有JSONの書き出しと取り込み") {
