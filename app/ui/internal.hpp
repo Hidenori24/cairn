@@ -52,11 +52,15 @@ inline float dimAlpha(const app::AppController& c) { return static_cast<float>(c
 // 選択をテンプレの追加先にしてダイアログを開く
 void openTplApply(Frame& f);
 void openTplSave(Frame& f, const std::string& id);
+// クリップボードの複数行を、選んだ課題の子としてまとめて作る（プレビューのダイアログを開く）
+void startPasteChildren(Frame& f);
 
 // 件名セル（開閉・種別・表示ID・件名・コメント数・ホバー時の小ボタン）
 struct NameCellOpts {
   bool showHoverButtons = true;
   bool indent = true;
+  // 件名の右に祖先のパスを薄く出す（階層が見えない平らな一覧用。行の高さは変えない）
+  bool showPath = false;
 };
 void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const NameCellOpts& o = {});
 

@@ -11,6 +11,7 @@
 
 #include "roadmap/clock.hpp"
 #include "roadmap/filter.hpp"
+#include "roadmap/outline.hpp"
 #include "roadmap/schedule.hpp"
 #include "roadmap/templates.hpp"
 
@@ -24,6 +25,13 @@ struct Notice {
 
 enum class ExportKind { Jira, App };
 enum class RelocateWhere { Before, After, Into };
+
+// 選んだ課題を順につなぐ結果
+struct ChainResult {
+  bool ok = false;    // 失敗（件数不足・循環）なら false。すでにつながっているだけのときは true
+  int added = 0;      // 足したつなぎの数
+  int existing = 0;   // すでにあったので足さなかったつなぎの数
+};
 
 class Session {
  public:
@@ -56,6 +64,9 @@ class Session {
   // 通知（UI が取り出して表示する）
   std::vector<Notice> takeNotices();
   void notify(std::string text, NoticeAction a = NoticeAction::None);
+  // 追加するときの値の引き継ぎ（設定。取り消しの対象外で、保存もしない）
+  void setInherit(const InheritSpec& s) { inherit_ = s; }
+  const InheritSpec& inherit() const { return inherit_; }
 
   // ---- 計算と取り消し ----
   // 再計算する。エラーなら文字列を返す
@@ -90,10 +101,18 @@ class Session {
   bool setDeadline(std::string id, OptDay day);
   bool addLink(std::string from, std::string to);
   bool removeLink(std::string from, std::string to);
+  // 選んだ課題を A→B→C と順につなぐ（終了→開始）。order は画面の表示順（空なら木の順）。
+  // 親子の両方が選ばれていれば子は数えない。すでにあるつなぎは足さない。
+  // 1つでも循環になるなら何も変えず、理由を通知する。全体で Undo 1回
+  ChainResult chainIssues(std::vector<std::string> ids, const std::vector<std::string>& order = {});
+  // 選んだ課題どうしのつなぎをすべて外す（選ばない課題とのつなぎは残す）。外した数を返す。Undo 1回
+  int unchainIssues(const std::vector<std::string>& ids);
   bool addComment(std::string id, std::string text, std::string who);
   bool delComment(std::string id, std::size_t index);
   bool bulk(std::vector<std::string> ids, const std::function<void(Issue&)>& fn);
   int applyTemplate(std::vector<std::string> parentIds, const Template& tpl);
+  // 貼り付けた複数行（parseOutline の結果）を parentId の子としてまとめて作る（Undo 1回）。作った件数（失敗は 0）
+  int addOutline(const std::string& parentId, const std::vector<OutlineItem>& items);
 
   // ---- 設定の変更（取り消しの対象外。保存はする）----
   void setBaseDate(const std::string& iso);
@@ -132,6 +151,9 @@ class Session {
   void restore(Snapshot s);
   void persist() { ++version_; }
   Issue newIssue(const std::string& parentId, const std::string& name) const;
+  // 引き継ぎを反映する。引き継いだ項目名（「担当者」など）と元（親 / 直前の兄弟）を返す
+  std::vector<std::string> applyInherit(Issue& o, const std::string& parentId, const std::string& afterId,
+                                        bool& fromSibling) const;
   std::string todayMinBase() const;
   Day todayDay() const;
   std::string nowDT() const;
@@ -146,6 +168,7 @@ class Session {
   std::deque<Snapshot> undo_;
   std::vector<Snapshot> redo_;
   std::vector<Notice> notices_;
+  InheritSpec inherit_;
   std::uint64_t version_ = 0;
   int batchDepth_ = 0;
   std::optional<Snapshot> batchSnap_;

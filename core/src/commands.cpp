@@ -1,8 +1,10 @@
 #include "roadmap/commands.hpp"
 
 #include <algorithm>
+#include <unordered_map>
 #include <unordered_set>
 
+#include "roadmap/issue_name.hpp"
 #include "roadmap/text.hpp"
 
 namespace roadmap {
@@ -168,7 +170,7 @@ Issue Session::newIssue(const std::string& parentId, const std::string& name) co
   o.id = nextIssueId(P_.issues);
   o.key = P_.settings.key.empty() ? "" : P_.settings.key + "-" + o.id;
   o.type = !p ? "Epic" : (isEpic(*p) ? "Task" : "Sub-task");
-  o.summary = name.empty() ? "新しい課題" : name;
+  o.summary = name.empty() ? kDefaultIssueName : name;
   o.parent = parentId;
   o.prio = "Medium";
   o.status = "To Do";
@@ -193,8 +195,62 @@ bool Session::isCollapsed(const std::string& id) const {
 
 void Session::touchUi() { persist(); }
 
+std::vector<std::string> Session::applyInherit(Issue& o, const std::string& parentId, const std::string& afterId,
+                                               bool& fromSibling) const {
+  std::vector<std::string> got;
+  fromSibling = false;
+  if (!inherit_.on) return got;
+  const Issue* src = nullptr;
+  if (!afterId.empty()) {
+    const Issue* a = issue(afterId);
+    if (a && a->parent == parentId) {
+      src = a;
+      fromSibling = true;
+    }
+  }
+  if (!src && !parentId.empty()) src = issue(parentId);
+  if (!src) return got;
+  // 値があるものだけ写す（空のものは既定のまま）
+  if (fromSibling && inherit_.type && !src->type.empty() && src->type != o.type) {
+    o.type = src->type;
+    got.push_back("種別");
+  }
+  if (inherit_.assignee && !src->assignee.empty()) {
+    o.assignee = src->assignee;
+    got.push_back("担当者");
+  }
+  if (inherit_.prio && !src->prio.empty() && src->prio != o.prio) {
+    o.prio = src->prio;
+    got.push_back("優先度");
+  }
+  if (inherit_.labels && !src->labels.empty()) {
+    o.labels = src->labels;
+    got.push_back("ラベル");
+  }
+  if (inherit_.deadline) {
+    // 画面に出ている「その課題自身の期限」を写す。Deadline 列の無い CSV では Due date が期限なので、そちらへ
+    OptDay dl = src->deadline;
+    if (!P_.meta.hasDeadlineCol) {
+      dl = std::nullopt;
+      const int si = find(src->id);
+      if (comp_ && si >= 0) dl = comp_->T.ownDl[si];
+    }
+    if (dl) {
+      (P_.meta.hasDeadlineCol ? o.deadline : o.due) = dl;
+      got.push_back("期限");
+    }
+  }
+  if (fromSibling && inherit_.duration && src->durW && src->durW != o.durW) {
+    o.durW = src->durW;
+    got.push_back("期間");
+  }
+  return got;
+}
+
 std::string Session::addIssue(std::string parentId, std::string afterId, std::string name) {
   Issue o = newIssue(parentId, name);
+  bool fromSibling = false;
+  const auto inherited = applyInherit(o, parentId, afterId, fromSibling);
   const std::string id = o.id;
   const bool ok = mutate([&](ProjectData& P) {
     if (!afterId.empty()) {
@@ -206,6 +262,11 @@ std::string Session::addIssue(std::string parentId, std::string afterId, std::st
     }
     if (!parentId.empty()) setCollapsed(parentId, false);
   });
+  if (ok && !inherited.empty()) {
+    std::string t = fromSibling ? "直前の兄弟から引き継ぎました（" : "親から引き継ぎました（";
+    for (std::size_t i = 0; i < inherited.size(); ++i) t += (i ? "・" : "") + inherited[i];
+    notify(t + "）", NoticeAction::Undo);
+  }
   return ok ? id : std::string();
 }
 
@@ -444,6 +505,81 @@ bool Session::removeLink(std::string from, std::string to) {
   });
 }
 
+ChainResult Session::chainIssues(std::vector<std::string> ids, const std::vector<std::string>& order) {
+  ChainResult res;
+  if (!comp_) return res;
+  const Tree& T = comp_->T;
+  // 存在する課題だけ（重複なし）
+  std::vector<int> picked;
+  std::unordered_set<int> seen;
+  for (const auto& id : ids)
+    if (const int i = T.find(id); i >= 0 && seen.insert(i).second) picked.push_back(i);
+  // 親子の両方が選ばれているときは親だけ（子は親のつなぎに含まれる）
+  std::vector<int> kept;
+  for (const int i : picked) {
+    bool anc = false;
+    for (int p = T.parentOf[i]; p >= 0 && !anc; p = T.parentOf[p]) anc = seen.count(p) > 0;
+    if (!anc) kept.push_back(i);
+  }
+  if (kept.size() < 2) {
+    notify("つなぐ課題を2件以上選んでください");
+    return res;
+  }
+  // 並び: 画面の表示順（全員が含まれているとき）、そうでなければ木の順
+  std::unordered_map<std::string, std::size_t> pos;
+  for (std::size_t k = 0; k < order.size(); ++k) pos.emplace(order[k], k);
+  const bool byView = std::all_of(kept.begin(), kept.end(), [&](int i) { return pos.count(T.ids[i]) > 0; });
+  const auto key = [&](int i) { return byView ? pos[T.ids[i]] : static_cast<std::size_t>(T.dfsPos[i]); };
+  std::stable_sort(kept.begin(), kept.end(), [&](int a, int b) { return key(a) < key(b); });
+  // 足すつなぎ（すでにあるものは足さない）
+  std::vector<std::pair<std::string, std::string>> add;
+  for (std::size_t k = 0; k + 1 < kept.size(); ++k) {
+    const Issue& a = comp_->issues[kept[k]];
+    const std::string& to = T.ids[kept[k + 1]];
+    if (std::find(a.blocks.begin(), a.blocks.end(), to) != a.blocks.end()) ++res.existing;
+    else add.emplace_back(T.ids[kept[k]], to);
+  }
+  if (add.empty()) {
+    notify("すでにつながっています");
+    res.ok = true;
+    return res;
+  }
+  // 1回の mutate で足す。循環になれば mutate が巻き戻して理由を通知する
+  if (!mutate([&](ProjectData& P) {
+        for (const auto& [from, to] : add) P.issues[indexOf(P.issues, from)].blocks.push_back(to);
+      }))
+    return res;
+  res.ok = true;
+  res.added = static_cast<int>(add.size());
+  notify(std::to_string(res.added) + "件のつなぎを追加しました" +
+             (res.existing > 0 ? "（" + std::to_string(res.existing) + "件は設定済み）" : ""),
+         NoticeAction::Undo);
+  return res;
+}
+
+int Session::unchainIssues(const std::vector<std::string>& ids) {
+  std::unordered_set<std::string> sel(ids.begin(), ids.end());
+  std::vector<std::pair<std::string, std::string>> del;
+  for (const auto& o : P_.issues) {
+    if (!sel.count(o.id)) continue;
+    for (const auto& b : o.blocks)
+      if (b != o.id && sel.count(b)) del.emplace_back(o.id, b);
+  }
+  if (del.empty()) {
+    notify("外すつなぎがありません");
+    return 0;
+  }
+  if (!mutate([&](ProjectData& P) {
+        for (const auto& [from, to] : del) {
+          auto& b = P.issues[indexOf(P.issues, from)].blocks;
+          b.erase(std::remove(b.begin(), b.end(), to), b.end());
+        }
+      }))
+    return 0;
+  notify(std::to_string(del.size()) + "件のつなぎを外しました", NoticeAction::Undo);
+  return static_cast<int>(del.size());
+}
+
 bool Session::addComment(std::string id, std::string textIn, std::string whoIn) {
   const std::string t = text::trim(textIn);
   if (t.empty() || !issue(id)) return false;
@@ -532,6 +668,57 @@ int Session::applyTemplate(std::vector<std::string> parentIds, const Template& t
     }
   });
   if (ok) notify(std::to_string(made) + "件の子タスクを追加しました", NoticeAction::Undo);
+  return ok ? made : 0;
+}
+
+int Session::addOutline(const std::string& parentId, const std::vector<OutlineItem>& items) {
+  if (items.empty() || !comp_ || !issue(parentId)) return 0;
+  int made = 0;
+  const auto keep = comp_;  // 編集前のツリー（既存の子の数はここから）
+  const Tree& T = keep->T;
+  const bool ok = mutate([&](ProjectData& P) {
+    const auto parIdx = indexOf(P.issues, parentId);
+    if (parIdx < 0) return;
+    const Issue par = P.issues[parIdx];
+    const std::string ptag = tagOf(par.summary).tag;
+    const int ti = T.find(parentId);
+    std::unordered_map<std::string, int> cnt;
+    cnt[parentId] = ti >= 0 ? static_cast<int>(T.kids[ti].size()) : 0;
+    std::unordered_map<std::string, std::string> tagOfId;
+    tagOfId[parentId] = ptag;
+    std::size_t at = afterSubtree(P.issues, parIdx, parentId);
+    std::vector<std::string> lastAt;  // 深さごとの直前の課題
+    for (const auto& it : items) {
+      const int lv = std::max(0, std::min(it.lv, static_cast<int>(lastAt.size())));
+      const std::string up = lv == 0 ? parentId : lastAt[static_cast<std::size_t>(lv) - 1];
+      Issue o;
+      o.id = nextIssueId(P.issues);
+      o.key = P.settings.key.empty() ? "" : P.settings.key + "-" + o.id;
+      o.parent = up;
+      o.prio = "Medium";
+      o.status = "To Do";
+      o.durW = 1;
+      o.extra.assign(P.meta.extraHeaders.size(), "");
+      o.type = (lv == 0 && isEpic(par)) ? "Task" : "Sub-task";
+      cnt[up] += 1;
+      const std::string& upTag = tagOfId[up];
+      // 親に番号タグがあれば、テンプレートと同じく続き番号を付ける（貼り付けたタグは付け替える）
+      std::string name = it.name;
+      if (!upTag.empty()) {
+        const std::string bare = tagOf(name).name;
+        if (!bare.empty()) name = bare;
+      }
+      const std::string tag = upTag.empty() ? "" : upTag + "-" + std::to_string(cnt[up]);
+      tagOfId[o.id] = tag;
+      o.summary = (tag.empty() ? "" : "[" + tag + "] ") + name;
+      lastAt.resize(static_cast<std::size_t>(lv));
+      lastAt.push_back(o.id);
+      P.issues.insert(P.issues.begin() + static_cast<std::ptrdiff_t>(at++), std::move(o));
+      ++made;
+    }
+    setCollapsed(parentId, false);
+  });
+  if (ok && made > 0) notify(std::to_string(made) + "件の子課題を追加しました", NoticeAction::Undo);
   return ok ? made : 0;
 }
 
