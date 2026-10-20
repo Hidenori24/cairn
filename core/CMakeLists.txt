@@ -18,6 +18,7 @@ add_library(roadmap_core STATIC
   src/filter.cpp
   src/link_candidates.cpp
   src/other_links.cpp
+  src/dependency_view.cpp
   src/commands.cpp
   src/outline.cpp
   src/issue_name.cpp

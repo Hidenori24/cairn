@@ -343,6 +343,151 @@ int main(int argc, char** argv) {
     io2.AddMousePosEvent(-1, -1);
     frames(2);
   }
+  // 依存の矢印（Issue #10）: ホバー・つなぎ替え・外す・たどる・クリティカル・日付の衝突を、ライト・ダークで
+  {
+    using Geom = ui::UiState::BarGeom;
+    using AGeom = ui::UiState::ArrowGeom;
+    ImGuiIO& io3 = ImGui::GetIO();
+    const auto arrowShots = [&](const std::string& tag) {
+      c.setView(app::View::Gantt);
+      c.setUi("zoom", "week");
+      c.clearSelection();
+      u.customPx = 0;
+      u.scrollToBase = true;
+      u.detailOpen = false;
+      frames(3);
+      Session* s = c.session();
+      const auto linked = [&](const std::string& from, const std::string& to) {
+        const Issue* o = c.session()->issue(from);
+        return o && std::find(o->blocks.begin(), o->blocks.end(), to) != o->blocks.end();
+      };
+      const auto onScreen = [&](ImVec2 p) { return p.x > u.ganttLeft + 24 && p.x < 1300 && p.y > 170 && p.y < 700; };
+      const auto at = [&](const AGeom& a, float frac) {
+        float total = 0;
+        for (std::size_t i = 0; i + 1 < a.pts.size(); ++i) total += std::hypot(a.pts[i + 1].x - a.pts[i].x, a.pts[i + 1].y - a.pts[i].y);
+        float run = 0;
+        for (std::size_t i = 0; i + 1 < a.pts.size(); ++i) {
+          const float len = std::hypot(a.pts[i + 1].x - a.pts[i].x, a.pts[i + 1].y - a.pts[i].y);
+          if (len > 0 && run + len >= total * frac) {
+            const float t = (total * frac - run) / len;
+            return ImVec2(a.pts[i].x + (a.pts[i + 1].x - a.pts[i].x) * t, a.pts[i].y + (a.pts[i + 1].y - a.pts[i].y) * t);
+          }
+          run += len;
+        }
+        return a.pts.back();
+      };
+      int nConflict = 0, nCritical = 0;
+      for (const auto& a : u.arrowGeom) nConflict += a.conflict, nCritical += a.critical;
+      std::printf("arrows=%zu conflict=%d critical=%d\n", u.arrowGeom.size(), nConflict, nCritical);
+      // つなぎ替えできる矢印（先行・後続とも画面の葉）
+      std::optional<AGeom> pick;
+      for (const auto& a : u.arrowGeom) {
+        bool ok = a.pts.size() >= 4 && linked(a.from, a.to);
+        for (const auto& pt : a.pts) ok = ok && onScreen(pt);
+        const Tree& T = *s->tree();
+        ok = ok && T.find(a.from) >= 0 && T.find(a.to) >= 0 && T.isLeaf(T.find(a.from)) && T.isLeaf(T.find(a.to));
+        if (!ok) continue;
+        for (float fr : {0.75f, 0.7f, 0.8f, 0.65f, 0.85f}) {
+          const ImVec2 pt = at(a, fr);
+          io3.AddMousePosEvent(pt.x, pt.y);
+          frames(2);
+          if (u.arrowHoverFrom == a.from && u.arrowHoverTo == a.to) {
+            pick = a;
+            break;
+          }
+        }
+        if (pick) break;
+      }
+      if (pick) {
+        shot("40_arrow_hover_" + tag);
+        io3.AddMouseButtonEvent(0, true);
+        frames(2);
+        std::optional<Geom> tg;
+        for (const auto& g : u.barGeom) {
+          const Tree& T = *s->tree();
+          const int i = T.find(g.id);
+          if (i < 0 || !T.isLeaf(i) || g.id == pick->from || g.id == pick->to || g.xl < u.ganttLeft + 30 || g.xr > 1300 || g.cy < 175 ||
+              g.cy > 700 || g.xr - g.xl < 12)
+            continue;
+          if (s->previewLink(pick->from, g.id, pick->from, pick->to).block == LinkBlock::None) {
+            tg = g;
+            break;
+          }
+        }
+        if (tg) {
+          io3.AddMousePosEvent((tg->xl + tg->xr) / 2, tg->cy);
+          shot("41_arrow_reattach_" + tag);
+        }
+        io3.AddMousePosEvent(u.ganttLeft + 6, 520);  // バーのない場所（外す）
+        shot("42_arrow_remove_" + tag);
+        io3.AddKeyEvent(ImGuiKey_Escape, true);
+        frames(1);
+        io3.AddKeyEvent(ImGuiKey_Escape, false);
+        frames(1);
+        io3.AddMouseButtonEvent(0, false);
+        frames(2);
+      }
+      io3.AddMousePosEvent(-1, -1);
+      frames(2);
+      // 依存をたどる + クリティカルの強調
+      std::string withLinks;
+      {
+        const Tree& T = *s->tree();
+        for (int i : T.leafOrder)
+          if (!T.preds[i].empty() && !T.succs[i].empty()) {
+            withLinks = T.ids[i];
+            break;
+          }
+      }
+      if (!withLinks.empty()) c.select(withLinks);
+      c.setUiSub("dep", "trace", true);
+      shot("43_trace_" + tag);
+      c.setUiSub("dep", "trace", false);
+      c.clearSelection();
+      c.setUiSub("dep", "crit", true);
+      shot("44_critical_" + tag);
+      c.setUiSub("dep", "crit", false);
+      frames(2);
+    };
+    c.setView(app::View::Gantt);
+    arrowShots("light");
+    // 日付の衝突（進行中の後続が先行より前から始まっている）と、余裕 0 の連鎖（期限ちょうど）を作って見る
+    Session* s3 = c.session();
+    const std::size_t undo3 = s3->undoSize();
+    {
+      std::string dev7;
+      for (int i = 0; i < s3->tree()->n; ++i)
+        if (s3->tree()->did[i] == "DEV-7") dev7 = s3->tree()->ids[i];
+      s3->setField(dev7, [&](Issue& o) {
+        o.status = "In Progress";
+        o.start = s3->baseDay() - 7;
+      });
+      c.afterEdit();
+      frames(2);
+      std::vector<std::pair<std::string, Day>> ends;  // 末端の課題（後続なし）を、いまの完了日を期限にする
+      for (int i : s3->tree()->leafOrder)
+        if (s3->tree()->succs[i].empty() && !(*s3->rows())[i].done) ends.emplace_back(s3->tree()->ids[i], (*s3->rows())[i].asapFinish);
+      for (const auto& [id, d] : ends) s3->setDeadline(id, d);
+      c.afterEdit();
+      frames(2);
+    }
+    c.setUiSub("dep", "crit", true);
+    shot("45_conflict_critical_light");
+    c.setUiSub("dep", "crit", false);
+    u.t = &ui::darkTokens();
+    ui::applyStyle(*u.t, u.m);
+    arrowShots("dark");
+    c.setUiSub("dep", "crit", true);
+    shot("45_conflict_critical_dark");
+    c.setUiSub("dep", "crit", false);
+    while (s3->undoSize() > undo3 && s3->undo()) {
+    }
+    c.afterEdit();
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    io3.AddMousePosEvent(-1, -1);
+    frames(2);
+  }
   // アプリの設定（保存先の切り替えの確認中）・削除の確認
   u.dlg = ui::Dlg::AppSettings;
   u.dlgOpening = true;

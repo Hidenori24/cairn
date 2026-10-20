@@ -498,15 +498,30 @@ bool Session::addLink(std::string from, std::string to) {
   return mutate([&](ProjectData& P) { P.issues[indexOf(P.issues, from)].blocks.push_back(to); });
 }
 
-LinkPreview Session::previewLink(const std::string& from, const std::string& to) const {
+LinkPreview Session::previewLink(const std::string& from, const std::string& to, const std::string& dropFrom,
+                                 const std::string& dropTo) const {
   LinkPreview out;
   if (!comp_) return out;
   const Tree& T = comp_->T;
   const int a = T.find(from), b = T.find(to);
-  out.block = checkLink(T, comp_->issues, a, b);
-  if (out.block != LinkBlock::None) return out;
-  // 課題の写しに足して、同じ設定で計算し直す（本物の課題・取り消しの履歴は触らない）
-  std::vector<Issue> issues = comp_->issues;
+  // 課題の写しで計算する（本物の課題・取り消しの履歴は触らない）
+  std::vector<Issue> issues;
+  if (dropFrom.empty()) {
+    out.block = checkLink(T, comp_->issues, a, b);
+    if (out.block != LinkBlock::None) return out;
+    issues = comp_->issues;
+  } else {
+    // 付け替え: 元のつなぎを外した状態で、つなげるかを判定する
+    const int d = T.find(dropFrom);
+    if (d < 0) return out;
+    issues = comp_->issues;
+    auto& bl = issues[static_cast<std::size_t>(d)].blocks;
+    bl.erase(std::remove(bl.begin(), bl.end(), dropTo), bl.end());
+    auto t0 = buildTree(issues, P_.meta);
+    if (!t0 || t0->n != T.n) return out;
+    out.block = checkLink(*t0, issues, a, b);
+    if (out.block != LinkBlock::None) return out;
+  }
   issues[static_cast<std::size_t>(a)].blocks.push_back(to);
   auto t = buildTree(issues, P_.meta);
   if (!t || t->n != T.n) return out;
@@ -529,6 +544,26 @@ LinkPreview Session::previewLink(const std::string& from, const std::string& to)
       out.delayDays = std::max(out.delayDays, cal_.floatDays(r0.asapStart, r1.asapStart));
   }
   return out;
+}
+
+bool Session::relinkIssue(std::string oldFrom, std::string oldTo, std::string newFrom, std::string newTo) {
+  const Issue* of = issue(oldFrom);
+  if (!of || !issue(oldTo) || !issue(newFrom) || !issue(newTo)) return false;
+  if (std::find(of->blocks.begin(), of->blocks.end(), oldTo) == of->blocks.end()) return false;  // 元のつなぎがない
+  if (oldFrom == newFrom && oldTo == newTo) return false;
+  // 元のつなぎを外した状態でつなげるか（循環・重複・親子・自分自身）
+  const LinkPreview pv = previewLink(newFrom, newTo, oldFrom, oldTo);
+  if (pv.block != LinkBlock::None) {
+    notify(std::string("つなぎ替えできません: ") + linkBlockReason(pv.block));
+    return false;
+  }
+  return mutate([&](ProjectData& P) {
+    auto& ob = P.issues[static_cast<std::size_t>(indexOf(P.issues, oldFrom))].blocks;
+    const auto pos = static_cast<std::size_t>(std::find(ob.begin(), ob.end(), oldTo) - ob.begin());
+    ob.erase(std::remove(ob.begin(), ob.end(), oldTo), ob.end());
+    if (oldFrom == newFrom) ob.insert(ob.begin() + static_cast<std::ptrdiff_t>(std::min(pos, ob.size())), newTo);  // 並びを保つ
+    else P.issues[static_cast<std::size_t>(indexOf(P.issues, newFrom))].blocks.push_back(newTo);
+  });
 }
 
 bool Session::removeLink(std::string from, std::string to) {
