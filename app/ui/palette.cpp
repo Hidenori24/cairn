@@ -68,11 +68,11 @@ std::vector<Cmd> buildCommands(Frame& f) {
         if (!T->kids[id].empty()) col[T->ids[id]] = true;
       c.setUi("collapsed", col);
     });
-    add("表示", "遅れだけを表示", nullptr, [&c] { c.filter().flt = FltFilter::Late; });
-    add("表示", "余裕小だけを表示", nullptr, [&c] { c.filter().flt = FltFilter::Tight; });
+    add("表示", "遅れを目立たせる（ほかを薄く）", nullptr, [&c] { c.filter().flt = FltFilter::Late; });
+    add("表示", "余裕小を目立たせる（ほかを薄く）", nullptr, [&c] { c.filter().flt = FltFilter::Tight; });
     add("表示", "絞り込みを解除", nullptr, [&c] { c.clearFilter(); });
-    add("表示", "未完了だけを表示", nullptr, [&c] { c.filter().flt = FltFilter::Open; });
-    add("表示", "担当者が未割当の課題だけを表示", nullptr, [&c] { c.filter().asg = AsgFilter::Unassigned; });
+    add("表示", "未完了を目立たせる（ほかを薄く）", nullptr, [&c] { c.filter().flt = FltFilter::Open; });
+    add("表示", "担当者が未割当の課題を目立たせる（ほかを薄く）", nullptr, [&c] { c.filter().asg = AsgFilter::Unassigned; });
   }
   add("表示", "密度の切替", nullptr, [&c] { c.setDensity(c.prefs().density == "compact" ? "normal" : "compact"); });
   add("表示", "テーマの切替（自動→ライト→ダーク）", nullptr, [&c] {

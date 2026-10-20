@@ -1,7 +1,7 @@
 # CI（SPEC 12.6）
 # - Linux: core と cli を GCC・Clang で -Werror、ASan + UBSan で ctest。UI はヘッドレスの煙テスト
-# - Windows: MSVC（/MT・/W4 /WX）で exe とテスト。exe をアーティファクトに
-# - タグ v*: exe とチェックサムをリリースに添付
+# - Windows: MSVC（/MT・/W4 /WX）で exe とテスト。ポータブル版のフォルダ（exe・data\projects・samples）をアーティファクトに
+# - タグ v*: ポータブル版の zip とチェックサムをリリースに添付
 name: ci
 
 on:
@@ -86,12 +86,12 @@ jobs:
           $exe = Get-Item build/windows-release/app/ProjectRoadmap.exe
           "{0:N1} MB" -f ($exe.Length / 1MB)
           if ($exe.Length -gt 10MB) { throw "exe が 10MB を超えています" }
+      - name: ポータブル版のフォルダ（exe・data\projects・samples・README）
+        run: cmake --install build/windows-release --component portable --prefix dist/ProjectRoadmap
       - uses: actions/upload-artifact@v6
         with:
           name: ProjectRoadmap-windows
-          path: |
-            build/windows-release/app/ProjectRoadmap.exe
-            build/windows-release/cli/rmcli.exe
+          path: dist/
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -104,10 +104,14 @@ jobs:
         with:
           name: ProjectRoadmap-windows
           path: dist
-      - name: checksums
-        run: cd dist && find . -name '*.exe' -exec sha256sum {} \; > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: zip とチェックサム
+        run: |
+          cd dist
+          zip -r -X ProjectRoadmap-windows-x64.zip ProjectRoadmap
+          sha256sum ProjectRoadmap-windows-x64.zip ProjectRoadmap/*.exe > SHA256SUMS.txt
+          cat SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/**/*.exe
+            dist/ProjectRoadmap-windows-x64.zip
             dist/SHA256SUMS.txt

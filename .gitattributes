@@ -9,3 +9,5 @@ app/resources/*.csv -text
 *.md text eol=lf
 *.cmake text eol=lf
 CMakeLists.txt text eol=lf
+# 配布物の説明はメモ帳で読むので CRLF
+packaging/** text eol=crlf

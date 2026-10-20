@@ -94,10 +94,22 @@ class AppController {
   std::vector<std::string> selectionRoots() const;
 
   // ---- 絞り込み ----
+  // 上のバーの条件（filter）: 検索語は一致しない課題を隠し、それ以外（担当・状況・優先度・遅れ/余裕小）は薄くする。
+  // 列見出しの条件（columnFilter）: 一致しない課題を隠す
   Filter& filter() { return filter_; }
   const Filter& filter() const { return filter_; }
-  void clearFilter() { filter_ = Filter{}; }
+  ColumnFilter& columnFilter() { return colFilter_; }
+  const ColumnFilter& columnFilter() const { return colFilter_; }
+  Filter hideFilter() const;  // 隠す条件（検索語だけ）
+  Filter dimFilter() const;   // 薄くする条件（検索語以外）
+  bool filterActive() const { return filter_.active() || colFilter_.active(); }
+  void clearFilter() { filter_ = Filter{}, colFilter_ = ColumnFilter{}; }
   std::string filterLabel() const;  // 効いている条件の名前
+  // 表示する行・末端（隠す条件と列の条件を当てたもの）
+  std::vector<VisibleRow> visibleRows() const;
+  std::vector<int> visibleLeaves() const;
+  // 薄くする課題（添字ごと。薄くする条件がなければ空）
+  std::vector<char> dimmedSet() const;
 
   // ---- 選択への操作（Undo 1回で戻る）----
   void indentSelection();
@@ -164,6 +176,7 @@ class AppController {
   std::vector<std::string> sel_;
   std::string cursor_, anchor_;
   Filter filter_;
+  ColumnFilter colFilter_;
 
   std::vector<Toast> toasts_;
   int toastSeq_ = 0;

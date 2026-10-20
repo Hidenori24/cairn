@@ -257,7 +257,7 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
   }
   const int nc = static_cast<int>(is.comments.size());
   const bool hov = ImGui::IsMouseHoveringRect(pos, ImVec2(pos.x + size.x, pos.y + size.y)) && o.showHoverButtons;
-  float avail = right - x - (nc ? u.m.s(30) : 0) - (hov ? u.m.s(48) : 0);
+  float avail = right - x - (nc ? u.m.s(30) : 0) - (hov ? u.m.s(72) : 0);
   if (r.isPar) ImGui::PushFont(u.fontBold);
   const std::string nm = ellipsize(T.name[r.id], std::max(10.f, avail));
   const ImVec2 nsz = ImGui::CalcTextSize(nm.c_str());
@@ -271,6 +271,14 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
   }
   if (hov) {
     ImGui::PushID(id.c_str());
+    // 削除（子も消える。通知の「元に戻す」で戻せる）
+    ImGui::SetCursorScreenPos(ImVec2(right - u.m.s(72), cy - u.m.s(12)));
+    const ImVec2 b0 = ImGui::GetCursorScreenPos();
+    bool del = false;
+    if (ImGui::InvisibleButton("##del", ImVec2(u.m.s(22), u.m.s(22)))) del = true;
+    const bool delHov = ImGui::IsItemHovered();
+    tip(r.isPar ? "削除（子の課題も削除。元に戻せます）" : "削除（元に戻せます）");
+    drawIcon(dl, "trash", ImVec2(b0.x + u.m.s(3), b0.y + u.m.s(3)), u.m.s(16), delHov ? u.t->late : u.t->muted);
     ImGui::SetCursorScreenPos(ImVec2(right - u.m.s(48), cy - u.m.s(12)));
     const ImVec2 b = ImGui::GetCursorScreenPos();
     if (ImGui::InvisibleButton("##add", ImVec2(u.m.s(22), u.m.s(22)))) {
@@ -286,6 +294,10 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
     tip("詳細を開く");
     drawIcon(dl, "right", ImVec2(b2.x + u.m.s(3), b2.y + u.m.s(3)), u.m.s(16), u.t->muted);
     ImGui::PopID();
+    if (del) {
+      s->deleteIssues({id});
+      f.c.afterEdit();
+    }
   }
 }
 
@@ -599,7 +611,7 @@ void drawToolBar(Frame& f) {
       if (k == cur) pv = l;
     if (combo("##lane", u.m.s(170), pv.c_str(), items, cur)) c.setUi("lane", cur);
   }
-  if (fl.active()) {
+  if (c.filterActive()) {
     ImGui::SameLine(0, u.m.s(12));
     const std::string l = "絞り込み解除（" + c.filterLabel() + "）";
     if (iconTextButton(u, "clrf", "x", l.c_str())) c.clearFilter();
@@ -1070,6 +1082,7 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
   drawToasts(f);
   handleKeys(f);
   ImGui::PopFont();
+  u.openColFilter.clear();  // 見出しが出ていない列の要求は捨てる
   c.afterEdit();
   c.releaseFrame();
 }

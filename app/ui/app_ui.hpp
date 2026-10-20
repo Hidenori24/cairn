@@ -105,6 +105,7 @@ struct UiState {
 
   // リスト
   std::string sortKey;
+  std::string openColFilter;  // 次のフレームで開く列の絞り込み（列のキー）
   int sortDir = 0;  // 0=解除 1=昇順 -1=降順
 
   // 画面に並んでいる順（Shift 選択・矢印用）

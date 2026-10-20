@@ -165,6 +165,7 @@ void AppController::openSession(const std::string& id, bool keepHistory) {
   if (!session_->error().empty()) toast("このプロジェクトを計算できません: " + session_->error());
   absorbNotices();
   seenVersion_ = session_->version();
+  if (currentId_ != id) colFilter_ = ColumnFilter{};  // 列の値はプロジェクトごとに違う
   currentId_ = id;
   firstRun_ = false;
   sel_.clear();
@@ -461,9 +462,34 @@ std::vector<std::string> AppController::selectionRoots() const {
   return out;
 }
 
+Filter AppController::hideFilter() const {
+  Filter f;
+  f.q = filter_.q;
+  return f;
+}
+Filter AppController::dimFilter() const {
+  Filter f = filter_;
+  f.q.clear();
+  return f;
+}
+std::vector<VisibleRow> AppController::visibleRows() const {
+  return session_ ? session_->visibleRows(hideFilter(), &colFilter_) : std::vector<VisibleRow>{};
+}
+std::vector<int> AppController::visibleLeaves() const {
+  return session_ ? session_->visibleLeaves(hideFilter(), &colFilter_) : std::vector<int>{};
+}
+std::vector<char> AppController::dimmedSet() const {
+  const Filter d = dimFilter();
+  if (!session_ || !d.active()) return {};
+  auto m = session_->matchSet(d);
+  for (auto& x : m) x = !x;
+  return m;
+}
+
 std::string AppController::filterLabel() const {
   std::vector<std::string> v;
   if (!filter_.text_q_empty()) v.push_back("検索");
+  if (colFilter_.active()) v.push_back("列");
   if (filter_.asg != AsgFilter::All) v.push_back("担当");
   if (filter_.st != StFilter::All) v.push_back("状況");
   if (!filter_.pr.empty()) v.push_back("優先度");

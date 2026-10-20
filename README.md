@@ -45,6 +45,26 @@ ctest --preset linux-asan
 cmake --preset linux-ui && cmake --build --preset linux-ui && ctest --preset linux-ui
 ```
 
+### ポータブル版のフォルダ
+
+配布用には exe の隣に保存先などのフォルダを並べた形にします（GitHub Actions の成果物とリリースの zip も同じ形）。
+
+```sh
+cmake --install build/windows-release --component portable --prefix dist/ProjectRoadmap
+```
+
+```
+ProjectRoadmap/
+  ProjectRoadmap.exe   アプリ本体（DLL 不要）
+  rmcli.exe            コマンドライン版
+  README.txt           使い方とフォルダの説明
+  THIRD_PARTY.md
+  data/projects/       保存先（_バックアップ/・_削除済み/ は必要になったら作る）
+  samples/             取り込みを試せるサンプル CSV
+```
+
+フォルダごと移せば、データと設定（`roadmap_prefs.json` も exe の隣）がそのまま使えます。中身は `packaging/portable/` にあります。
+
 ## 使い方
 
 `ProjectRoadmap.exe` を実行します。初回はデータフォルダが空なので「はじめに」画面から、空のプロジェクト・サンプル・CSVの取り込みを選びます。
@@ -52,6 +72,8 @@ cmake --preset linux-ui && cmake --build --preset linux-ui && ctest --preset lin
 - データフォルダ: `--data <フォルダ>` > 環境変数 `ROADMAP_DATA` > 実行ファイルの横の `data/projects/`（書き込めなければ `%LOCALAPPDATA%\ProjectRoadmap\projects\`）
 - 端末ごとの設定（テーマ・密度・テンプレートなど）: 実行ファイルの横の `roadmap_prefs.json`
 - 上書きする前の CSV は、起動してから最初の1回だけ `_バックアップ/` に残します（30個まで）。削除したプロジェクトは `_削除済み/` へ移します
+- 絞り込み: 上のバーの担当・状況・優先度と「遅れ」「余裕小」のチップは、一致しない課題を**薄く**表示します（行は減らない）。検索語と、表の列名の右の漏斗（列の絞り込み）は、一致しない課題を**隠し**ます
+- 削除: 行（ボードはカード）にマウスを載せると出るごみ箱、`Delete` キー、右クリックのメニュー。通知の「元に戻す」で戻せます
 - 主なキー: `Ctrl+K` コマンドパレット、`1`〜`4` ビュー切替、`N` 追加、`Tab`/`Shift+Tab` 階層、`Enter`/`F2` 名前の編集、`?` ショートカット一覧
 
 ### rmcli

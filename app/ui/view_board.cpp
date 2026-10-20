@@ -33,6 +33,7 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, std::s
   ImGui::SetNextItemAllowOverlap();
   ImGui::InvisibleButton("##card", ImVec2(w, h));
   const bool hov = ImGui::IsItemHovered();
+  const bool inCard = ImGui::IsMouseHoveringRect(p, q) && ImGui::IsWindowHovered() && !gCardDrag.active;
   if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) rowClick(f, sid);
   if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) openContext(f, sid);
   if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) openDetail(f, sid, 0);
@@ -55,7 +56,17 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, std::s
     floatChip(u, r);
   }
   y += lh + u.m.s(3);
-  dl->AddText(ImVec2(x0, y), u.t->ink, ellipsize(T.name[id], w - u.m.s(20)).c_str());
+  dl->AddText(ImVec2(x0, y), u.t->ink, ellipsize(T.name[id], w - u.m.s(inCard ? 44 : 20)).c_str());
+  bool del = false;
+  if (inCard) {
+    // 削除（通知の「元に戻す」で戻せる）
+    const ImVec2 b(q.x - u.m.s(28), y - u.m.s(3));
+    ImGui::SetCursorScreenPos(b);
+    if (ImGui::InvisibleButton("##del", ImVec2(u.m.s(22), u.m.s(22)))) del = true;
+    const bool delHov = ImGui::IsItemHovered();
+    tip("削除（元に戻せます）");
+    drawIcon(dl, "trash", ImVec2(b.x + u.m.s(3), b.y + u.m.s(3)), u.m.s(16), delHov ? u.t->late : u.t->muted);
+  }
   y += lh;
   // 祖先の名前
   {
@@ -86,6 +97,10 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, std::s
   ImGui::PopID();
   ImGui::SetCursorScreenPos(ImVec2(p.x, q.y + u.m.s(8)));
   ImGui::Dummy(ImVec2(w, 0));
+  if (del) {
+    s->deleteIssues({sid});
+    c.afterEdit();
+  }
 }
 }  // namespace
 
@@ -96,7 +111,8 @@ void drawBoardView(Frame& f, ImVec2 size) {
   if (!s->tree()) return;
   const Tree& T = *s->tree();
   const auto& I = s->viewIssues();
-  const auto leaves = s->visibleLeaves(c.filter());
+  const auto leaves = c.visibleLeaves();
+  const std::vector<char> dim = c.dimmedSet();
   u.order.clear();
   for (int id : leaves) u.order.push_back(T.ids[id]);
   const std::vector<int> rootIdx = rootIndexMap(T, I);
@@ -180,7 +196,10 @@ void drawBoardView(Frame& f, ImVec2 size) {
       ImGui::SetCursorScreenPos(ImVec2(x + u.m.s(6), cy));
       for (int id : ids)
         if (colOf(id) == k) {
-          drawCard(f, id, colW - u.m.s(12), rootIdx, dummy);
+          {
+            FadeScope fade(dl, isDimmed(u, dim, id, T.ids[id]));
+            drawCard(f, id, colW - u.m.s(12), rootIdx, dummy);
+          }
           cy = ImGui::GetCursorScreenPos().y;
           ImGui::SetCursorScreenPos(ImVec2(x + u.m.s(6), cy));
         }

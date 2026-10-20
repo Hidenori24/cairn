@@ -202,6 +202,26 @@ int main(int argc, char** argv) {
   shot("11_settings");
   u.dlg = ui::Dlg::None;
   frames(2);
+  // 上の絞り込み（一致しないものは薄く）・列の絞り込み・行のごみ箱
+  c.clearSelection();
+  c.filter().st = StFilter::Done;
+  shot("13_dim_gantt");
+  c.setView(app::View::Board);
+  c.setUi("lane", "none");
+  shot("14_dim_board");
+  c.filter() = {};
+  c.setView(app::View::List);
+  u.openColFilter = "asg";
+  shot("15_colfilter_popup");
+  ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, true);
+  frames(1);
+  ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, false);
+  c.columnFilter().toggle("status", "Done");
+  c.setView(app::View::Gantt);
+  ImGui::GetIO().AddMousePosEvent(200, 190);
+  shot("16_colfilter_hover");
+  c.clearFilter();
+  ImGui::GetIO().AddMousePosEvent(-1, -1);
   u.t = &ui::darkTokens();
   ui::applyStyle(*u.t, u.m);
   c.session()->setResource({true, 1});

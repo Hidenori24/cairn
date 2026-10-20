@@ -209,6 +209,58 @@ int main() {
   h.frame(3);
   h.u.sortDir = 0;
   h.c.filter() = {};
+  // 上の絞り込みは薄くするだけ（行は減らない）・列の絞り込みは隠す
+  {
+    const std::size_t all = h.c.visibleRows().size();
+    h.c.filter().st = StFilter::Done;
+    h.c.filter().flt = FltFilter::Late;
+    for (auto v : {app::View::Gantt, app::View::Board, app::View::List}) {
+      h.c.setView(v);
+      h.frame(2);
+    }
+    check(h.c.visibleRows().size() == all, "上の絞り込みでは行が減らない");
+    check(!h.c.dimmedSet().empty(), "上の絞り込みで薄くする課題がある");
+    h.c.filter() = {};
+    h.c.setView(app::View::List);
+    for (const char* col : {"name", "type", "status", "asg", "prio", "float"}) {
+      h.u.openColFilter = col;
+      h.frame(2);
+      h.key(ImGuiKey_Escape);
+    }
+    h.c.setView(app::View::Gantt);
+    for (const char* col : {"name", "asg", "status", "float"}) {
+      h.u.openColFilter = col;
+      h.frame(2);
+      h.key(ImGuiKey_Escape);
+    }
+    h.c.columnFilter().toggle("status", "To Do");
+    h.frame(2);
+    check(h.c.visibleRows().size() < all, "列の絞り込みで行が隠れる");
+    h.c.setView(app::View::List);
+    h.u.sortKey = "status";
+    h.u.sortDir = 1;
+    h.frame(2);
+    h.u.sortDir = 0;
+    h.u.sortKey.clear();
+    h.c.clearFilter();
+    h.frame(2);
+  }
+  // 行にマウスを載せると出るごみ箱で削除し、元に戻す
+  {
+    h.c.setView(app::View::Gantt);
+    h.frame(2);
+    const std::size_t n0 = h.c.session()->issues().size();
+    for (float y = 120; y < 260 && h.c.session()->issues().size() == n0; y += 4) h.click(253, y);
+    check(h.c.session()->issues().size() < n0, "ごみ箱のボタンで削除");
+    h.c.undo();
+    h.frame(2);
+    check(h.c.session()->issues().size() == n0, "ごみ箱で削除したものを元に戻す");
+    h.c.setView(app::View::Board);
+    for (float y = 120; y < 400; y += 40) {
+      ImGui::GetIO().AddMousePosEvent(200, y);
+      h.frame(2);
+    }
+  }
   // スイムレーン
   h.c.setView(app::View::Board);
   for (const char* l : {"none", "asg", "root"}) {

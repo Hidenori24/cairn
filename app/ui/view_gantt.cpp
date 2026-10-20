@@ -149,7 +149,8 @@ void drawGanttView(Frame& f, ImVec2 size) {
   for (const auto& cd : cols) leftW += cd.w;
 
   // 行
-  const auto rows = s->visibleRows(c.filter());
+  const auto rows = c.visibleRows();
+  const std::vector<char> dim = c.dimmedSet();
   u.order.clear();
   std::vector<int> rowOf(T.n, -1);
   for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -264,6 +265,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
     const float y = rowY(i);
     const Risk risk = riskOf(r.floatDays, r.done);
     const ImU32 bc = colorOf(id, risk);
+    FadeScope fade(dl, isDimmed(u, dim, id, T.ids[id]));  // 上の絞り込みに一致しない行は薄く
     // 左の表（横スクロールで固定）
     ImGui::PushClipRect(ImVec2(wp.x, bodyTop), ImVec2(wp.x + leftW, tlMax.y), true);
     drawTableRow(f, vr, ImVec2(wp.x, y), leftW, cols, false, relatedRows.count(i) > 0 || T.ids[id] == cur);
@@ -407,6 +409,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
         ImU32 col = sr.floatDays < 0 ? u.t->late : sr.floatDays == 0 ? u.t->tightEdge : u.t->arrow;
         if (ar.hot) col = u.t->accent;
         else if (curIdx >= 0) col = withAlpha(col, 0.35f);
+        if (!ar.hot && isDimmed(u, dim, ia, T.ids[ia]) && isDimmed(u, dim, ib, T.ids[ib])) col = withAlpha(col, 0.3f);
         const float kk = u.m.s(6);
         std::vector<ImVec2> pts;
         if (x1 >= x0 + u.m.s(12)) {

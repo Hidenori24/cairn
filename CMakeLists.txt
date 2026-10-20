@@ -44,3 +44,13 @@ endif()
 if(ROADMAP_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
+
+# ポータブル版のフォルダ構成（cmake --install <build> --component portable --prefix <出力先>）
+# exe の隣に data\projects\（保存先）・samples\・README.txt を置く。依存ライブラリの install は含めない
+if(WIN32 AND ROADMAP_BUILD_APP)
+  install(TARGETS roadmap_app rmcli RUNTIME DESTINATION . COMPONENT portable)
+  install(DIRECTORY packaging/portable/ DESTINATION . COMPONENT portable)
+  install(FILES golden/samples/regulation_roadmap.csv golden/samples/hierarchy_demo.csv golden/samples/leveling_demo.csv
+          DESTINATION samples COMPONENT portable)
+  install(FILES THIRD_PARTY.md DESTINATION . COMPONENT portable)
+endif()

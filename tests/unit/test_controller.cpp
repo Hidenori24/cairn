@@ -145,3 +145,35 @@ TEST_CASE("controller: 削除・複製・テンプレートの保存") {
   e.c.deleteTemplate(id);
   CHECK(e.c.templates().size() == builtinTemplates().size());
 }
+
+TEST_CASE("controller: 上の絞り込みは薄くするだけ・検索語と列の絞り込みは隠す") {
+  Env e;
+  e.c.start();
+  e.c.createProject(SampleKind::Hierarchy, "H", "");
+  Session* s = e.c.session();
+  const std::size_t all = e.c.visibleRows().size();
+  CHECK(e.c.dimmedSet().empty());
+  e.c.filter().st = StFilter::Done;  // 状況で絞る → 行は減らず、一致しない末端が薄くなる
+  CHECK(e.c.visibleRows().size() == all);
+  const auto dim = e.c.dimmedSet();
+  REQUIRE(dim.size() == static_cast<std::size_t>(s->tree()->n));
+  int nDim = 0;
+  for (int id : s->tree()->leafOrder) nDim += dim[id] ? 1 : 0;
+  CHECK(nDim > 0);
+  CHECK(nDim < static_cast<int>(s->tree()->leafOrder.size()));
+  CHECK(e.c.filterActive());
+  // 列の絞り込みは隠す
+  e.c.columnFilter().toggle("status", "Done");
+  CHECK(e.c.visibleRows().size() < all);
+  for (int id : e.c.visibleLeaves()) CHECK(columnValue("status", s->issues()[id], (*s->rows())[id]) != "Done");
+  CHECK(e.c.filterLabel() == "列・状況");
+  e.c.clearFilter();
+  CHECK(e.c.visibleRows().size() == all);
+  CHECK_FALSE(e.c.filterActive());
+  // 別のプロジェクトを開くと列の絞り込みは解除
+  e.c.columnFilter().toggle("asg", kUnassignedValue);
+  const std::string first = e.c.currentId();
+  e.c.createProject(SampleKind::Regulation, "R", "");
+  CHECK_FALSE(e.c.columnFilter().active());
+  CHECK(e.c.currentId() != first);
+}
