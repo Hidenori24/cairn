@@ -9,6 +9,7 @@
 #include <string>
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include "app_controller.hpp"
 #include "roadmap/gen.hpp"
@@ -28,6 +29,8 @@ struct NullPlatform : ui::IPlatform {
   std::optional<std::string> picked;
   bool systemDark() override { return false; }
   void requestQuit() override {}
+  std::optional<std::string> clip;  // クリップボードの代わり（テストが差し替える）
+  std::optional<std::string> clipboardText() override { return clip; }
 };
 
 int failures = 0;
@@ -209,6 +212,57 @@ int main() {
     h.frame(3);
     h.u.dlg = ui::Dlg::None;
     h.frame(1);
+  }
+  // 貼り付け: Ctrl+V → プレビュー → 追加 → 元に戻す（クリップボードはスタブ）
+  {
+    h.c.setView(app::View::List);
+    h.u.editField = ui::EditField::None;
+    h.frame(2);
+    const std::size_t n0 = h.c.session()->issues().size();
+    // 親が選ばれていない・クリップボードが空のときはダイアログを開かない
+    h.c.clearSelection();
+    h.p.clip = "a\nb";
+    h.key(ImGuiKey_V, true);
+    check(h.u.dlg == ui::Dlg::None, "親が選ばれていなければ貼り付けのダイアログを開かない");
+    h.c.select("6");
+    h.p.clip = std::nullopt;
+    h.key(ImGuiKey_V, true);
+    check(h.u.dlg == ui::Dlg::None, "クリップボードが空ならダイアログを開かない");
+    h.p.clip = " \n\u3000\n";
+    h.key(ImGuiKey_V, true);
+    check(h.u.dlg == ui::Dlg::None, "空行だけなら開かない");
+    // 解析 → プレビュー（階層が飛ぶ行は丸めて警告）
+    h.p.clip = "子A\n\t孫A1\n\t\t\t飛んだ孫\n- 子B\r\n\n";
+    h.key(ImGuiKey_V, true);
+    check(h.u.dlg == ui::Dlg::PasteChildren, "Ctrl+V で貼り付けのプレビューを開く");
+    check(h.u.paste.items.size() == 4 && !h.u.paste.warns.empty(), "プレビューの件数と警告");
+    h.frame(3);
+    // Esc で取り消し（何も作らず、貼り付けた内容も捨てる）
+    h.key(ImGuiKey_Escape);
+    check(h.u.dlg == ui::Dlg::None && h.u.paste.items.empty(), "Esc で取り消せる");
+    check(h.c.session()->issues().size() == n0, "取り消したら作らない");
+    // 「追加」ボタン（Esc は選択も外すので、選び直す）
+    h.c.select("6");
+    h.key(ImGuiKey_V, true);
+    check(h.u.dlg == ui::Dlg::PasteChildren, "もう一度開く");
+    h.frame(3);
+    ImGuiWindow* w = ImGui::FindWindowByName("###dlg");
+    check(w != nullptr, "ダイアログの窓");
+    if (w) {
+      // 右下の主ボタン。位置は字の幅に左右されるので、窓の中を縦に探す
+      for (float dy = 8; dy < 50 && h.u.dlg == ui::Dlg::PasteChildren; dy += 4) h.click(w->Pos.x + w->Size.x - 45, w->Pos.y + w->Size.y - dy);
+      h.frame(2);
+    }
+    check(h.u.dlg == ui::Dlg::None, "追加でダイアログが閉じる");
+    check(h.c.session()->issues().size() == n0 + 4, "貼り付けた行が子課題になる");
+    const Issue* a = nullptr;
+    for (const auto& o : h.c.session()->issues())
+      if (o.summary.find("子A") != std::string::npos) a = &o;
+    check(a && a->parent == "6", "子Aは選んだ課題の子");
+    h.c.undo();
+    h.frame(2);
+    check(h.c.session()->issues().size() == n0, "Undo 1回でまとめて戻る");
+    h.p.clip = std::nullopt;
   }
   // 絞り込み・並べ替え
   h.c.filter().q = "CRA";
@@ -414,7 +468,7 @@ int main() {
     const char* files[] = {"app/ui/app_ui.cpp", "app/ui/view_list.cpp", "app/ui/view_gantt.cpp", "app/ui/view_board.cpp",
                            "app/ui/view_goals.cpp", "app/ui/panel_detail.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
                            "app/ui/widgets.cpp", "app/ui/strings.hpp", "app/controller/app_controller.cpp",
-                           "core/src/commands.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp"};
+                           "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp"};
     for (const char* rel : files) {
       std::ifstream in(std::string(ROADMAP_SOURCE_DIR) + "/" + rel, std::ios::binary);
       std::stringstream ss;

@@ -42,6 +42,7 @@ std::vector<Cmd> buildCommands(Frame& f) {
         if (!id.empty()) beginEdit(f, id, EditField::Name, true);
       });
       add("課題", "テンプレートから子タスクを追加", nullptr, [&f] { openTplApply(f); });
+      add("課題", "貼り付けた複数行を子課題として追加", "Ctrl+V", [&f] { startPasteChildren(f); });
       if (!cur.empty() && s->tree() && s->tree()->find(cur) >= 0 && !s->tree()->kids[s->tree()->find(cur)].empty())
         add("課題", "子タスクをテンプレートとして保存", nullptr, [&f, cur] { openTplSave(f, cur); });
       if (!cur.empty()) add("課題", "名前を変更", "Enter / F2", [&f, cur] { beginEdit(f, cur, EditField::Name); });

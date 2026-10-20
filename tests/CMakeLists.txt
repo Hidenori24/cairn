@@ -10,6 +10,7 @@ add_executable(roadmap_unit_tests
   unit/test_csv.cpp
   unit/test_engine.cpp
   unit/test_commands.cpp
+  unit/test_outline.cpp
   unit/test_store.cpp
   unit/test_filter.cpp
   unit/test_property.cpp

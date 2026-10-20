@@ -251,6 +251,14 @@ int main(int argc, char** argv) {
   shot("19_confirm_delete");
   u.dlg = ui::Dlg::None;
   frames(2);
+  // 貼り付けで子課題をまとめて作る（プレビュー）
+  u.pasteParent = "11";
+  u.paste = parseOutline("要件の整理\n\t画面の洗い出し\n\t\t\t飛んだ階層\n\tデータ項目\n- 設計\n  - [ ] 画面設計\n  - [ ] DB設計\n実装\nテスト\t山田\t2\nレビュー\n公開準備\n振り返り\n記録の整理\n");
+  u.dlg = ui::Dlg::PasteChildren;
+  u.dlgOpening = true;
+  shot("22_paste_children");
+  u.dlg = ui::Dlg::None;
+  frames(2);
   u.t = &ui::darkTokens();
   ui::applyStyle(*u.t, u.m);
   c.session()->setResource({true, 1});

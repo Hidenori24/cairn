@@ -17,6 +17,7 @@ add_library(roadmap_core STATIC
   src/templates.cpp
   src/filter.cpp
   src/commands.cpp
+  src/outline.cpp
   src/project_io.cpp
   src/filestore.cpp
   src/store.cpp
