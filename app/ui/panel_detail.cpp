@@ -476,13 +476,11 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
   if (ImGui::BeginPopup("##dops")) {
     const std::string id = o.id;
     if (ImGui::MenuItem("子を追加")) {
-      const auto nid = s->addIssue(id, "");
-      c.afterEdit();
+      const auto nid = c.createIssue(id, "");
       if (!nid.empty()) c.select(nid);
     }
     if (ImGui::MenuItem("同じ階層に追加")) {
-      const auto nid = s->addIssue(o.parent, id);
-      c.afterEdit();
+      const auto nid = c.createIssue(o.parent, id);
       if (!nid.empty()) c.select(nid);
     }
     if (ImGui::MenuItem("階層を下げる")) s->indent(id), c.afterEdit();
