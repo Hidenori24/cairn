@@ -671,6 +671,57 @@ int Session::applyTemplate(std::vector<std::string> parentIds, const Template& t
   return ok ? made : 0;
 }
 
+int Session::addOutline(const std::string& parentId, const std::vector<OutlineItem>& items) {
+  if (items.empty() || !comp_ || !issue(parentId)) return 0;
+  int made = 0;
+  const auto keep = comp_;  // 編集前のツリー（既存の子の数はここから）
+  const Tree& T = keep->T;
+  const bool ok = mutate([&](ProjectData& P) {
+    const auto parIdx = indexOf(P.issues, parentId);
+    if (parIdx < 0) return;
+    const Issue par = P.issues[parIdx];
+    const std::string ptag = tagOf(par.summary).tag;
+    const int ti = T.find(parentId);
+    std::unordered_map<std::string, int> cnt;
+    cnt[parentId] = ti >= 0 ? static_cast<int>(T.kids[ti].size()) : 0;
+    std::unordered_map<std::string, std::string> tagOfId;
+    tagOfId[parentId] = ptag;
+    std::size_t at = afterSubtree(P.issues, parIdx, parentId);
+    std::vector<std::string> lastAt;  // 深さごとの直前の課題
+    for (const auto& it : items) {
+      const int lv = std::max(0, std::min(it.lv, static_cast<int>(lastAt.size())));
+      const std::string up = lv == 0 ? parentId : lastAt[static_cast<std::size_t>(lv) - 1];
+      Issue o;
+      o.id = nextIssueId(P.issues);
+      o.key = P.settings.key.empty() ? "" : P.settings.key + "-" + o.id;
+      o.parent = up;
+      o.prio = "Medium";
+      o.status = "To Do";
+      o.durW = 1;
+      o.extra.assign(P.meta.extraHeaders.size(), "");
+      o.type = (lv == 0 && isEpic(par)) ? "Task" : "Sub-task";
+      cnt[up] += 1;
+      const std::string& upTag = tagOfId[up];
+      // 親に番号タグがあれば、テンプレートと同じく続き番号を付ける（貼り付けたタグは付け替える）
+      std::string name = it.name;
+      if (!upTag.empty()) {
+        const std::string bare = tagOf(name).name;
+        if (!bare.empty()) name = bare;
+      }
+      const std::string tag = upTag.empty() ? "" : upTag + "-" + std::to_string(cnt[up]);
+      tagOfId[o.id] = tag;
+      o.summary = (tag.empty() ? "" : "[" + tag + "] ") + name;
+      lastAt.resize(static_cast<std::size_t>(lv));
+      lastAt.push_back(o.id);
+      P.issues.insert(P.issues.begin() + static_cast<std::ptrdiff_t>(at++), std::move(o));
+      ++made;
+    }
+    setCollapsed(parentId, false);
+  });
+  if (ok && made > 0) notify(std::to_string(made) + "件の子課題を追加しました", NoticeAction::Undo);
+  return ok ? made : 0;
+}
+
 // ---------------------------------------------------------------- 設定
 void Session::setBaseDate(const std::string& iso) {
   P_.settings.baseDate = iso;

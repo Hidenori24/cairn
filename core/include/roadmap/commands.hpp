@@ -11,6 +11,7 @@
 
 #include "roadmap/clock.hpp"
 #include "roadmap/filter.hpp"
+#include "roadmap/outline.hpp"
 #include "roadmap/schedule.hpp"
 #include "roadmap/templates.hpp"
 
@@ -110,6 +111,8 @@ class Session {
   bool delComment(std::string id, std::size_t index);
   bool bulk(std::vector<std::string> ids, const std::function<void(Issue&)>& fn);
   int applyTemplate(std::vector<std::string> parentIds, const Template& tpl);
+  // 貼り付けた複数行（parseOutline の結果）を parentId の子としてまとめて作る（Undo 1回）。作った件数（失敗は 0）
+  int addOutline(const std::string& parentId, const std::vector<OutlineItem>& items);
 
   // ---- 設定の変更（取り消しの対象外。保存はする）----
   void setBaseDate(const std::string& iso);
