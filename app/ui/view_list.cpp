@@ -24,6 +24,7 @@ const char* colTitle(Col c) {
     case Col::Dur: return "期間";
     case Col::Float: return "余裕";
     case Col::Deadline: return "期限";
+    case Col::Pred: return "先行";
     default: return "";
   }
 }
@@ -39,6 +40,7 @@ const char* colKey(Col c) {
     case Col::Dur: return "dur";
     case Col::Float: return "float";
     case Col::Deadline: return "deadline";
+    case Col::Pred: return "pred";
     default: return "";
   }
 }
@@ -52,6 +54,7 @@ const char* filterKey(Col c) {
     case Col::Asg: return "asg";
     case Col::Prio: return "prio";
     case Col::Float: return "float";
+    case Col::Pred: return "pred";
     default: return "";
   }
 }
@@ -110,7 +113,9 @@ void drawColumnFilterPopup(Frame& f, const std::string& col, const char* title, 
     const auto values = filterValues(*s, cf, col);
     std::map<std::string, int> count;
     const Tree& T = *s->tree();
-    for (int id : T.leafOrder) ++count[columnValue(col, s->viewIssues()[id], (*s->rows())[id])];
+    for (int id : T.leafOrder)
+      ++count[col == "pred" ? std::string(predColumnValue(!s->computed()->declPreds[id].empty()))
+                            : columnValue(col, s->viewIssues()[id], (*s->rows())[id])];
     bool all = !columnFiltered(cf, col);
     if (ImGui::Checkbox("すべて", &all)) {
       cf.clear(col);
@@ -302,6 +307,18 @@ void drawTableRow(Frame& f, const VisibleRow& r, ImVec2 pos, float width, const 
         if (d) textIn(dl, u, cp, cs, fmtMd(*d), u.t->ink, u.fontMono);
         break;
       }
+      case Col::Pred:
+        if (editing(u, id, EditField::Pred)) {
+          ImGui::SetCursorScreenPos(ImVec2(x, pos.y + (h - ImGui::GetFrameHeight()) / 2));
+          drawInlineEdit(f, cd.w - u.m.s(2));
+        } else if (const auto& dp = s->computed()->declPreds[static_cast<std::size_t>(r.id)]; !dp.empty()) {
+          const std::string pt = formatPreds(T, dp);
+          textIn(dl, u, cp, cs, pt, u.t->ink);
+          // 幅に収まらないときは、全部をマウスの横に出す
+          if (inCell && ImGui::IsWindowHovered() && ImGui::CalcTextSize(pt.c_str()).x > cd.w - u.m.s(8))
+            ImGui::SetTooltip("先行: %s", pt.c_str());
+        }
+        break;
     }
     x += cd.w;
   }
@@ -312,6 +329,7 @@ void drawTableRow(Frame& f, const VisibleRow& r, ImVec2 pos, float width, const 
   if (rowDbl) {
     if (dblCol == Col::Asg && !r.isPar) beginEdit(f, id, EditField::Assignee);
     else if (dblCol == Col::Dur && !r.isPar && !row.done && T.kind[r.id] != Kind::Ms) beginEdit(f, id, EditField::Dur);
+    else if (dblCol == Col::Pred) beginEdit(f, id, EditField::Pred);
     else if (dblCol == Col::Name || dblCol == Col::Type) beginEdit(f, id, EditField::Name);
     else openDetail(f, id, 0);
   }
@@ -324,6 +342,12 @@ std::vector<int> sortedLeaves(const Session& s, const std::vector<int>& leaves, 
   const auto& R = *s.rows();
   const auto& I = s.viewIssues();
   std::vector<int> v = leaves;
+  // 先行の並べ替え用の文字（先行なしは最後）
+  std::vector<std::string> predText;
+  if (key == "pred") {
+    predText.resize(static_cast<std::size_t>(T.n));
+    for (int id : leaves) predText[static_cast<std::size_t>(id)] = formatPreds(T, s.computed()->declPreds[static_cast<std::size_t>(id)]);
+  }
   const auto catRank = [&](int id) { return T.cat[id] == Cat::Todo ? 0 : T.cat[id] == Cat::Prog ? 1 : 2; };
   // 「最後」に置く値は向きに関係なく最後
   std::stable_sort(v.begin(), v.end(), [&](int a, int b) {
@@ -344,6 +368,10 @@ std::vector<int> sortedLeaves(const Session& s, const std::vector<int>& leaves, 
       lastA = R[a].done;
       lastB = R[b].done;
       cmp = R[a].floatDays - R[b].floatDays;
+    } else if (key == "pred") {
+      lastA = predText[a].empty();
+      lastB = predText[b].empty();
+      cmp = jaCompare(predText[a], predText[b]);
     } else if (key == "deadline") {
       lastA = !T.dl[a];
       lastB = !T.dl[b];
@@ -368,6 +396,7 @@ void drawListView(Frame& f, ImVec2 size) {
                               {Col::Asg, u.m.s(110)},  {Col::Prio, u.m.s(80)},  {Col::Start, u.m.s(104)},
                               {Col::Finish, u.m.s(104)}, {Col::Dur, u.m.s(64)}, {Col::Float, u.m.s(72)},
                               {Col::Deadline, u.m.s(104)}};
+  if (c.uiBool("cols", "pred", false)) cols.insert(cols.begin() + 1, {Col::Pred, u.m.s(140)});  // 件名の次
   float fixed = 0;
   for (const auto& cd : cols) fixed += cd.w;
   const float width = std::max(size.x - u.m.s(14), fixed + u.m.s(260));

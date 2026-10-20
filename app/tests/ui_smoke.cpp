@@ -384,6 +384,87 @@ int main() {
     h.c.clearFilter();
     h.frame(2);
   }
+  // 先行の列（Issue #9）: 設定でオン → 表に出る・セルを編集して先行を足す・誤りは確定しない・Undo 1回
+  {
+    check(!h.c.uiBool("cols", "pred", false), "先行の列は既定でオフ");
+    h.c.setUiSub("cols", "pred", true);
+    for (auto v : {app::View::Gantt, app::View::List}) {
+      h.c.setView(v);
+      h.frame(2);
+    }
+    h.u.openColFilter = "pred";
+    h.frame(2);
+    h.key(ImGuiKey_Escape);
+    h.u.sortKey = "pred";
+    h.u.sortDir = 1;
+    h.frame(2);
+    h.u.sortDir = -1;
+    h.frame(2);
+    h.u.sortDir = 0;
+    h.u.sortKey.clear();
+    h.c.setView(app::View::List);
+    h.frame(2);
+    Session* s = h.c.session();
+    const Tree& T = *s->tree();
+    // 先行にできる葉の組を探す
+    std::string self, pred;
+    for (int id : T.leafOrder) {
+      const auto cand = linkCandidates(T, s->viewIssues(), id, LinkDir::AddPred, "", {}, 50);
+      for (const auto& cd : cand)
+        if (cd.block == LinkBlock::None && T.isLeaf(cd.idx)) {
+          self = T.ids[id];
+          pred = T.ids[cd.idx];
+          break;
+        }
+      if (!self.empty()) break;
+    }
+    check(!self.empty(), "先行にできる組がある");
+    const std::string predDid = T.did[T.find(pred)];
+    const auto before = s->issues();
+    ui::Frame fr{h.c, h.u, h.p};
+    ImGuiIO& io = ImGui::GetIO();
+    // 誤り（存在しない ID）は Enter でも確定せず、編集が続く。Esc で取り消すと何も変わらない
+    ui::beginEdit(fr, self, ui::EditField::Pred);
+    h.frame(2);
+    io.AddInputCharactersUTF8("NOPE-999");
+    h.frame(2);
+    h.key(ImGuiKey_Enter);
+    h.frame(2);
+    check(h.u.editField == ui::EditField::Pred, "誤った先行の入力は Enter で確定しない");
+    check(h.c.session()->issues() == before, "誤った先行の入力は何も変えない");
+    h.key(ImGuiKey_Escape);
+    check(h.u.editField == ui::EditField::None, "Esc で先行の編集をやめる");
+    // 正しい ID は Enter で確定し、Undo 1回で戻る
+    ui::beginEdit(fr, self, ui::EditField::Pred);
+    h.frame(2);
+    io.AddInputCharactersUTF8(predDid.c_str());
+    h.frame(2);
+    h.key(ImGuiKey_Enter);
+    h.frame(2);
+    check(h.u.editField == ui::EditField::None, "正しい先行の入力は Enter で確定する");
+    const Issue* po = h.c.session()->issue(pred);
+    check(po && std::find(po->blocks.begin(), po->blocks.end(), self) != po->blocks.end(), "先行が追加される");
+    h.c.undo();
+    h.frame(2);
+    check(h.c.session()->issues() == before, "Undo 1回で先行の追加が戻る");
+    // 候補（Tab）
+    ui::beginEdit(fr, self, ui::EditField::Pred);
+    h.frame(2);
+    io.AddInputCharactersUTF8(predDid.substr(0, 1).c_str());
+    h.frame(2);
+    h.key(ImGuiKey_Tab);
+    h.frame(2);
+    check(h.u.editField == ui::EditField::Pred && !h.u.editBuf.empty(), "Tab で候補を入れても編集が続く");
+    h.key(ImGuiKey_Escape);
+    // ガントの表でも編集できる
+    h.c.setView(app::View::Gantt);
+    h.frame(2);
+    ui::beginEdit(fr, self, ui::EditField::Pred);
+    h.frame(3);
+    h.key(ImGuiKey_Escape);
+    h.c.setUiSub("cols", "pred", false);
+    h.frame(2);
+  }
   // アプリの設定（保存先の切り替えの確認・文字の大きさ・薄さ）と、削除の前の確認
   {
     h.key(ImGuiKey_Comma, true);

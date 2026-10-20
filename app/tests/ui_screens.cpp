@@ -16,6 +16,7 @@
 #include "roadmap/gen.hpp"
 #include "roadmap/schedule.hpp"
 #include "ui/app_ui.hpp"
+#include "ui/internal.hpp"
 
 using namespace roadmap;
 
@@ -206,6 +207,30 @@ int main(int argc, char** argv) {
   c.setView(app::View::Gantt);
   c.setSelection({"12", "13", "14"}, "14");
   shot("09_bulk");
+  // 先行の列（Issue #9）: 表に出した状態・入力中の誤り（赤）・入力中の候補
+  {
+    c.setUiSub("cols", "pred", true);
+    c.clearSelection();
+    c.setView(app::View::Gantt);
+    shot("24_pred_gantt");
+    c.setView(app::View::List);
+    shot("25_pred_list");
+    ui::Frame fr{c, u, p};
+    ui::beginEdit(fr, "14", ui::EditField::Pred);
+    u.editBuf += ", DEV-999, 14";
+    shot("26_pred_edit_error");
+    u.editField = ui::EditField::None;
+    u.editId.clear();
+    frames(2);  // 入力欄の状態を捨てる
+    ui::beginEdit(fr, "14", ui::EditField::Pred);
+    u.editBuf = "DEV-1";
+    shot("27_pred_edit_suggest");
+    u.editField = ui::EditField::None;
+    u.editId.clear();
+    c.setUiSub("cols", "pred", false);
+    c.setView(app::View::Gantt);
+    c.setSelection({"12", "13", "14"}, "14");
+  }
   u.paletteOpen = true;
   u.paletteFocus = true;
   shot("10_palette");

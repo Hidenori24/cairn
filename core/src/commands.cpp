@@ -89,6 +89,7 @@ std::optional<std::string> Session::rebuild() {
   c->T = std::move(t).value();
   c->R = computeSchedule(c->T, P_.issues, cal_, o);
   c->issues = P_.issues;
+  c->declPreds = declaredPreds(c->T, c->issues);
   comp_ = std::move(c);
   return std::nullopt;
 }
@@ -645,6 +646,39 @@ ChainResult Session::chainIssues(std::vector<std::string> ids, const std::vector
              (res.existing > 0 ? "（" + std::to_string(res.existing) + "件は設定済み）" : ""),
          NoticeAction::Undo);
   return res;
+}
+
+PredPlan Session::setPredecessors(const std::string& id, std::string_view text) {
+  PredPlan plan;
+  const int self = comp_ ? comp_->T.find(id) : -1;
+  if (self < 0) {
+    plan.ok = false;
+    plan.problems.push_back({"", "課題が見つかりません"});
+    return plan;
+  }
+  plan = planPredEdit(comp_->T, comp_->issues, self, text);
+  if (!plan.ok || !plan.changed()) return plan;
+  // 1回の mutate で足す・外す。循環になれば mutate が巻き戻して理由を通知する
+  if (!mutate([&](ProjectData& P) {
+        for (const auto& pid : plan.add) {
+          auto& b = P.issues[static_cast<std::size_t>(indexOf(P.issues, pid))].blocks;
+          if (std::find(b.begin(), b.end(), id) == b.end()) b.push_back(id);
+        }
+        for (const auto& pid : plan.remove) {
+          auto& b = P.issues[static_cast<std::size_t>(indexOf(P.issues, pid))].blocks;
+          b.erase(std::remove(b.begin(), b.end(), id), b.end());
+        }
+      })) {
+    plan.ok = false;
+    plan.problems.push_back({"", "先行を変更できませんでした"});
+    return plan;
+  }
+  std::string msg = "先行を更新しました（";
+  if (!plan.add.empty()) msg += "追加 " + std::to_string(plan.add.size()) + "件";
+  if (!plan.add.empty() && !plan.remove.empty()) msg += "・";
+  if (!plan.remove.empty()) msg += "削除 " + std::to_string(plan.remove.size()) + "件";
+  notify(msg + "）", NoticeAction::Undo);
+  return plan;
 }
 
 int Session::unchainIssues(const std::vector<std::string>& ids) {

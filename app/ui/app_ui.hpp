@@ -38,7 +38,7 @@ enum class Dlg {
   TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete, PasteChildren
 };
 
-enum class EditField { None, Name, Assignee, Dur };
+enum class EditField { None, Name, Assignee, Dur, Pred };
 
 struct UiState {
   Metrics m;
@@ -56,6 +56,7 @@ struct UiState {
   std::string editBuf;
   bool editFresh = false;          // 追加直後の行
   bool editFocus = false;          // 次のフレームでフォーカスを入れる
+  bool editCursorEnd = false;      // 次に入力欄がアクティブになったとき、カーソルを末尾に置く（先行列）
   std::string editStartValue;
   // 編集を始めてから入力欄がアクティブになるまでに打った文字（落とさずに入れる。B13）
   bool editActive = false;

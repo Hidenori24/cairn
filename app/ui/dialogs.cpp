@@ -630,6 +630,10 @@ void dlgSettings(Frame& f) {
     ImGui::SameLine();
   }
   ImGui::NewLine();
+  {
+    bool v = c.uiBool("cols", "pred", false);  // 既定はオフ
+    if (ImGui::Checkbox("先行の列（リストとガントの表に出す）", &v)) c.setUiSub("cols", "pred", v);
+  }
   if (ImGui::Button("テーマ・密度・文字の大きさ・保存先（アプリの設定）…")) {
     close(f);
     openDialog(f, Dlg::AppSettings);
