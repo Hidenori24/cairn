@@ -474,6 +474,21 @@ int main() {
     h.u.pendingCount = 0;
     h.frame(2);
     h.u.pendingDir.clear();
+    // 以前の平置きのプロジェクトがあれば、移すボタンを出す（自動では動かさない）→ 移すとボタンが消える
+    h.fs.put("data/平置き.csv", "Summary\nA\n");
+    h.c.syncFolder(false);
+    check(h.c.legacyCount() == 1, "平置きのプロジェクトを読む");
+    h.frame(2);
+    h.u.dlg = ui::Dlg::Folder;
+    h.u.dlgOpening = true;
+    h.frame(2);
+    h.u.dlg = ui::Dlg::AppSettings;
+    h.u.dlgOpening = true;
+    h.frame(2);
+    check(h.c.migrateLegacy().ok(), "平置きをフォルダ構成へ移す");
+    check(h.c.legacyCount() == 0 && h.fs.exists("data/平置き/project.csv"), "移したあとは平置きがない");
+    h.frame(2);
+    h.u.dlg = ui::Dlg::AppSettings;
     h.c.prefs().dimPercent = 60;
     h.c.prefs().uiScale = 125;
     h.frame(2);

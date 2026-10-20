@@ -162,7 +162,7 @@ void dlgConfirmDelete(Frame& f) {
   if (!s) return close(f);
   ImGui::PushTextWrapPos(0);
   ImGui::Text("「%s」を削除します。", s->settings().name.c_str());
-  ImGui::TextDisabled("データフォルダの CSV と設定は「_削除済み」フォルダへ移します（そこから戻せます）。");
+  ImGui::TextDisabled("プロジェクトのフォルダ（CSV・設定・添付・バックアップ）ごと、データフォルダの「_削除済み」へ移します（そこから戻せます）。");
   ImGui::PopTextWrapPos();
   const int b = buttons(f, {"削除", "キャンセル"}, true);
   if (b == 0) {
@@ -269,6 +269,20 @@ void dlgExport(Frame& f) {
   }
 }
 
+// 以前の平置きのプロジェクトがあるときだけ出す。自動では動かさず、ここで押したときに移す
+void legacyMigrationBlock(Frame& f) {
+  app::AppController& c = f.c;
+  const int n = c.legacyCount();
+  if (n == 0) return;
+  ImGui::Separator();
+  ImGui::TextColored(v4(f.u.t->tight), "以前の保存形式（平置き）のプロジェクトが %d 件あります。", n);
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextDisabled("プロジェクトごとのフォルダ（CSV・設定・添付・バックアップ）に移せます。移す前に、データフォルダの「_バックアップ/移行前…」へ"
+                      "全部の控えを作ります。移さなくても、そのまま読み書きできます。");
+  ImGui::PopTextWrapPos();
+  if (ImGui::Button("フォルダ構成に移す")) (void)c.migrateLegacy();
+}
+
 void dlgFolder(Frame& f) {
   UiState& u = f.u;
   app::AppController& c = f.c;
@@ -295,9 +309,11 @@ void dlgFolder(Frame& f) {
     return;
   }
   ImGui::PushTextWrapPos(0);
-  ImGui::TextDisabled("編集のたびに自動で保存します（CSV + 設定JSON）。上書きする前のCSVは、起動してから最初の1回だけ「_バックアップ」に残します（30個まで）。"
-                      "削除したプロジェクトのファイルは「_削除済み」に移します。保存先は「アプリの設定」で変えられます（起動引数 --data・環境変数 ROADMAP_DATA が優先）。");
+  ImGui::TextDisabled("編集のたびに自動で保存します。プロジェクトごとのフォルダに CSV（project.csv）と設定（project.settings.json）を置き、添付は「添付」に入れます。"
+                      "上書きする前の CSV は、起動してから最初の1回だけ、そのフォルダの「バックアップ」に残します（30個まで）。"
+                      "削除したプロジェクトはフォルダごと「_削除済み」に移します。保存先は「アプリの設定」で変えられます（起動引数 --data・環境変数 ROADMAP_DATA が優先）。");
   ImGui::PopTextWrapPos();
+  legacyMigrationBlock(f);
   if (buttons(f, {"閉じる"}) == 0) close(f);
 }
 
@@ -353,6 +369,7 @@ void dlgAppSettings(Frame& f) {
     ImGui::EndDisabled();
   }
   if (ImGui::Button("フォルダを開く")) f.p.openFolder(c.dataDir());
+  legacyMigrationBlock(f);
   if (!u.pendingDir.empty()) {
     // 切り替えの確認
     ImGui::PushStyleColor(ImGuiCol_ChildBg, v4(u.t->surface2));

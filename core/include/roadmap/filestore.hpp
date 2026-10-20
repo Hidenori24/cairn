@@ -28,6 +28,8 @@ class IFileStore {
   virtual Status writeAtomic(const std::string& path, const std::string& data) = 0;
   virtual Status remove(const std::string& path) = 0;
   virtual Status makeDirs(const std::string& dir) = 0;
+  // ファイルまたはフォルダ（中身ごと）を移す・名前を変える。行き先に同じ名前があれば失敗する（上書きしない）
+  virtual Status move(const std::string& from, const std::string& to) = 0;
   // 書き込めるか（フォルダを作って試し書きする）
   virtual bool probeWritable(const std::string& dir);
 };
@@ -43,6 +45,7 @@ class StdFileStore final : public IFileStore {
   Status writeAtomic(const std::string& path, const std::string& data) override;
   Status remove(const std::string& path) override;
   Status makeDirs(const std::string& dir) override;
+  Status move(const std::string& from, const std::string& to) override;
 };
 
 // メモリ上の実装（テスト用）。失敗を差し込める
@@ -54,6 +57,7 @@ class MemFileStore final : public IFileStore {
   Status writeAtomic(const std::string& path, const std::string& data) override;
   Status remove(const std::string& path) override;
   Status makeDirs(const std::string& dir) override;
+  Status move(const std::string& from, const std::string& to) override;
 
   // テスト用の操作
   void put(const std::string& path, const std::string& data);  // 外部からの書き込み（時刻を進める）

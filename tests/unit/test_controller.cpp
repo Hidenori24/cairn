@@ -28,9 +28,9 @@ TEST_CASE("controller: 初回（フォルダが空）→ サンプルを作る �
   CHECK_FALSE(e.c.firstRun());
   CHECK(e.c.saveState() == SaveState::Saving);
   e.step(100);
-  CHECK_FALSE(e.fs.exists("data/サンプル.csv"));
+  CHECK_FALSE(e.fs.exists("data/サンプル/project.csv"));
   e.step(400);
-  CHECK(e.fs.exists("data/サンプル.csv"));
+  CHECK(e.fs.exists("data/サンプル/project.csv"));
   CHECK(e.c.saveState() == SaveState::Saved);
   CHECK(e.c.savedAt() == "18:36");
   CHECK(e.c.prefs().currentProject == e.c.currentId());
@@ -133,7 +133,7 @@ TEST_CASE("controller: 外部変更の取り込み（アクティブに戻った
   e.c.start();
   e.c.createProject(SampleKind::Empty, "P", "");
   e.step(500);
-  e.fs.put("data/P.csv", "Summary\nExcelで追加\n");
+  e.fs.put("data/P/project.csv", "Summary\nExcelで追加\n");
   e.clk.advanceMs(1000);
   e.c.onActivated();  // 3秒未満なので何もしない
   CHECK(e.c.session()->issues().empty());
@@ -154,7 +154,7 @@ TEST_CASE("controller: 削除・複製・テンプレートの保存") {
   e.step(500);
   CHECK(e.c.deleteCurrentProject());
   CHECK(e.c.projects().size() == 1);
-  CHECK(e.fs.exists("data/_削除済み/H のコピー.20261019-183600.csv"));
+  CHECK(e.fs.exists("data/_削除済み/H のコピー.20261019-183600/project.csv"));
   const Session* s = e.c.session();
   auto items = templateItemsFrom(*s->tree(), s->issues(), s->find("11"), true);
   const auto id = e.c.saveTemplate("実装の雛形", "", items);
@@ -436,4 +436,48 @@ TEST_CASE("controller: 新しい課題の名前（アプリの設定。既定は
   CHECK(e.c.session()->issue(s1)->summary == "要件定義／新しい課題");
   const auto s2 = e.c.addChild();
   CHECK(e.c.session()->issue(s2)->summary == "要件定義／新しい課題／新しい課題");  // s1 の子（addSibling が選択を移した）
+}
+
+TEST_CASE("controller: 平置きは自動では動かさず、知らせて、操作でフォルダ構成へ移す") {
+  Env e;
+  e.fs.put("data/古い.csv", "Summary\nA\n");
+  e.fs.put("data/古い.settings.json", "{\"id\":\"pold\",\"name\":\"古い\"}");
+  e.fs.put("data/二つ目.csv", "Summary\nB\n");
+  e.c.start();
+  CHECK(e.c.projects().size() == 2);
+  CHECK(e.c.legacyCount() == 2);
+  bool notified = false;
+  for (const auto& t : e.c.toasts())
+    if (t.text.find("平置き") != std::string::npos) notified = true;
+  CHECK(notified);
+  CHECK(e.fs.exists("data/古い.csv"));  // 動かしていない
+  CHECK(e.c.countProjectsIn("data") == 2);
+
+  // 開いて編集しても、平置きのまま保存する
+  REQUIRE(e.c.openProject("pold"));
+  e.c.session()->setBaseDate("2026-09-01");
+  e.c.afterEdit();
+  REQUIRE(e.c.flushNow());
+  CHECK(e.fs.content("data/古い.settings.json").find("2026-09-01") != std::string::npos);
+  CHECK_FALSE(e.fs.exists("data/古い/project.csv"));
+
+  // 移す（開いているプロジェクトのまま）
+  auto m = e.c.migrateLegacy();
+  REQUIRE(m.ok());
+  CHECK(m->moved == 2);
+  CHECK(e.c.legacyCount() == 0);
+  CHECK(e.fs.exists("data/古い/project.csv"));
+  CHECK(e.fs.exists("data/二つ目/project.csv"));
+  CHECK_FALSE(e.fs.exists("data/古い.csv"));
+  CHECK(e.fs.exists("data/_バックアップ/移行前.20261019-183600/古い.csv"));
+  CHECK(e.c.countProjectsIn("data") == 2);
+  CHECK(e.c.currentId() == "pold");
+  e.c.session()->setBaseDate("2026-09-02");
+  e.c.afterEdit();
+  REQUIRE(e.c.flushNow());
+  CHECK(e.fs.content("data/古い/project.settings.json").find("2026-09-02") != std::string::npos);
+  // 削除はフォルダごと
+  CHECK(e.c.deleteCurrentProject());
+  CHECK(e.fs.exists("data/_削除済み/古い.20261019-183600/project.csv"));
+  CHECK_FALSE(e.fs.exists("data/古い/project.csv"));
 }
