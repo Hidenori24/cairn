@@ -998,6 +998,11 @@ void handleKeys(Frame& f) {
     c.redo();
     return;
   }
+  // 入力欄の外の Ctrl+V: クリップボードの複数行を、選んだ課題の子としてまとめて作る
+  if (s && io.KeyCtrl && !io.KeyShift && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+    startPasteChildren(f);
+    return;
+  }
   if (io.KeyCtrl || !s) return;
   if (!io.KeyShift && !io.KeyAlt) {
     if (ImGui::IsKeyPressed(ImGuiKey_1, false)) c.setView(View::Gantt);

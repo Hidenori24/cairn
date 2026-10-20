@@ -127,6 +127,28 @@ std::optional<std::pair<std::string, std::string>> Win32Platform::openTextFile()
   return out;
 }
 
+// クリップボードのテキスト（CF_UNICODETEXT）を UTF-8 で返す。大きすぎるもの・読めないものは nullopt
+std::optional<std::string> Win32Platform::clipboardText() {
+  constexpr SIZE_T kMaxBytes = 8u * 1024 * 1024;
+  if (!IsClipboardFormatAvailable(CF_UNICODETEXT)) return std::nullopt;
+  if (!OpenClipboard(hwnd_)) return std::nullopt;
+  std::optional<std::string> out;
+  if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
+    const SIZE_T bytes = GlobalSize(h);
+    if (bytes > 0 && bytes <= kMaxBytes) {
+      if (const auto* p = static_cast<const wchar_t*>(GlobalLock(h))) {
+        std::size_t n = 0;
+        const std::size_t maxN = bytes / sizeof(wchar_t);
+        while (n < maxN && p[n] != L'\0') ++n;
+        out = narrow(std::wstring(p, n));
+        GlobalUnlock(h);
+      }
+    }
+  }
+  CloseClipboard();
+  return out;
+}
+
 std::optional<std::string> Win32Platform::pickFolder(const std::string& start) {
   IFileOpenDialog* dlg = nullptr;
   if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return std::nullopt;

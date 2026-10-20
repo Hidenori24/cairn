@@ -31,6 +31,7 @@ const char* titleOf(Dlg d) {
     case Dlg::ConfirmQuit: return "保存されていない変更があります";
     case Dlg::AppSettings: return "アプリの設定";
     case Dlg::ConfirmIssueDelete: return "課題を削除";
+    case Dlg::PasteChildren: return "貼り付けた内容を子課題として追加";
     default: return "";
   }
 }
@@ -55,6 +56,8 @@ float widthOf(const UiState& u, Dlg d) {
 
 void close(Frame& f) {
   f.u.dlg = Dlg::None;
+  f.u.paste = Outline{};  // 貼り付けた内容は残さない
+  f.u.pasteParent.clear();
   ImGui::CloseCurrentPopup();
 }
 
@@ -656,7 +659,8 @@ void dlgShortcuts(Frame& f) {
       {"↑ ↓", "カーソル移動"},           {"Shift+↑↓", "範囲を広げる"},          {"Alt+↑↓", "兄弟の中で上下に移動"},
       {"← →", "閉じる / 開く"},          {"Enter / F2", "件名を編集"},           {"N / Insert", "同じ階層に追加"},
       {"Shift+N", "子を追加"},           {"Tab / Shift+Tab", "階層を下げる / 上げる"}, {"Delete / Backspace", "選択を削除"},
-      {"Space", "詳細パネルを開閉"}};
+      {"Space", "詳細パネルを開閉"},
+      {"Ctrl+V", "クリップボードの複数行を、選んだ課題の子としてまとめて追加"}};
   const std::pair<const char*, const char*> edit[] = {
       {"Enter", "確定（追加直後の行は次の行を追加）"}, {"Ctrl+Enter", "確定して同じ階層に追加"}, {"Shift+Enter", "確定して子を追加"},
       {"Tab / Shift+Tab", "編集したまま階層を変える"}, {"↑ ↓", "隣の行の編集へ"}, {"Esc", "取り消し"}};
@@ -757,6 +761,39 @@ void dlgTplSave(Frame& f) {
   }
 }
 
+void dlgPasteChildren(Frame& f) {
+  UiState& u = f.u;
+  app::AppController& c = f.c;
+  Session* s = c.session();
+  if (!s || !s->tree() || s->find(u.pasteParent) < 0 || u.paste.items.empty()) return close(f);
+  const Tree& T = *s->tree();
+  const Outline& o = u.paste;
+  ImGui::PushTextWrapPos(0);
+  ImGui::Text("追加先: %s", T.name[T.find(u.pasteParent)].c_str());
+  ImGui::Text("%d件を子課題として追加します（%d段）", static_cast<int>(o.items.size()), o.maxLevel + 1);
+  if (!o.warns.empty()) {
+    ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->tight));
+    for (const auto& w : o.warns) ImGui::BulletText("%s", w.c_str());
+    ImGui::PopStyleColor();
+  }
+  ImGui::PopTextWrapPos();
+  constexpr std::size_t kPreviewRows = 12;
+  ImGui::BeginChild("##pastePreview", ImVec2(0, u.m.s(240)), ImGuiChildFlags_Border);
+  for (std::size_t k = 0; k < o.items.size() && k < kPreviewRows; ++k)
+    ImGui::Text("%s%s", std::string(static_cast<std::size_t>(o.items[k].lv) * 2, ' ').c_str(), o.items[k].name.c_str());
+  if (o.items.size() > kPreviewRows) ImGui::TextDisabled("ほか%d件", static_cast<int>(o.items.size() - kPreviewRows));
+  ImGui::EndChild();
+  ImGui::TextDisabled("追加したあとも、通知の「元に戻す」（Ctrl+Z）で1回で戻せます。");
+  const int b = buttons(f, {"追加", "キャンセル"});
+  if (b == 0) {
+    s->addOutline(u.pasteParent, o.items);
+    c.afterEdit();
+    close(f);
+  } else if (b == 1) {
+    close(f);
+  }
+}
+
 void dlgConfirmQuit(Frame& f) {
   app::AppController& c = f.c;
   ImGui::PushTextWrapPos(0);
@@ -831,10 +868,35 @@ void drawDialogs(Frame& f) {
     case Dlg::ConfirmQuit: dlgConfirmQuit(f); break;
     case Dlg::AppSettings: dlgAppSettings(f); break;
     case Dlg::ConfirmIssueDelete: dlgConfirmIssueDelete(f); break;
+    case Dlg::PasteChildren: dlgPasteChildren(f); break;
     default: close(f); break;
   }
   if (!open) close(f);
   ImGui::EndPopup();
+}
+
+void startPasteChildren(Frame& f) {
+  app::AppController& c = f.c;
+  UiState& u = f.u;
+  Session* s = c.session();
+  if (!s) return;
+  if (c.selection().size() != 1 || !s->issue(c.selection()[0])) {
+    c.toast("子課題を貼り付ける親の課題を1つ選んでください");
+    return;
+  }
+  const auto clip = f.p.clipboardText();
+  if (!clip || text::trim(*clip).empty()) {
+    c.toast("クリップボードにテキストがありません");
+    return;
+  }
+  Outline o = parseOutline(*clip);
+  if (o.items.empty()) {
+    c.toast("貼り付けた内容に、課題にできる行がありません");
+    return;
+  }
+  u.pasteParent = c.selection()[0];
+  u.paste = std::move(o);
+  openDialog(f, Dlg::PasteChildren);
 }
 
 }  // namespace roadmap::ui

@@ -44,6 +44,8 @@ inline float dimAlpha(const app::AppController& c) { return static_cast<float>(c
 // 選択をテンプレの追加先にしてダイアログを開く
 void openTplApply(Frame& f);
 void openTplSave(Frame& f, const std::string& id);
+// クリップボードの複数行を、選んだ課題の子としてまとめて作る（プレビューのダイアログを開く）
+void startPasteChildren(Frame& f);
 
 // 件名セル（開閉・種別・表示ID・件名・コメント数・ホバー時の小ボタン）
 struct NameCellOpts {
