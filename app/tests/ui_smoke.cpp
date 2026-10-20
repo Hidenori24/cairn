@@ -1,5 +1,6 @@
 // UI の煙テスト: ImGui をヘッドレスで動かし、各ビュー・ダイアログ・パレットを描いて落ちないこと・assert しないことを確かめる。
 // Win32・DX11 は使わない（フォントのテクスチャを作るだけ）。
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <set>
@@ -280,6 +281,74 @@ int main() {
     h.c.prefs().confirmDelete = false;
     h.c.prefs().dimPercent = 30;
     h.c.prefs().uiScale = 100;
+  }
+  // 拡大縮小: ガントの時間軸の上の Ctrl+ホイールは時間軸、それ以外の Ctrl+ホイール・Ctrl+「+」「-」・Ctrl+0 は画面全体
+  {
+    h.c.setView(app::View::Gantt);
+    h.c.setUi("zoom", "week");
+    h.u.customPx = 0;
+    h.frame(3);
+    ImGuiIO& io = ImGui::GetIO();
+    const auto wheel = [&](float x, float y, float dy, bool ctrl) {
+      io.AddMousePosEvent(x, y);
+      io.AddKeyEvent(ImGuiMod_Ctrl, ctrl);
+      h.frame(1);
+      io.AddMouseWheelEvent(0, dy);
+      h.frame(1);
+      io.AddKeyEvent(ImGuiMod_Ctrl, false);
+      h.frame(2);
+    };
+    const int scale0 = h.c.prefs().uiScale;
+    wheel(900, 300, 1, true);  // 時間軸の上 → 時間軸だけ変わる
+    check(h.u.customPx > 6.f, "Ctrl+ホイールで時間軸が広がる");
+    check(h.c.prefs().uiScale == scale0, "時間軸の上では画面全体は変わらない");
+    {
+      // マウスの下の日付が、拡大縮小の前後で動かない
+      const float mx = 900;
+      const auto dayAt = [&] { return (mx - (h.u.ganttLeft - h.u.ganttSx)) / h.u.ganttPx; };
+      h.frame(2);
+      const float before = dayAt();
+      wheel(mx, 300, 2, true);
+      const float after = dayAt();
+      check(std::abs(after - before) < 0.6f, "拡大してもマウスの下の日付が動かない");
+      wheel(mx, 300, -2, true);
+      check(std::abs(dayAt() - before) < 0.6f, "縮小してもマウスの下の日付が動かない");
+    }
+    const float wide = h.u.customPx;
+    wheel(900, 300, -3, true);
+    check(h.u.customPx < wide, "Ctrl+ホイールで時間軸が狭まる");
+    for (int i = 0; i < 40; ++i) wheel(900, 300, -1, true);
+    check(h.u.customPx >= 0.9f - 1e-3f, "時間軸の下限");
+    for (int i = 0; i < 60; ++i) wheel(900, 300, 1, true);
+    check(h.u.customPx <= 40.f + 1e-3f, "時間軸の上限");
+    wheel(900, 300, 1, false);  // Ctrl なしは今までどおりスクロール
+    check(h.u.customPx <= 40.f + 1e-3f, "Ctrl なしでは時間軸は変わらない");
+    h.c.setUi("zoom", "week");  // 段階のボタンに戻す
+    h.u.customPx = 0;
+    h.frame(2);
+    wheel(100, 300, 1, true);  // 左の表の上 → 画面全体
+    check(h.c.prefs().uiScale == 110, "表の上の Ctrl+ホイールで画面全体が大きくなる");
+    h.clk.advanceMs(300);
+    wheel(100, 300, -1, true);
+    check(h.c.prefs().uiScale == 100, "Ctrl+ホイールで画面全体が小さくなる");
+    h.clk.advanceMs(300);
+    h.key(ImGuiKey_Equal, true);
+    check(h.c.prefs().uiScale == 110, "Ctrl+「+」で大きくなる");
+    h.key(ImGuiKey_Minus, true);
+    h.key(ImGuiKey_Minus, true);
+    check(h.c.prefs().uiScale == 90, "Ctrl+「-」で小さくなる");
+    h.key(ImGuiKey_0, true);
+    check(h.c.prefs().uiScale == 100, "Ctrl+0 で100%に戻る");
+    check(!h.u.zoomHint.empty(), "倍率を表示する");
+    h.frame(2);
+    // 日・週・月・全体のボタンに戻すと、ホイールで変えた幅は捨てる
+    h.u.customPx = 12.f;
+    h.u.customProject = h.c.currentId();
+    h.frame(2);
+    h.c.setView(app::View::Board);
+    h.frame(1);
+    h.c.setView(app::View::Gantt);
+    h.frame(2);
   }
   // 行にマウスを載せると出るごみ箱で削除し、元に戻す
   {

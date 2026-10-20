@@ -55,6 +55,7 @@ std::vector<Cmd> buildCommands(Frame& f) {
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"day", "日"}, {"week", "週"}, {"month", "月"}, {"all", "全体"}})
       add("表示", std::string("ガントの拡大率: ") + l, nullptr, [&c, &u, key = std::string(k)] {
         c.setUi("zoom", key);
+        u.customPx = 0;
         u.scrollToBase = true;
       });
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"root", "Epic"}, {"float", "余裕"}, {"asg", "担当者"}})

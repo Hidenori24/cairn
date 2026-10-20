@@ -390,15 +390,20 @@ void dlgAppSettings(Frame& f) {
   ImGui::SameLine();
   if (ImGui::RadioButton("コンパクト", pr.density == "compact")) c.setDensity("compact");
   ImGui::AlignTextToFramePadding();
-  ImGui::TextUnformatted("文字の大きさ");
-  for (int pct : {90, 100, 110, 125, 150}) {
-    ImGui::SameLine();
-    const std::string l = std::to_string(pct) + "%";
-    if (ImGui::RadioButton(l.c_str(), pr.uiScale == pct)) {
-      pr.uiScale = pct;
-      c.savePrefs();
-    }
-  }
+  ImGui::TextUnformatted("画面の大きさ");
+  ImGui::SameLine();
+  if (ImGui::Button("-", ImVec2(u.m.s(28), 0))) c.stepUiScale(-1);
+  ImGui::SameLine();
+  ImGui::AlignTextToFramePadding();
+  ImGui::Text("%3d%%", pr.uiScale);
+  ImGui::SameLine();
+  if (ImGui::Button("+", ImVec2(u.m.s(28), 0))) c.stepUiScale(1);
+  ImGui::SameLine();
+  ImGui::BeginDisabled(pr.uiScale == 100);
+  if (ImGui::Button("100%に戻す")) c.setUiScale(100);
+  ImGui::EndDisabled();
+  ImGui::SameLine();
+  ImGui::TextDisabled("Ctrl+ホイール・Ctrl+「+」「-」・Ctrl+0 でも変えられます");
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted("絞り込みで薄くする課題の濃さ");
   ImGui::SameLine();
@@ -639,7 +644,10 @@ void dlgWarnings(Frame& f) {
 void dlgShortcuts(Frame& f) {
   const std::pair<const char*, const char*> global[] = {
       {"Ctrl+K", "コマンドパレット"}, {"Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y", "元に戻す / やり直す"}, {"1 2 3 4", "ガント / ボード / リスト / ギャップ"},
-      {"/", "絞り込み欄へ"},        {"?", "この一覧"},  {"Ctrl+,", "アプリの設定"},                                   {"Esc", "メニュー → 選択 → 詳細パネルの順に閉じる"}};
+      {"/", "絞り込み欄へ"},        {"?", "この一覧"},  {"Ctrl+,", "アプリの設定"},
+      {"Ctrl+ホイール / Ctrl+「+」「-」 / Ctrl+0", "画面全体の拡大縮小 / 100%に戻す"},
+      {"Ctrl+ホイール（ガントの時間軸の上）", "ガントの時間軸の拡大縮小（マウスの位置の日付を動かさない）"},
+      {"Esc", "メニュー → 選択 → 詳細パネルの順に閉じる"}};
   const std::pair<const char*, const char*> rows[] = {
       {"↑ ↓", "カーソル移動"},           {"Shift+↑↓", "範囲を広げる"},          {"Alt+↑↓", "兄弟の中で上下に移動"},
       {"← →", "閉じる / 開く"},          {"Enter / F2", "件名を編集"},           {"N / Insert", "同じ階層に追加"},

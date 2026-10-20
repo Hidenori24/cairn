@@ -271,7 +271,7 @@ Prefs prefsFromJson(const Json& j) {
   const auto clampInt = [&](const char* k, int lo, int hi, int& out) {
     if (j.contains(k) && j[k].is_number()) out = std::clamp(static_cast<int>(j[k].get<double>()), lo, hi);
   };
-  clampInt("uiScale", 80, 200, p.uiScale);
+  clampInt("uiScale", 70, 200, p.uiScale);
   clampInt("dimPercent", 10, 80, p.dimPercent);
   if (j.contains("confirmDelete") && j["confirmDelete"].is_boolean()) p.confirmDelete = j["confirmDelete"].get<bool>();
   if (j.contains("autoBaseToday") && j["autoBaseToday"].is_boolean()) p.autoBaseToday = j["autoBaseToday"].get<bool>();

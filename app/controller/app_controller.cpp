@@ -1,6 +1,7 @@
 #include "app_controller.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <unordered_set>
 
 #include "roadmap/samples.hpp"
@@ -700,6 +701,33 @@ void AppController::setTheme(const std::string& t) {
   prefs_.theme = t;
   savePrefs();
 }
+bool AppController::setUiScale(int pct) {
+  pct = std::clamp(pct, kUiScaleSteps[0], kUiScaleSteps[std::size(kUiScaleSteps) - 1]);
+  if (pct == prefs_.uiScale) return false;
+  prefs_.uiScale = pct;
+  savePrefs();
+  return true;
+}
+
+bool AppController::stepUiScale(int dir) {
+  if (dir == 0) return false;
+  int next = prefs_.uiScale;
+  if (dir > 0) {
+    for (int v : kUiScaleSteps)
+      if (v > prefs_.uiScale) {
+        next = v;
+        break;
+      }
+  } else {
+    for (auto it = std::rbegin(kUiScaleSteps); it != std::rend(kUiScaleSteps); ++it)
+      if (*it < prefs_.uiScale) {
+        next = *it;
+        break;
+      }
+  }
+  return setUiScale(next);
+}
+
 void AppController::setDensity(const std::string& d) {
   prefs_.density = d;
   savePrefs();

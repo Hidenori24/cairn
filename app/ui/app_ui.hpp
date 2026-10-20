@@ -112,6 +112,19 @@ struct UiState {
   // リスト
   std::string sortKey;
   std::string openColFilter;  // 次のフレームで開く列の絞り込み（列のキー）
+  // 拡大縮小
+  float zoomAcc = 0;                // Ctrl+ホイールの細かい回転（タッチパッドのピンチ）をためる
+  std::int64_t zoomLastStepMs = -1000;  // 画面全体の拡大縮小を最後に動かした時刻（作り直しが続かないように間引く）
+  std::int64_t zoomHintUntilMs = 0;     // 倍率の表示を出す期限
+  std::string zoomHint;
+  bool wheelConsumed = false;       // このフレームの Ctrl+ホイールはガントが使った
+  float customPx = 0;               // ガントの時間軸を Ctrl+ホイールで変えた1日の幅（倍率1のとき。0 = 日・週・月・全体の段階）
+  std::string customProject;        // customPx を設定したプロジェクト
+  float ganttSx = 0;                // ガントの横スクロール（前のフレームの値）
+  float ganttLeft = 0;              // 時間軸の左端（ガントの左の表の右端。画面の座標）
+  float ganttPx = 1;                // 1日の幅（画面の座標。前のフレームの値）
+  float pendingScrollX = 0;
+  bool hasPendingScroll = false;
   // アプリの設定: 選んだ新しい保存先（切り替えの確認中）
   std::string pendingDir, pendingError;
   bool pendingCopy = true;

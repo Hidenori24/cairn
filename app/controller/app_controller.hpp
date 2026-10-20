@@ -136,6 +136,10 @@ class AppController {
   void savePrefs();
   void setTheme(const std::string& t);
   void setDensity(const std::string& d);
+  // 画面全体の拡大縮小（%）。段階は 70 80 90 100 110 125 150 175 200。変わったら true（すぐ保存する）
+  static constexpr int kUiScaleSteps[] = {70, 80, 90, 100, 110, 125, 150, 175, 200};
+  bool stepUiScale(int dir);  // dir > 0: 次の段階へ / dir < 0: 前の段階へ
+  bool setUiScale(int pct);
   void dismissHint();
 
   // ---- 通知・保存状態 ----

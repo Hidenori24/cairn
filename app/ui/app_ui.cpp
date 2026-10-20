@@ -581,8 +581,9 @@ void drawToolBar(Frame& f) {
     ImGui::SameLine(0, u.m.s(12));
     const std::string zoom = c.uiStr("zoom", "week");
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"day", "日"}, {"week", "週"}, {"month", "月"}, {"all", "全体"}}) {
-      if (iconTextButton(u, k, nullptr, l, false, zoom == k)) {
+      if (iconTextButton(u, k, nullptr, l, false, zoom == k && u.customPx <= 0)) {
         c.setUi("zoom", k);
+        u.customPx = 0;
         u.scrollToBase = true;
       }
       ImGui::SameLine(0, u.m.s(2));
@@ -909,6 +910,54 @@ void drawWelcome(Frame& f, ImVec2 size) {
   ImGui::EndChild();
 }
 
+// ---------------------------------------------------------------- 画面全体の拡大縮小
+// 一般的な操作に合わせる: Ctrl+ホイール（タッチパッドのピンチも同じ）、Ctrl+「+」「−」、Ctrl+0 で100%
+// （ガントの時間軸の上の Ctrl+ホイールは、ガントが時間軸の拡大縮小に使う）
+void handleZoom(Frame& f) {
+  AppController& c = f.c;
+  UiState& u = f.u;
+  ImGuiIO& io = ImGui::GetIO();
+  const std::int64_t now = c.clock().monotonicMs();
+  int dir = 0;
+  bool reset = false;
+  if (io.KeyCtrl && !io.KeyAlt) {
+    if (ImGui::IsKeyPressed(ImGuiKey_Equal, true) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, true)) dir = 1;
+    else if (ImGui::IsKeyPressed(ImGuiKey_Minus, true) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, true)) dir = -1;
+    else if (ImGui::IsKeyPressed(ImGuiKey_0, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad0, false)) reset = true;
+    // ホイール: 1ノッチで1段階。細かい回転はためる。段階の作り直し（フォント）が続かないように 0.12 秒あける
+    if (io.MouseWheel != 0.f && !u.wheelConsumed) {
+      u.zoomAcc += io.MouseWheel;
+      if (std::abs(u.zoomAcc) >= 1.f && now - u.zoomLastStepMs >= 120) {
+        dir = u.zoomAcc > 0 ? 1 : -1;
+        u.zoomAcc -= static_cast<float>(dir);
+      }
+    }
+  } else {
+    u.zoomAcc = 0;
+  }
+  if (dir != 0 || reset) {
+    const bool changed = reset ? c.setUiScale(100) : c.stepUiScale(dir);
+    u.zoomLastStepMs = now;
+    u.zoomHint = std::to_string(c.prefs().uiScale) + "%" + (changed ? "" : (reset ? "" : "（これ以上変えられません）"));
+    u.zoomHintUntilMs = now + 1200;
+  }
+}
+
+// 倍率の表示（変えた直後に、画面の上の真ん中へ少しの間）
+void drawZoomHint(Frame& f) {
+  UiState& u = f.u;
+  const std::int64_t now = f.c.clock().monotonicMs();
+  if (u.zoomHint.empty() || now >= u.zoomHintUntilMs) return;
+  ImDrawList* dl = ImGui::GetForegroundDrawList();
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  const ImVec2 ts = ImGui::CalcTextSize(u.zoomHint.c_str());
+  const float pad = u.m.s(12);
+  const ImVec2 a(vp->WorkPos.x + (vp->WorkSize.x - ts.x) / 2 - pad, vp->WorkPos.y + u.m.s(64));
+  const ImVec2 b(a.x + ts.x + pad * 2, a.y + ts.y + pad);
+  dl->AddRectFilled(a, b, IM_COL32(24, 28, 36, 225), u.m.s(8));
+  dl->AddText(ImVec2(a.x + pad, a.y + pad / 2), IM_COL32(255, 255, 255, 255), u.zoomHint.c_str());
+}
+
 // ---------------------------------------------------------------- キーボード（SPEC 10.4.4）
 void handleKeys(Frame& f) {
   AppController& c = f.c;
@@ -1123,6 +1172,8 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
     ImGui::End();
   }
   drawToasts(f);
+  handleZoom(f);
+  drawZoomHint(f);
   handleKeys(f);
   ImGui::PopFont();
   u.openColFilter.clear();  // 見出しが出ていない列の要求は捨てる

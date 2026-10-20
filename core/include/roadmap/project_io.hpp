@@ -78,7 +78,7 @@ struct Prefs {
   bool hintDismissed = false;
   // アプリの設定（端末ごと）
   std::string dataDir;       // 保存先。空 = 既定（exe の隣の data/projects）。exe のフォルダの中なら相対パス
-  int uiScale = 100;         // 文字の大きさ（%、80〜200）
+  int uiScale = 100;         // 画面の大きさ（%、70〜200）
   int dimPercent = 30;       // 上の絞り込みで薄くするときの不透明度（%、10〜80）
   bool confirmDelete = false;  // 課題を削除する前に確かめる
   bool autoBaseToday = false;  // プロジェクトを開いたら基準日を今日に合わせる（起動中、プロジェクトごとに1回）

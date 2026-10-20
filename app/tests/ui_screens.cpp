@@ -224,6 +224,15 @@ int main(int argc, char** argv) {
   shot("16_colfilter_hover");
   c.clearFilter();
   ImGui::GetIO().AddMousePosEvent(-1, -1);
+  // ガントの時間軸を Ctrl+ホイールで変えた幅
+  c.setView(app::View::Gantt);
+  c.setUi("zoom", "week");
+  u.customProject = c.currentId();
+  u.customPx = 16.f;
+  shot("20_gantt_custom_wide");
+  u.customPx = 3.2f;
+  shot("21_gantt_custom_narrow");
+  u.customPx = 0;
   // アプリの設定（保存先の切り替えの確認中）・削除の確認
   u.dlg = ui::Dlg::AppSettings;
   u.dlgOpening = true;

@@ -22,6 +22,7 @@ JIRA 互換の CSV を原本に、課題の階層・依存関係・期間から 
 | `reference-js/` | JS版のソース（参照のみ。`index.html` をブラウザで開けば動く） |
 | `docs/` | 仕様書・未確定事項のメモ・UIスパイクの記録・変更履歴 |
 | `tools/` | golden の再生成（Node）・アイコン・画面の文字一覧の生成 |
+| `packaging/` | 配布物の中身（ポータブル版のフォルダ `portable/`・インストーラの Inno Setup スクリプト `installer/`） |
 
 ## ビルド
 
@@ -44,6 +45,16 @@ ctest --preset linux-asan
 # Linux で UI をヘッドレスで動かす煙テスト
 cmake --preset linux-ui && cmake --build --preset linux-ui && ctest --preset linux-ui
 ```
+
+### インストーラ版
+
+Releases の `ProjectRoadmap-Setup-<版>.exe`（Inno Setup。CI で作る）。ポータブル版の zip と中身は同じです。
+
+- 既定は管理者権限なしで `%LOCALAPPDATA%\Programs\ProjectRoadmap` に入ります（インストール時に「すべてのユーザー」も選べます）。スタートメニュー・デスクトップ（選んだとき）にショートカットを作ります。
+- 保存先は、インストール先の `data\projects` のままです（アプリの設定で変えられます）。
+- 新しい版を上書きインストールするだけで更新できます。**アンインストールしても `data\projects` と `roadmap_prefs.json` は消しません**（要らなければフォルダを手で消してください）。
+- 署名していないため、実行すると Windows の SmartScreen が警告します（「詳細情報 → 実行」）。
+- 作り方: `cmake --install <build> --component portable --prefix dist/ProjectRoadmap` のあと `ISCC /DAppVersion=<版> /DSourceDir=dist\ProjectRoadmap /DRepoDir=. /DOutDir=dist packaging\installer\ProjectRoadmap.iss`
 
 ### ポータブル版のフォルダ
 
@@ -74,6 +85,7 @@ ProjectRoadmap/
 - 端末ごとの設定（テーマ・密度・テンプレートなど）: 実行ファイルの横の `roadmap_prefs.json`
 - 上書きする前の CSV は、起動してから最初の1回だけ `_バックアップ/` に残します（30個まで）。削除したプロジェクトは `_削除済み/` へ移します
 - 絞り込み: 上のバーの担当・状況・優先度と「遅れ」「余裕小」のチップは、一致しない課題を**薄く**表示します（行は減らない）。検索語と、表の列名の右の漏斗（列の絞り込み）は、一致しない課題を**隠し**ます
+- 拡大縮小: `Ctrl+ホイール`（タッチパッドのピンチも）・`Ctrl+「+」「-」`・`Ctrl+0`（100%）で画面全体。ガントの時間軸の上の `Ctrl+ホイール` は時間軸だけを広げ縮めます（マウスの位置の日付は動きません）
 - 削除: 行（ボードはカード）にマウスを載せると出るごみ箱、`Delete` キー、右クリックのメニュー。通知の「元に戻す」で戻せます
 - 主なキー: `Ctrl+K` コマンドパレット、`1`〜`4` ビュー切替、`N` 追加、`Tab`/`Shift+Tab` 階層、`Enter`/`F2` 名前の編集、`?` ショートカット一覧
 

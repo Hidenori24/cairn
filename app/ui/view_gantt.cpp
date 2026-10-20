@@ -125,7 +125,14 @@ void drawGanttView(Frame& f, ImVec2 size) {
   const Calendar& cal = s->calendar();
   const float RH = u.m.rowH();
   const std::string zoom = c.uiStr("zoom", "week");
-  const float headH = (zoom == "day" || zoom == "week") ? u.m.s(46) : u.m.s(30);
+  if (u.customProject != c.currentId()) {  // Ctrl+ホイールで変えた幅は、プロジェクトを開き直したら段階に戻す
+    u.customPx = 0;
+    u.customProject = c.currentId();
+  }
+  // 見出しの書き方は、1日の幅で決める（段階のときは段階の名前のまま）
+  std::string styleZoom = zoom;
+  if (u.customPx > 0) styleZoom = u.customPx >= 14 ? "day" : u.customPx >= 4 ? "week" : "month";
+  const float headH = (styleZoom == "day" || styleZoom == "week") ? u.m.s(46) : u.m.s(30);
   const std::string colorBy = c.uiStr("colorBy", "root");
 
   // 列
@@ -169,11 +176,36 @@ void drawGanttView(Frame& f, ImVec2 size) {
   Axis ax;
   ax.rs = lo - ((dow(lo) + 6) % 7) - 7;
   ax.hi = hi;
-  if (zoom == "day") ax.px = u.m.s(22);
+  if (u.customPx > 0) ax.px = u.m.s(u.customPx);
+  else if (zoom == "day") ax.px = u.m.s(22);
   else if (zoom == "month") ax.px = u.m.s(2.4f);
   else if (zoom == "all")
     ax.px = std::max(0.9f, std::min(12.f, (size.x - leftW - u.m.s(24)) / static_cast<float>(hi - ax.rs + 1))) ;
   else ax.px = u.m.s(6);
+  // Ctrl+ホイール（時間軸の上）: 1日の幅を変える。マウスの下の日付を動かさない。
+  // 画面全体の拡大縮小は、ガントが使わなかった Ctrl+ホイールを app_ui が受ける
+  u.wheelConsumed = false;
+  {
+    const ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 org = ImGui::GetCursorScreenPos();
+    const bool overTimeline =
+        ImGui::IsMouseHoveringRect(ImVec2(org.x + leftW, org.y), ImVec2(org.x + size.x, org.y + size.y)) &&
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && u.dlg == Dlg::None && !u.paletteOpen &&
+        !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+    if (io.KeyCtrl && io.MouseWheel != 0.f && overTimeline) {
+      u.wheelConsumed = true;
+      const float oldPx = ax.px;
+      const float next = std::clamp(oldPx / u.m.scale * std::pow(1.2f, io.MouseWheel), 0.9f, 40.f);
+      if (std::abs(next * u.m.scale - oldPx) > 1e-4f) {
+        ax.px = next * u.m.scale;
+        const float dayF = (io.MousePos.x - (org.x + leftW - u.ganttSx)) / oldPx;  // マウスの位置の日（開始日から）
+        u.pendingScrollX = org.x + leftW + dayF * ax.px - io.MousePos.x;
+        u.hasPendingScroll = true;
+        u.customPx = next;
+        u.lastZoom = zoom;  // 段階が変わったとみなして基準日へ戻さない
+      }
+    }
+  }
   const float timelineW = static_cast<float>(hi - ax.rs + 1) * ax.px;
   const float contentW = leftW + timelineW, contentH = headH + RH * static_cast<float>(rows.size()) + u.m.s(40);
 
@@ -187,12 +219,19 @@ void drawGanttView(Frame& f, ImVec2 size) {
   ImGui::PushStyleColor(ImGuiCol_ChildBg, v4(u.t->surface));
   ImGui::BeginChild("##gantt", size, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoMove);
   ImGui::PopStyleColor();
-  if (u.scrollToBase) {
-    ImGui::SetScrollX(zoom == "all" ? 0.f : std::max(0.f, static_cast<float>(base - ax.rs) * ax.px - u.m.s(90)));
+  if (u.hasPendingScroll) {
+    ImGui::SetScrollX(std::max(0.f, u.pendingScrollX));
+    u.hasPendingScroll = false;
+    u.scrollToBase = false;
+  } else if (u.scrollToBase) {
+    ImGui::SetScrollX(zoom == "all" && u.customPx <= 0 ? 0.f : std::max(0.f, static_cast<float>(base - ax.rs) * ax.px - u.m.s(90)));
     u.scrollToBase = false;
   }
   const ImVec2 wp = ImGui::GetWindowPos();
   const float sx = ImGui::GetScrollX(), sy = ImGui::GetScrollY();
+  u.ganttSx = sx;
+  u.ganttLeft = wp.x + leftW;
+  u.ganttPx = ax.px;
   const float viewW = ImGui::GetWindowWidth(), viewH = ImGui::GetWindowHeight();
   ImGui::Dummy(ImVec2(contentW, contentH));
   ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -231,7 +270,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
     for (Day d = d0; d <= d1; ++d) {
       const int w = dow(d);
       const float x = ax.x(d);
-      if (zoom == "day" && (w == 0 || w == 6)) dl->AddRectFilled(ImVec2(x, tlMin.y), ImVec2(x + ax.px, tlMax.y), u.t->wkend);
+      if (styleZoom == "day" && (w == 0 || w == 6)) dl->AddRectFilled(ImVec2(x, tlMin.y), ImVec2(x + ax.px, tlMax.y), u.t->wkend);
       if (w >= 1 && w <= 5 && cal.isHoliday(d)) dl->AddRectFilled(ImVec2(x, tlMin.y), ImVec2(x + std::max(ax.px, 1.f), tlMax.y), u.t->holbg);
       if (weekW >= u.m.s(18) && w == 1) dl->AddLine(ImVec2(x, tlMin.y), ImVec2(x, tlMax.y), u.t->rowline);
     }
@@ -446,12 +485,12 @@ void drawGanttView(Frame& f, ImVec2 size) {
         }
         if (ymd.d == 1) dl->AddLine(ImVec2(x, wp.y), ImVec2(x, wp.y + headH), u.t->line);
       }
-      if (zoom == "day") {
+      if (styleZoom == "day") {
         const int w = dow(d);
         const std::string n = std::to_string(ymd.d);
         const ImVec2 ts = ImGui::CalcTextSize(n.c_str());
         dl->AddText(ImVec2(x + (ax.px - ts.x) / 2, wp.y + rowH2 + (rowH2 - ts.y) / 2), (w == 0 || w == 6) ? u.t->muted : u.t->ink, n.c_str());
-      } else if (zoom == "week" && dow(d) == 1) {
+      } else if (styleZoom == "week" && dow(d) == 1) {
         const float weekW = ax.px * 7;
         const int every = weekW < u.m.s(26) ? 3 : weekW < u.m.s(40) ? 2 : 1;
         const int wk = (d - ax.rs) / 7;

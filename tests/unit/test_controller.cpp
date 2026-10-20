@@ -266,3 +266,33 @@ TEST_CASE("controller: 開いたら基準日を今日に合わせる（アプリ
   CHECK(c2.prefs().autoBaseToday);
   CHECK(c2.session()->settings().baseDate == "2026-10-19");
 }
+
+TEST_CASE("controller: 画面の拡大縮小（段階・上下限・100%に戻す・保存）") {
+  Env e;
+  e.c.start();
+  CHECK(e.c.prefs().uiScale == 100);
+  CHECK(e.c.stepUiScale(+1));
+  CHECK(e.c.prefs().uiScale == 110);
+  CHECK(e.c.stepUiScale(+1));
+  CHECK(e.c.prefs().uiScale == 125);
+  CHECK(loadPrefs(e.fs, "roadmap_prefs.json").uiScale == 125);  // すぐ保存する
+  for (int i = 0; i < 20; ++i) e.c.stepUiScale(+1);
+  CHECK(e.c.prefs().uiScale == 200);
+  CHECK_FALSE(e.c.stepUiScale(+1));  // 上限では変わらない
+  for (int i = 0; i < 20; ++i) e.c.stepUiScale(-1);
+  CHECK(e.c.prefs().uiScale == 70);
+  CHECK_FALSE(e.c.stepUiScale(-1));
+  CHECK(e.c.setUiScale(100));
+  CHECK(e.c.prefs().uiScale == 100);
+  CHECK_FALSE(e.c.setUiScale(100));
+  // 段階の間の値（古い設定ファイルなど）からでも、次の段階へ進む
+  e.c.prefs().uiScale = 105;
+  CHECK(e.c.stepUiScale(+1));
+  CHECK(e.c.prefs().uiScale == 110);
+  e.c.prefs().uiScale = 105;
+  CHECK(e.c.stepUiScale(-1));
+  CHECK(e.c.prefs().uiScale == 100);
+  // 範囲外は丸める
+  CHECK(e.c.setUiScale(999));
+  CHECK(e.c.prefs().uiScale == 200);
+}

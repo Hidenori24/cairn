@@ -302,6 +302,8 @@ TEST_CASE("store: データフォルダの決定・prefs") {
   REQUIRE(fs.writeAtomic("bad.json", R"({"uiScale": 900, "dimPercent": -5, "dataDir": 3})"));
   const Prefs b = loadPrefs(fs, "bad.json");
   CHECK(b.uiScale == 200);
+  REQUIRE(fs.writeAtomic("low.json", R"({"uiScale": 10})"));
+  CHECK(loadPrefs(fs, "low.json").uiScale == 70);
   CHECK(b.dimPercent == 10);
   CHECK(b.dataDir.empty());
 }
