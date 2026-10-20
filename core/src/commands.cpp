@@ -609,14 +609,19 @@ std::optional<std::string> Session::resolveRef(const std::string& in) const {
   return std::nullopt;
 }
 
-std::vector<VisibleRow> Session::visibleRows(const Filter& f) const {
+std::vector<VisibleRow> Session::visibleRows(const Filter& f, const ColumnFilter* cf) const {
   if (!comp_) return {};
-  return roadmap::visibleRows(comp_->T, comp_->issues, comp_->R, viewStateFromUi(comp_->T, P_.settings.ui), f);
+  return roadmap::visibleRows(comp_->T, comp_->issues, comp_->R, viewStateFromUi(comp_->T, P_.settings.ui), f, cf);
 }
 
-std::vector<int> Session::visibleLeaves(const Filter& f) const {
+std::vector<int> Session::visibleLeaves(const Filter& f, const ColumnFilter* cf) const {
   if (!comp_) return {};
-  return roadmap::visibleLeaves(comp_->T, comp_->issues, comp_->R, viewStateFromUi(comp_->T, P_.settings.ui), f);
+  return roadmap::visibleLeaves(comp_->T, comp_->issues, comp_->R, viewStateFromUi(comp_->T, P_.settings.ui), f, cf);
+}
+
+std::vector<char> Session::matchSet(const Filter& f) const {
+  if (!comp_) return {};
+  return visSet(comp_->T, comp_->issues, comp_->R, f);
 }
 
 Summary Session::summary() const { return comp_ ? summarize(comp_->T, comp_->R) : Summary{}; }

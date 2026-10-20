@@ -1,5 +1,6 @@
 // UI の煙テスト: ImGui をヘッドレスで動かし、各ビュー・ダイアログ・パレットを描いて落ちないこと・assert しないことを確かめる。
 // Win32・DX11 は使わない（フォントのテクスチャを作るだけ）。
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <set>
@@ -23,6 +24,8 @@ struct NullPlatform : ui::IPlatform {
   std::optional<std::pair<std::string, std::string>> openTextFile() override { return std::nullopt; }
   bool saveTextFile(const std::string&, const std::string&) override { return true; }
   void openFolder(const std::string&) override {}
+  std::optional<std::string> pickFolder(const std::string&) override { return picked; }
+  std::optional<std::string> picked;
   bool systemDark() override { return false; }
   void requestQuit() override {}
 };
@@ -161,11 +164,17 @@ int main() {
     check(h.c.session()->issue("7")->summary.find("取り消す") == std::string::npos, "Esc では変更しない");
     // N で追加して編集 → Enter（追加直後の行は次の行を追加して続ける）
     h.c.select("7");
-    h.key(ImGuiKey_N);
+    // N を押した直後（入力欄がまだアクティブになる前）に打った文字も落とさない（B13）。
+    // N 自身の文字は入れない
+    io.AddKeyEvent(ImGuiKey_N, true);
+    io.AddInputCharacter('n');
+    h.frame();
+    io.AddKeyEvent(ImGuiKey_N, false);
     check(h.u.editField == ui::EditField::Name && h.u.editFresh, "N で追加して編集");
     const std::string first = h.u.editId;
-    h.frame();  // 入力欄がアクティブになってから打つ（人の入力の速さ）
-    io.AddInputCharactersUTF8("追加1");
+    io.AddInputCharactersUTF8("追");
+    h.frame();
+    io.AddInputCharactersUTF8("加1");
     h.frame();
     h.key(ImGuiKey_Enter);
     check(h.u.editField == ui::EditField::Name && h.u.editId != first, "追加直後の Enter で次の行");
@@ -193,7 +202,7 @@ int main() {
   h.c.setSelection({"6", "7", "8"}, "8");
   h.frame(3);
   // すべてのダイアログ
-  for (int d = 1; d <= static_cast<int>(ui::Dlg::ConfirmQuit); ++d) {
+  for (int d = 1; d <= static_cast<int>(ui::Dlg::ConfirmIssueDelete); ++d) {
     h.u.dTargets = {"1"};
     h.u.dlg = static_cast<ui::Dlg>(d);
     h.u.dlgOpening = true;
@@ -209,6 +218,154 @@ int main() {
   h.frame(3);
   h.u.sortDir = 0;
   h.c.filter() = {};
+  // 上の絞り込みは薄くするだけ（行は減らない）・列の絞り込みは隠す
+  {
+    const std::size_t all = h.c.visibleRows().size();
+    h.c.filter().st = StFilter::Done;
+    h.c.filter().flt = FltFilter::Late;
+    for (auto v : {app::View::Gantt, app::View::Board, app::View::List}) {
+      h.c.setView(v);
+      h.frame(2);
+    }
+    check(h.c.visibleRows().size() == all, "上の絞り込みでは行が減らない");
+    check(!h.c.dimmedSet().empty(), "上の絞り込みで薄くする課題がある");
+    h.c.filter() = {};
+    h.c.setView(app::View::List);
+    for (const char* col : {"name", "type", "status", "asg", "prio", "float"}) {
+      h.u.openColFilter = col;
+      h.frame(2);
+      h.key(ImGuiKey_Escape);
+    }
+    h.c.setView(app::View::Gantt);
+    for (const char* col : {"name", "asg", "status", "float"}) {
+      h.u.openColFilter = col;
+      h.frame(2);
+      h.key(ImGuiKey_Escape);
+    }
+    h.c.columnFilter().toggle("status", "To Do");
+    h.frame(2);
+    check(h.c.visibleRows().size() < all, "列の絞り込みで行が隠れる");
+    h.c.setView(app::View::List);
+    h.u.sortKey = "status";
+    h.u.sortDir = 1;
+    h.frame(2);
+    h.u.sortDir = 0;
+    h.u.sortKey.clear();
+    h.c.clearFilter();
+    h.frame(2);
+  }
+  // アプリの設定（保存先の切り替えの確認・文字の大きさ・薄さ）と、削除の前の確認
+  {
+    h.key(ImGuiKey_Comma, true);
+    check(h.u.dlg == ui::Dlg::AppSettings, "Ctrl+, でアプリの設定");
+    h.frame(2);
+    h.u.pendingDir = "data2";
+    h.u.pendingCount = 0;
+    h.frame(2);
+    h.u.pendingDir.clear();
+    h.c.prefs().dimPercent = 60;
+    h.c.prefs().uiScale = 125;
+    h.frame(2);
+    h.u.dlg = ui::Dlg::None;
+    h.frame(2);
+    h.c.prefs().confirmDelete = true;
+    const std::size_t n0 = h.c.session()->issues().size();
+    h.c.select(h.c.session()->issues().back().id);
+    h.key(ImGuiKey_Delete);
+    check(h.u.dlg == ui::Dlg::ConfirmIssueDelete, "確かめる設定なら確認ダイアログ");
+    check(h.c.session()->issues().size() == n0, "確認の前には消さない");
+    h.frame(2);
+    h.u.dlg = ui::Dlg::None;
+    h.u.pendingDelete.clear();
+    h.frame(2);
+    h.c.prefs().confirmDelete = false;
+    h.c.prefs().dimPercent = 30;
+    h.c.prefs().uiScale = 100;
+  }
+  // 拡大縮小: ガントの時間軸の上の Ctrl+ホイールは時間軸、それ以外の Ctrl+ホイール・Ctrl+「+」「-」・Ctrl+0 は画面全体
+  {
+    h.c.setView(app::View::Gantt);
+    h.c.setUi("zoom", "week");
+    h.u.customPx = 0;
+    h.frame(3);
+    ImGuiIO& io = ImGui::GetIO();
+    const auto wheel = [&](float x, float y, float dy, bool ctrl) {
+      io.AddMousePosEvent(x, y);
+      io.AddKeyEvent(ImGuiMod_Ctrl, ctrl);
+      h.frame(1);
+      io.AddMouseWheelEvent(0, dy);
+      h.frame(1);
+      io.AddKeyEvent(ImGuiMod_Ctrl, false);
+      h.frame(2);
+    };
+    const int scale0 = h.c.prefs().uiScale;
+    wheel(900, 300, 1, true);  // 時間軸の上 → 時間軸だけ変わる
+    check(h.u.customPx > 6.f, "Ctrl+ホイールで時間軸が広がる");
+    check(h.c.prefs().uiScale == scale0, "時間軸の上では画面全体は変わらない");
+    {
+      // マウスの下の日付が、拡大縮小の前後で動かない
+      const float mx = 900;
+      const auto dayAt = [&] { return (mx - (h.u.ganttLeft - h.u.ganttSx)) / h.u.ganttPx; };
+      h.frame(2);
+      const float before = dayAt();
+      wheel(mx, 300, 2, true);
+      const float after = dayAt();
+      check(std::abs(after - before) < 0.6f, "拡大してもマウスの下の日付が動かない");
+      wheel(mx, 300, -2, true);
+      check(std::abs(dayAt() - before) < 0.6f, "縮小してもマウスの下の日付が動かない");
+    }
+    const float wide = h.u.customPx;
+    wheel(900, 300, -3, true);
+    check(h.u.customPx < wide, "Ctrl+ホイールで時間軸が狭まる");
+    for (int i = 0; i < 40; ++i) wheel(900, 300, -1, true);
+    check(h.u.customPx >= 0.9f - 1e-3f, "時間軸の下限");
+    for (int i = 0; i < 60; ++i) wheel(900, 300, 1, true);
+    check(h.u.customPx <= 40.f + 1e-3f, "時間軸の上限");
+    wheel(900, 300, 1, false);  // Ctrl なしは今までどおりスクロール
+    check(h.u.customPx <= 40.f + 1e-3f, "Ctrl なしでは時間軸は変わらない");
+    h.c.setUi("zoom", "week");  // 段階のボタンに戻す
+    h.u.customPx = 0;
+    h.frame(2);
+    wheel(100, 300, 1, true);  // 左の表の上 → 画面全体
+    check(h.c.prefs().uiScale == 110, "表の上の Ctrl+ホイールで画面全体が大きくなる");
+    h.clk.advanceMs(300);
+    wheel(100, 300, -1, true);
+    check(h.c.prefs().uiScale == 100, "Ctrl+ホイールで画面全体が小さくなる");
+    h.clk.advanceMs(300);
+    h.key(ImGuiKey_Equal, true);
+    check(h.c.prefs().uiScale == 110, "Ctrl+「+」で大きくなる");
+    h.key(ImGuiKey_Minus, true);
+    h.key(ImGuiKey_Minus, true);
+    check(h.c.prefs().uiScale == 90, "Ctrl+「-」で小さくなる");
+    h.key(ImGuiKey_0, true);
+    check(h.c.prefs().uiScale == 100, "Ctrl+0 で100%に戻る");
+    check(!h.u.zoomHint.empty(), "倍率を表示する");
+    h.frame(2);
+    // 日・週・月・全体のボタンに戻すと、ホイールで変えた幅は捨てる
+    h.u.customPx = 12.f;
+    h.u.customProject = h.c.currentId();
+    h.frame(2);
+    h.c.setView(app::View::Board);
+    h.frame(1);
+    h.c.setView(app::View::Gantt);
+    h.frame(2);
+  }
+  // 行にマウスを載せると出るごみ箱で削除し、元に戻す
+  {
+    h.c.setView(app::View::Gantt);
+    h.frame(2);
+    const std::size_t n0 = h.c.session()->issues().size();
+    for (float y = 120; y < 260 && h.c.session()->issues().size() == n0; y += 4) h.click(253, y);
+    check(h.c.session()->issues().size() < n0, "ごみ箱のボタンで削除");
+    h.c.undo();
+    h.frame(2);
+    check(h.c.session()->issues().size() == n0, "ごみ箱で削除したものを元に戻す");
+    h.c.setView(app::View::Board);
+    for (float y = 120; y < 400; y += 40) {
+      ImGui::GetIO().AddMousePosEvent(200, y);
+      h.frame(2);
+    }
+  }
   // スイムレーン
   h.c.setView(app::View::Board);
   for (const char* l : {"none", "asg", "root"}) {

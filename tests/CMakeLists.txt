@@ -1,6 +1,8 @@
 # doctest のテスト。core と cli だけを使う（Linux でも動く）
 add_library(roadmap_test_main STATIC test_main.cpp)
 target_link_libraries(roadmap_test_main PUBLIC doctest::doctest)
+# doctest が std::tuple などを自前で前方宣言しないようにする（MSVC 19.5x の C5285）
+target_compile_definitions(roadmap_test_main PUBLIC DOCTEST_CONFIG_USE_STD_HEADERS)
 
 add_executable(roadmap_unit_tests
   unit/test_text.cpp

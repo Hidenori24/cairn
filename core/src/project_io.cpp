@@ -267,11 +267,20 @@ Prefs prefsFromJson(const Json& j) {
     if (w.contains("maximized") && w["maximized"].is_boolean()) p.window.maximized = w["maximized"].get<bool>();
   }
   if (j.contains("hintDismissed") && j["hintDismissed"].is_boolean()) p.hintDismissed = j["hintDismissed"].get<bool>();
+  if (hasStr(j, "dataDir")) p.dataDir = j["dataDir"].get<std::string>();
+  const auto clampInt = [&](const char* k, int lo, int hi, int& out) {
+    if (j.contains(k) && j[k].is_number()) out = std::clamp(static_cast<int>(j[k].get<double>()), lo, hi);
+  };
+  clampInt("uiScale", 70, 200, p.uiScale);
+  clampInt("dimPercent", 10, 80, p.dimPercent);
+  if (j.contains("confirmDelete") && j["confirmDelete"].is_boolean()) p.confirmDelete = j["confirmDelete"].get<bool>();
+  if (j.contains("autoBaseToday") && j["autoBaseToday"].is_boolean()) p.autoBaseToday = j["autoBaseToday"].get<bool>();
+  static const char* const known[] = {"theme",   "density", "me",         "currentProject", "templates",    "window",
+                                      "hintDismissed", "dataDir", "uiScale", "dimPercent", "confirmDelete",
+                                      "autoBaseToday"};
   for (auto it = j.begin(); it != j.end(); ++it) {
     const std::string& k = it.key();
-    if (k != "theme" && k != "density" && k != "me" && k != "currentProject" && k != "templates" && k != "window" &&
-        k != "hintDismissed")
-      p.unknown[k] = it.value();
+    if (std::find(std::begin(known), std::end(known), k) == std::end(known)) p.unknown[k] = it.value();
   }
   return p;
 }
@@ -285,6 +294,11 @@ Json prefsToJson(const Prefs& p) {
   j["templates"] = templatesToJson(p.templates);
   j["window"] = Json{{"x", p.window.x}, {"y", p.window.y}, {"w", p.window.w}, {"h", p.window.h}, {"maximized", p.window.maximized}};
   j["hintDismissed"] = p.hintDismissed;
+  j["dataDir"] = p.dataDir;
+  j["uiScale"] = p.uiScale;
+  j["dimPercent"] = p.dimPercent;
+  j["confirmDelete"] = p.confirmDelete;
+  j["autoBaseToday"] = p.autoBaseToday;
   if (p.unknown.is_object())
     for (auto it = p.unknown.begin(); it != p.unknown.end(); ++it) j[it.key()] = it.value();
   return j;

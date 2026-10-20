@@ -340,13 +340,61 @@ Status Workspace::remove(const std::string& id) {
   return okStatus();
 }
 
+std::string defaultDataDir(const std::string& exeDir) { return joinPath(joinPath(exeDir, "data"), "projects"); }
+
 DataDirChoice chooseDataDir(IFileStore& fs, const std::string& argDir, const std::string& envDir,
-                            const std::string& exeDir, const std::string& fallbackDir) {
-  if (!argDir.empty()) return {argDir, false};
-  if (!envDir.empty()) return {envDir, false};
-  const std::string def = joinPath(joinPath(exeDir, "data"), "projects");
-  if (fs.probeWritable(def)) return {def, false};
-  return {fallbackDir, true};
+                            const std::string& prefDir, const std::string& exeDir, const std::string& fallbackDir) {
+  if (!argDir.empty()) return {argDir, false, DataDirSource::Arg};
+  if (!envDir.empty()) return {envDir, false, DataDirSource::Env};
+  DataDirChoice c;
+  if (!prefDir.empty()) {
+    const std::string d = resolveDataDir(prefDir, exeDir);
+    if (fs.probeWritable(d)) return {d, false, DataDirSource::Prefs};
+    c.prefsDirUnavailable = true;
+  }
+  const std::string def = defaultDataDir(exeDir);
+  if (fs.probeWritable(def)) {
+    c.dir = def;
+    c.source = DataDirSource::Default;
+  } else {
+    c.dir = fallbackDir;
+    c.usedFallback = true;
+    c.source = DataDirSource::Fallback;
+  }
+  return c;
+}
+
+namespace {
+bool isAbsolutePath(const std::string& p) {
+  return (!p.empty() && (p[0] == '/' || p[0] == '\\')) || (p.size() >= 2 && p[1] == ':');
+}
+// 比べるための形: 区切りを / に、末尾の / を除き、ASCII を小文字に（Windows のパスは大文字小文字を区別しない）
+std::string pathKey(const std::string& p) {
+  std::string k = text::replaceAll(p, "\\", "/");
+  while (k.size() > 1 && k.back() == '/') k.pop_back();
+  for (char& ch : k)
+    if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+  return k;
+}
+}  // namespace
+
+std::string storableDataDir(const std::string& dir, const std::string& exeDir) {
+  if (exeDir.empty()) return dir;
+  const std::string d = pathKey(dir), e = pathKey(exeDir);
+  if (d == e) return ".";
+  if (d.size() > e.size() && d.compare(0, e.size(), e) == 0 && d[e.size()] == '/') {
+    // 元の文字（大文字小文字）を残し、区切りは / にする
+    std::string rest = text::replaceAll(dir, "\\", "/");
+    while (rest.size() > 1 && rest.back() == '/') rest.pop_back();
+    return rest.substr(e.size() + 1);
+  }
+  return dir;
+}
+
+std::string resolveDataDir(const std::string& stored, const std::string& exeDir) {
+  if (stored.empty() || isAbsolutePath(stored)) return stored;
+  if (stored == ".") return exeDir;
+  return joinPath(exeDir, stored);
 }
 
 Prefs loadPrefs(IFileStore& fs, const std::string& path) {

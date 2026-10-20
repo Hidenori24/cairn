@@ -45,7 +45,7 @@ std::vector<Cmd> buildCommands(Frame& f) {
       if (!cur.empty() && s->tree() && s->tree()->find(cur) >= 0 && !s->tree()->kids[s->tree()->find(cur)].empty())
         add("課題", "子タスクをテンプレートとして保存", nullptr, [&f, cur] { openTplSave(f, cur); });
       if (!cur.empty()) add("課題", "名前を変更", "Enter / F2", [&f, cur] { beginEdit(f, cur, EditField::Name); });
-      add("課題", "削除", "Del", [&c] { c.deleteSelection(); });
+      add("課題", "削除", "Del", [&f] { requestDelete(f, f.c.selection()); });
     }
     add("課題", "詳細パネルを開く・閉じる", "Space", [&u] { u.detailOpen = !u.detailOpen; });
     add("表示", "ガントを表示", "1", [&c] { c.setView(app::View::Gantt); });
@@ -55,6 +55,7 @@ std::vector<Cmd> buildCommands(Frame& f) {
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"day", "日"}, {"week", "週"}, {"month", "月"}, {"all", "全体"}})
       add("表示", std::string("ガントの拡大率: ") + l, nullptr, [&c, &u, key = std::string(k)] {
         c.setUi("zoom", key);
+        u.customPx = 0;
         u.scrollToBase = true;
       });
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"root", "Epic"}, {"float", "余裕"}, {"asg", "担当者"}})
@@ -68,11 +69,11 @@ std::vector<Cmd> buildCommands(Frame& f) {
         if (!T->kids[id].empty()) col[T->ids[id]] = true;
       c.setUi("collapsed", col);
     });
-    add("表示", "遅れだけを表示", nullptr, [&c] { c.filter().flt = FltFilter::Late; });
-    add("表示", "余裕小だけを表示", nullptr, [&c] { c.filter().flt = FltFilter::Tight; });
+    add("表示", "遅れを目立たせる（ほかを薄く）", nullptr, [&c] { c.filter().flt = FltFilter::Late; });
+    add("表示", "余裕小を目立たせる（ほかを薄く）", nullptr, [&c] { c.filter().flt = FltFilter::Tight; });
     add("表示", "絞り込みを解除", nullptr, [&c] { c.clearFilter(); });
-    add("表示", "未完了だけを表示", nullptr, [&c] { c.filter().flt = FltFilter::Open; });
-    add("表示", "担当者が未割当の課題だけを表示", nullptr, [&c] { c.filter().asg = AsgFilter::Unassigned; });
+    add("表示", "未完了を目立たせる（ほかを薄く）", nullptr, [&c] { c.filter().flt = FltFilter::Open; });
+    add("表示", "担当者が未割当の課題を目立たせる（ほかを薄く）", nullptr, [&c] { c.filter().asg = AsgFilter::Unassigned; });
   }
   add("表示", "密度の切替", nullptr, [&c] { c.setDensity(c.prefs().density == "compact" ? "normal" : "compact"); });
   add("表示", "テーマの切替（自動→ライト→ダーク）", nullptr, [&c] {
@@ -94,6 +95,8 @@ std::vector<Cmd> buildCommands(Frame& f) {
     add("編集", "元に戻す", "Ctrl+Z", [&c] { c.undo(); });
     add("編集", "やり直す", "Ctrl+Shift+Z", [&c] { c.redo(); });
   }
+  add("アプリ", "アプリの設定", "Ctrl+,", [&f] { openDialog(f, Dlg::AppSettings); });
+  add("アプリ", "保存先を変える", nullptr, [&f] { openDialog(f, Dlg::AppSettings); });
   add("プロジェクト", "新しいプロジェクト", nullptr, [&f] { openDialog(f, Dlg::NewProject); });
   if (s) {
     add("プロジェクト", "名前・キーを変更", nullptr, [&f] { openDialog(f, Dlg::EditProject); });

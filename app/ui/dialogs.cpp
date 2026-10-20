@@ -1,5 +1,7 @@
 // ダイアログ（SPEC 10.11）
 #include <algorithm>
+#include <set>
+
 #include <imgui.h>
 #include <imgui_stdlib.h>
 
@@ -27,6 +29,8 @@ const char* titleOf(Dlg d) {
     case Dlg::TplSave: return "子タスクをテンプレとして保存";
     case Dlg::Conflict: return "同じプロジェクトがあります";
     case Dlg::ConfirmQuit: return "保存されていない変更があります";
+    case Dlg::AppSettings: return "アプリの設定";
+    case Dlg::ConfirmIssueDelete: return "課題を削除";
     default: return "";
   }
 }
@@ -34,12 +38,14 @@ const char* titleOf(Dlg d) {
 float widthOf(const UiState& u, Dlg d) {
   switch (d) {
     case Dlg::ConfirmDelete:
+    case Dlg::ConfirmIssueDelete:
     case Dlg::Conflict:
     case Dlg::ConfirmQuit: return u.m.s(460);
     case Dlg::Import:
     case Dlg::Export: return u.m.s(640);
     case Dlg::Folder: return u.m.s(600);
     case Dlg::Settings: return u.m.s(620);
+    case Dlg::AppSettings: return u.m.s(640);
     case Dlg::Workload: return u.m.s(720);
     case Dlg::Warnings: return u.m.s(560);
     case Dlg::Shortcuts: return u.m.s(620);
@@ -273,11 +279,221 @@ void dlgFolder(Frame& f) {
   if (ImGui::Button("フォルダを開く")) f.p.openFolder(c.dataDir());
   ImGui::SameLine();
   if (ImGui::Button("フォルダの変更を読み込む")) c.syncFolder(true);
+  ImGui::SameLine();
+  if (ImGui::Button("保存先を変える…")) {
+    close(f);
+    openDialog(f, Dlg::AppSettings);
+    return;
+  }
   ImGui::PushTextWrapPos(0);
   ImGui::TextDisabled("編集のたびに自動で保存します（CSV + 設定JSON）。上書きする前のCSVは、起動してから最初の1回だけ「_バックアップ」に残します（30個まで）。"
-                      "削除したプロジェクトのファイルは「_削除済み」に移します。フォルダは起動引数 --data または環境変数 ROADMAP_DATA で変えられます。");
+                      "削除したプロジェクトのファイルは「_削除済み」に移します。保存先は「アプリの設定」で変えられます（起動引数 --data・環境変数 ROADMAP_DATA が優先）。");
   ImGui::PopTextWrapPos();
   if (buttons(f, {"閉じる"}) == 0) close(f);
+}
+
+// 保存先の由来の説明
+const char* dataDirSourceText(const DataDirChoice& d) {
+  switch (d.source) {
+    case DataDirSource::Arg: return "起動引数 --data で指定されています";
+    case DataDirSource::Env: return "環境変数 ROADMAP_DATA で指定されています";
+    case DataDirSource::Prefs: return "この設定で選んだ場所です";
+    case DataDirSource::Fallback: return "既定の場所（実行ファイルの横）に書き込めないため、%LOCALAPPDATA% を使っています";
+    default: return "既定の場所（実行ファイルの横の data\\projects）です";
+  }
+}
+
+std::string parentDir(const std::string& path) {
+  const auto k = path.find_last_of("/\\");
+  return k == std::string::npos ? std::string(".") : path.substr(0, k);
+}
+
+void dlgAppSettings(Frame& f) {
+  UiState& u = f.u;
+  app::AppController& c = f.c;
+  Prefs& pr = c.prefs();
+  if (ImGui::IsWindowAppearing()) {
+    u.pendingDir.clear();
+    u.pendingError.clear();
+    u.dName = pr.me;
+  }
+  // ---- 保存先 ----
+  ImGui::SeparatorText("保存先");
+  ImGui::PushFont(u.fontMono);
+  ImGui::TextWrapped("%s", c.dataDir().c_str());
+  ImGui::PopFont();
+  const DataDirChoice& info = c.dataDirInfo();
+  ImGui::TextDisabled("%s", dataDirSourceText(info));
+  if (info.prefsDirUnavailable)
+    ImGui::TextColored(v4(u.t->tight), "設定した保存先（%s）に書き込めないため、ここを使っています。", pr.dataDir.c_str());
+  const auto choose = [&](const std::string& dir) {
+    u.pendingDir = dir;
+    u.pendingError.clear();
+    u.pendingCount = c.countProjectsIn(dir);
+    u.pendingCopy = u.pendingCount == 0;  // 空の場所なら手元のものをコピー、あるならその場所のものを使う
+  };
+  if (c.dataDirLocked()) {
+    ImGui::TextDisabled("起動のしかたで決まっているため、ここでは変えられません。");
+  } else if (u.pendingDir.empty()) {
+    if (ImGui::Button("変更…"))
+      if (auto d = f.p.pickFolder(c.dataDir())) choose(*d);
+    ImGui::SameLine();
+    const bool isDefault = info.source == DataDirSource::Default;
+    ImGui::BeginDisabled(isDefault);
+    if (ImGui::Button("既定（実行ファイルの横）に戻す")) choose(c.defaultDir());
+    ImGui::EndDisabled();
+  }
+  if (ImGui::Button("フォルダを開く")) f.p.openFolder(c.dataDir());
+  if (!u.pendingDir.empty()) {
+    // 切り替えの確認
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, v4(u.t->surface2));
+    ImGui::BeginChild("##pending", ImVec2(0, 0), ImGuiChildFlags_Border | ImGuiChildFlags_AutoResizeY);
+    ImGui::TextUnformatted("新しい保存先");
+    ImGui::PushFont(u.fontMono);
+    ImGui::TextWrapped("%s", u.pendingDir.c_str());
+    ImGui::PopFont();
+    if (u.pendingCount > 0) ImGui::TextDisabled("この場所には %d 件のプロジェクトがあります。", u.pendingCount);
+    else ImGui::TextDisabled("この場所にはまだプロジェクトがありません。");
+    const std::string label = "今のプロジェクト（" + std::to_string(c.projects().size()) + "件）をこの場所にコピーする";
+    ImGui::Checkbox(label.c_str(), &u.pendingCopy);
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextDisabled("元の場所のファイルはそのまま残ります。同じプロジェクトが新しい場所にもあれば、新しい場所の方を使います。");
+    ImGui::PopTextWrapPos();
+    if (!u.pendingError.empty()) ImGui::TextColored(v4(u.t->late), "%s", u.pendingError.c_str());
+    ImGui::PushStyleColor(ImGuiCol_Button, v4(u.t->accent));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, v4(withAlpha(u.t->accent, 0.85f)));
+    ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->accentInk));
+    const bool go = ImGui::Button("切り替える");
+    ImGui::PopStyleColor(3);
+    if (go) {
+      if (auto r = c.switchDataDir(u.pendingDir, u.pendingCopy)) u.pendingDir.clear();
+      else u.pendingError = r.error();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("やめる")) u.pendingDir.clear();
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+  }
+
+  // ---- 表示 ----
+  ImGui::SeparatorText("表示");
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted("テーマ");
+  for (const auto& [k, l] : {std::pair<const char*, const char*>{"auto", "自動（Windows に合わせる）"}, {"light", "ライト"}, {"dark", "ダーク"}}) {
+    ImGui::SameLine();
+    if (ImGui::RadioButton(l, pr.theme == k)) c.setTheme(k);
+  }
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted("密度");
+  ImGui::SameLine();
+  if (ImGui::RadioButton("標準", pr.density != "compact")) c.setDensity("normal");
+  ImGui::SameLine();
+  if (ImGui::RadioButton("コンパクト", pr.density == "compact")) c.setDensity("compact");
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted("画面の大きさ");
+  ImGui::SameLine();
+  if (ImGui::Button("-", ImVec2(u.m.s(28), 0))) c.stepUiScale(-1);
+  ImGui::SameLine();
+  ImGui::AlignTextToFramePadding();
+  ImGui::Text("%3d%%", pr.uiScale);
+  ImGui::SameLine();
+  if (ImGui::Button("+", ImVec2(u.m.s(28), 0))) c.stepUiScale(1);
+  ImGui::SameLine();
+  ImGui::BeginDisabled(pr.uiScale == 100);
+  if (ImGui::Button("100%に戻す")) c.setUiScale(100);
+  ImGui::EndDisabled();
+  ImGui::SameLine();
+  ImGui::TextDisabled("Ctrl+ホイール・Ctrl+「+」「-」・Ctrl+0 でも変えられます");
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted("絞り込みで薄くする課題の濃さ");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(u.m.s(180));
+  if (ImGui::SliderInt("##dim", &pr.dimPercent, 10, 80, "%d%%")) pr.dimPercent = std::clamp(pr.dimPercent, 10, 80);
+  if (ImGui::IsItemDeactivatedAfterEdit()) c.savePrefs();
+  ImGui::SameLine();
+  {
+    // 見本
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = ImGui::GetFrameHeight();
+    dl->AddRectFilled(ImVec2(p.x, p.y + h * 0.25f), ImVec2(p.x + u.m.s(60), p.y + h * 0.75f), u.t->c[1], u.m.s(3));
+    dl->AddRectFilled(ImVec2(p.x + u.m.s(68), p.y + h * 0.25f), ImVec2(p.x + u.m.s(128), p.y + h * 0.75f),
+                      withAlpha(u.t->c[1], dimAlpha(c)), u.m.s(3));
+    ImGui::Dummy(ImVec2(u.m.s(128), h));
+  }
+
+  // ---- 操作 ----
+  ImGui::SeparatorText("操作");
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted("自分の名前（コメントの書き手）");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(u.m.s(180));
+  ImGui::InputText("##me", &u.dName);
+  if (ImGui::IsItemDeactivatedAfterEdit()) {
+    const std::string me = text::trim(u.dName);
+    pr.me = text::replaceAll(me.empty() ? "自分" : me, ";", "；");
+    u.dName = pr.me;
+    c.savePrefs();
+  }
+  if (ImGui::Checkbox("プロジェクトを開いたら基準日を今日に合わせる", &pr.autoBaseToday)) c.savePrefs();
+  ImGui::SameLine();
+  ImGui::TextDisabled("（起動中、プロジェクトごとに1回。前の日付は通知に出します）");
+  if (ImGui::Checkbox("課題を削除する前に確かめる", &pr.confirmDelete)) c.savePrefs();
+  ImGui::SameLine();
+  ImGui::TextDisabled("（確かめなくても、通知の「元に戻す」か Ctrl+Z で戻せます）");
+
+  // ---- その他 ----
+  ImGui::SeparatorText("その他");
+  ImGui::BeginDisabled(!pr.hintDismissed);
+  if (ImGui::Button("操作のヒントをもう一度表示")) {
+    pr.hintDismissed = false;
+    c.savePrefs();
+  }
+  ImGui::EndDisabled();
+  ImGui::TextDisabled("設定ファイル");
+  ImGui::PushFont(u.fontMono);
+  ImGui::TextWrapped("%s", c.prefsPath().c_str());
+  ImGui::PopFont();
+  if (ImGui::Button("設定ファイルのフォルダを開く")) f.p.openFolder(parentDir(c.prefsPath()));
+  ImGui::SameLine();
+  ImGui::TextDisabled("バージョン %s", ROADMAP_VERSION);
+  if (buttons(f, {"閉じる"}) == 0) close(f);
+}
+
+void dlgConfirmIssueDelete(Frame& f) {
+  UiState& u = f.u;
+  app::AppController& c = f.c;
+  Session* s = c.session();
+  if (!s || u.pendingDelete.empty()) return close(f);
+  std::vector<std::string> ids;
+  for (const auto& id : u.pendingDelete)
+    if (s->issue(id)) ids.push_back(id);
+  if (ids.empty()) return close(f);
+  std::set<std::string> all(ids.begin(), ids.end());
+  for (const auto& id : ids)
+    for (const auto& k : s->descendantsOf(id)) all.insert(k);
+  const int kids = static_cast<int>(all.size() - ids.size());
+  ImGui::PushTextWrapPos(0);
+  if (ids.size() == 1) ImGui::Text("「%s」を削除します。", s->issue(ids[0])->summary.c_str());
+  else ImGui::Text("%d 件の課題を削除します。", static_cast<int>(ids.size()));
+  if (kids > 0) ImGui::TextColored(v4(u.t->tight), "子の課題 %d 件も一緒に削除します。", kids);
+  ImGui::TextDisabled("削除したあとも、通知の「元に戻す」か Ctrl+Z で戻せます。");
+  ImGui::PopTextWrapPos();
+  bool ask = c.prefs().confirmDelete;
+  if (ImGui::Checkbox("削除の前に確かめる", &ask)) {
+    c.prefs().confirmDelete = ask;
+    c.savePrefs();
+  }
+  const int b = buttons(f, {"削除", "キャンセル"}, true);
+  if (b == 0) {
+    s->deleteIssues(ids);
+    c.afterEdit();
+    u.pendingDelete.clear();
+    close(f);
+  } else if (b == 1) {
+    u.pendingDelete.clear();
+    close(f);
+  }
 }
 
 void dlgSettings(Frame& f) {
@@ -349,15 +565,10 @@ void dlgSettings(Frame& f) {
     ImGui::SameLine();
   }
   ImGui::NewLine();
-  ImGui::TextUnformatted("密度");
-  ImGui::SameLine();
-  if (ImGui::RadioButton("標準", c.prefs().density != "compact")) c.setDensity("normal");
-  ImGui::SameLine();
-  if (ImGui::RadioButton("コンパクト", c.prefs().density == "compact")) c.setDensity("compact");
-  ImGui::TextUnformatted("テーマ");
-  for (const auto& [k, l] : {std::pair<const char*, const char*>{"auto", "自動"}, {"light", "ライト"}, {"dark", "ダーク"}}) {
-    ImGui::SameLine();
-    if (ImGui::RadioButton(l, c.prefs().theme == k)) c.setTheme(k);
+  if (ImGui::Button("テーマ・密度・文字の大きさ・保存先（アプリの設定）…")) {
+    close(f);
+    openDialog(f, Dlg::AppSettings);
+    return;
   }
   ImGui::SeparatorText("データ");
   if (ImGui::Button("保存先フォルダ…")) {
@@ -433,7 +644,10 @@ void dlgWarnings(Frame& f) {
 void dlgShortcuts(Frame& f) {
   const std::pair<const char*, const char*> global[] = {
       {"Ctrl+K", "コマンドパレット"}, {"Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y", "元に戻す / やり直す"}, {"1 2 3 4", "ガント / ボード / リスト / ギャップ"},
-      {"/", "絞り込み欄へ"},        {"?", "この一覧"},                                   {"Esc", "メニュー → 選択 → 詳細パネルの順に閉じる"}};
+      {"/", "絞り込み欄へ"},        {"?", "この一覧"},  {"Ctrl+,", "アプリの設定"},
+      {"Ctrl+ホイール / Ctrl+「+」「-」 / Ctrl+0", "画面全体の拡大縮小 / 100%に戻す"},
+      {"Ctrl+ホイール（ガントの時間軸の上）", "ガントの時間軸の拡大縮小（マウスの位置の日付を動かさない）"},
+      {"Esc", "メニュー → 選択 → 詳細パネルの順に閉じる"}};
   const std::pair<const char*, const char*> rows[] = {
       {"↑ ↓", "カーソル移動"},           {"Shift+↑↓", "範囲を広げる"},          {"Alt+↑↓", "兄弟の中で上下に移動"},
       {"← →", "閉じる / 開く"},          {"Enter / F2", "件名を編集"},           {"N / Insert", "同じ階層に追加"},
@@ -585,7 +799,8 @@ void drawDialogs(Frame& f) {
     return;
   }
   // Esc と外側クリックで閉じる（確認ダイアログは外側クリックでは閉じない）
-  const bool confirm = u.dlg == Dlg::ConfirmDelete || u.dlg == Dlg::ConfirmQuit || u.dlg == Dlg::Conflict;
+  const bool confirm = u.dlg == Dlg::ConfirmDelete || u.dlg == Dlg::ConfirmQuit || u.dlg == Dlg::Conflict ||
+                       u.dlg == Dlg::ConfirmIssueDelete || (u.dlg == Dlg::AppSettings && !u.pendingDir.empty());
   const bool outside = ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                        !ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup |
                                                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
@@ -610,6 +825,8 @@ void drawDialogs(Frame& f) {
     case Dlg::TplSave: dlgTplSave(f); break;
     case Dlg::Conflict: dlgConflict(f); break;
     case Dlg::ConfirmQuit: dlgConfirmQuit(f); break;
+    case Dlg::AppSettings: dlgAppSettings(f); break;
+    case Dlg::ConfirmIssueDelete: dlgConfirmIssueDelete(f); break;
     default: close(f); break;
   }
   if (!open) close(f);

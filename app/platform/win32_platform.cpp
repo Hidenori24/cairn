@@ -127,6 +127,36 @@ std::optional<std::pair<std::string, std::string>> Win32Platform::openTextFile()
   return out;
 }
 
+std::optional<std::string> Win32Platform::pickFolder(const std::string& start) {
+  IFileOpenDialog* dlg = nullptr;
+  if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return std::nullopt;
+  DWORD opts = 0;
+  dlg->GetOptions(&opts);
+  dlg->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+  dlg->SetTitle(L"保存先のフォルダを選ぶ");
+  if (!start.empty()) {
+    IShellItem* folder = nullptr;
+    if (SUCCEEDED(SHCreateItemFromParsingName(widen(start).c_str(), nullptr, IID_PPV_ARGS(&folder)))) {
+      dlg->SetFolder(folder);
+      folder->Release();
+    }
+  }
+  std::optional<std::string> out;
+  if (SUCCEEDED(dlg->Show(hwnd_))) {
+    IShellItem* item = nullptr;
+    if (SUCCEEDED(dlg->GetResult(&item))) {
+      PWSTR p = nullptr;
+      if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &p))) {
+        out = narrow(p);
+        CoTaskMemFree(p);
+      }
+      item->Release();
+    }
+  }
+  dlg->Release();
+  return out;
+}
+
 bool Win32Platform::saveTextFile(const std::string& suggestedName, const std::string& content) {
   IFileSaveDialog* dlg = nullptr;
   if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return false;

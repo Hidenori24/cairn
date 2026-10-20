@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(ProjectRoadmap VERSION 0.1.0 LANGUAGES CXX)
+project(ProjectRoadmap VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,4 +43,14 @@ endif()
 
 if(ROADMAP_BUILD_TESTS)
   add_subdirectory(tests)
+endif()
+
+# ポータブル版のフォルダ構成（cmake --install <build> --component portable --prefix <出力先>）
+# exe の隣に data\projects\（保存先）・samples\・README.txt を置く。依存ライブラリの install は含めない
+if(WIN32 AND ROADMAP_BUILD_APP)
+  install(TARGETS roadmap_app rmcli RUNTIME DESTINATION . COMPONENT portable)
+  install(DIRECTORY packaging/portable/ DESTINATION . COMPONENT portable)
+  install(FILES golden/samples/regulation_roadmap.csv golden/samples/hierarchy_demo.csv golden/samples/leveling_demo.csv
+          DESTINATION samples COMPONENT portable)
+  install(FILES THIRD_PARTY.md DESTINATION . COMPONENT portable)
 endif()

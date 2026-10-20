@@ -98,3 +98,51 @@ TEST_CASE("filter: 担当・状況・優先度・flt の組み合わせ") {
   CHECK(f.active());
   CHECK_FALSE(Filter{}.active());
 }
+
+TEST_CASE("filter: 列の絞り込み（値を隠す・件名・上の絞り込みとの組み合わせ）") {
+  Session s = make();
+  const Filter none;
+  ColumnFilter cf;
+  const auto colIds = [&](const Filter& f) {
+    std::vector<std::string> v;
+    for (const auto& r : s.visibleRows(f, &cf)) v.push_back(s.issues()[r.id].id);
+    return v;
+  };
+  CHECK_FALSE(cf.active());
+  CHECK(columnValues("asg", *s.tree(), s.issues(), *s.rows()) == std::vector<std::string>{"田中", kUnassignedValue, "佐藤"});
+  CHECK(columnValues("status", *s.tree(), s.issues(), *s.rows()) ==
+        std::vector<std::string>{"To Do", "In Progress", "Done"});
+  CHECK(columnValues("prio", *s.tree(), s.issues(), *s.rows()) == std::vector<std::string>{"High", "Medium", "Low"});
+
+  cf.toggle("asg", kUnassignedValue);  // 未割当を隠す
+  CHECK(cf.active());
+  CHECK(colIds(none) == std::vector<std::string>{"1", "2", "4", "5", "6"});
+  cf.toggle("status", "Done");  // 子が全部隠れた親は出さない
+  cf.toggle("asg", "田中");
+  CHECK(colIds(none).empty());
+  cf.toggle("asg", "田中");  // もう一度押すと戻る
+  CHECK(colIds(none) == std::vector<std::string>{"1", "2", "4", "6"});
+  cf.clear("status");
+  cf.clear("asg");
+  CHECK_FALSE(cf.active());
+
+  cf.name = "画面";  // 件名の絞り込み（上の検索とは別に効く）
+  CHECK(colIds(none) == std::vector<std::string>{"1", "2", "4", "6"});
+  Filter q;
+  q.q = "別件";
+  CHECK(colIds(q) == std::vector<std::string>{"4", "6"});
+  cf.clear("name");
+  CHECK(colIds(q) == std::vector<std::string>{"4", "5", "6"});
+}
+
+TEST_CASE("filter: matchSet は一致を返すだけで行は減らさない") {
+  Session s = make();
+  Filter f;
+  f.st = StFilter::Done;
+  const auto m = s.matchSet(f);
+  const Tree& T = *s.tree();
+  CHECK(m[T.find("5")]);
+  CHECK(m[T.find("4")]);  // 一致する子孫のある親
+  CHECK_FALSE(m[T.find("2")]);
+  CHECK_FALSE(m[T.find("1")]);
+}

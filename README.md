@@ -5,7 +5,7 @@ JIRA 互換の CSV を原本に、課題の階層・依存関係・期間から 
 ブラウザ版（JS版）を C++ で作り直したもので、計算・CSV入出力・保存の挙動は JS版と同じです（仕様: [docs/SPEC.md](docs/SPEC.md)）。
 
 - 単一の `.exe`（ポータブル・インストール不要・レジストリに書かない・ネットワーク通信なし）
-- データは実行ファイルの横の `data/projects/` に CSV + 設定JSON で自動保存（Excel で編集しても戻ると反映）
+- データは実行ファイルの横の `data/projects/` に CSV + 設定JSON で自動保存（Excel などで CSV を編集して保存すると、フォルダの監視ですぐ反映）
 - 日本語UI（IME入力対応）、ライト/ダーク、標準/コンパクト、高DPI
 
 ## 構成
@@ -22,11 +22,12 @@ JIRA 互換の CSV を原本に、課題の階層・依存関係・期間から 
 | `reference-js/` | JS版のソース（参照のみ。`index.html` をブラウザで開けば動く） |
 | `docs/` | 仕様書・未確定事項のメモ・UIスパイクの記録・変更履歴 |
 | `tools/` | golden の再生成（Node）・アイコン・画面の文字一覧の生成 |
+| `packaging/` | 配布物の中身（ポータブル版のフォルダ `portable/`・インストーラの Inno Setup スクリプト `installer/`） |
 
 ## ビルド
 
 必要なもの: CMake 3.24+、Ninja、C++20 コンパイラ（MSVC 2022 17.8+ / GCC 12+ / Clang 16+）。
-依存（Dear ImGui 1.90.1・nlohmann/json 3.11.3・doctest 2.4.11）は CMake の FetchContent で版を固定して取得します
+依存（Dear ImGui 1.90.1・nlohmann/json 3.11.3・doctest 2.5.3）は CMake の FetchContent で版を固定して取得します
 （vcpkg などでインストール済みならそちらを使います）。
 
 ```sh
@@ -45,13 +46,47 @@ ctest --preset linux-asan
 cmake --preset linux-ui && cmake --build --preset linux-ui && ctest --preset linux-ui
 ```
 
+### インストーラ版
+
+Releases の `ProjectRoadmap-Setup-<版>.exe`（Inno Setup。CI で作る）。ポータブル版の zip と中身は同じです。
+
+- 既定は管理者権限なしで `%LOCALAPPDATA%\Programs\ProjectRoadmap` に入ります（インストール時に「すべてのユーザー」も選べます）。スタートメニュー・デスクトップ（選んだとき）にショートカットを作ります。
+- 保存先は、インストール先の `data\projects` のままです（アプリの設定で変えられます）。
+- 新しい版を上書きインストールするだけで更新できます。**アンインストールしても `data\projects` と `roadmap_prefs.json` は消しません**（要らなければフォルダを手で消してください）。
+- 署名していないため、実行すると Windows の SmartScreen が警告します（「詳細情報 → 実行」）。
+- 作り方: `cmake --install <build> --component portable --prefix dist/ProjectRoadmap` のあと `ISCC /DAppVersion=<版> /DSourceDir=dist\ProjectRoadmap /DRepoDir=. /DOutDir=dist packaging\installer\ProjectRoadmap.iss`
+
+### ポータブル版のフォルダ
+
+配布用には exe の隣に保存先などのフォルダを並べた形にします（GitHub Actions の成果物とリリースの zip も同じ形）。
+
+```sh
+cmake --install build/windows-release --component portable --prefix dist/ProjectRoadmap
+```
+
+```
+ProjectRoadmap/
+  ProjectRoadmap.exe   アプリ本体（DLL 不要）
+  rmcli.exe            コマンドライン版
+  README.txt           使い方とフォルダの説明
+  THIRD_PARTY.md
+  data/projects/       保存先（_バックアップ/・_削除済み/ は必要になったら作る）
+  samples/             取り込みを試せるサンプル CSV
+```
+
+フォルダごと移せば、データと設定（`roadmap_prefs.json` も exe の隣）がそのまま使えます。中身は `packaging/portable/` にあります。
+
 ## 使い方
 
 `ProjectRoadmap.exe` を実行します。初回はデータフォルダが空なので「はじめに」画面から、空のプロジェクト・サンプル・CSVの取り込みを選びます。
 
-- データフォルダ: `--data <フォルダ>` > 環境変数 `ROADMAP_DATA` > 実行ファイルの横の `data/projects/`（書き込めなければ `%LOCALAPPDATA%\ProjectRoadmap\projects\`）
+- データフォルダ: `--data <フォルダ>` > 環境変数 `ROADMAP_DATA` > 「アプリの設定」で選んだ場所 > 実行ファイルの横の `data/projects/`（書き込めなければ `%LOCALAPPDATA%\ProjectRoadmap\projects\`）
+- アプリの設定（`…` メニュー・`Ctrl+,`）: 保存先の変更（今のプロジェクトをコピーするか選べる。元の場所のファイルは残る）・既定に戻す、テーマ・密度・文字の大きさ・絞り込みで薄くする濃さ、自分の名前、削除の前の確認。`roadmap_prefs.json` に保存し、保存先は実行ファイルのフォルダの中なら相対パスで覚える（フォルダごと移しても壊れない）
 - 端末ごとの設定（テーマ・密度・テンプレートなど）: 実行ファイルの横の `roadmap_prefs.json`
 - 上書きする前の CSV は、起動してから最初の1回だけ `_バックアップ/` に残します（30個まで）。削除したプロジェクトは `_削除済み/` へ移します
+- 絞り込み: 上のバーの担当・状況・優先度と「遅れ」「余裕小」のチップは、一致しない課題を**薄く**表示します（行は減らない）。検索語と、表の列名の右の漏斗（列の絞り込み）は、一致しない課題を**隠し**ます
+- 拡大縮小: `Ctrl+ホイール`（タッチパッドのピンチも）・`Ctrl+「+」「-」`・`Ctrl+0`（100%）で画面全体。ガントの時間軸の上の `Ctrl+ホイール` は時間軸だけを広げ縮めます（マウスの位置の日付は動きません）
+- 削除: 行（ボードはカード）にマウスを載せると出るごみ箱、`Delete` キー、右クリックのメニュー。通知の「元に戻す」で戻せます
 - 主なキー: `Ctrl+K` コマンドパレット、`1`〜`4` ビュー切替、`N` 追加、`Tab`/`Shift+Tab` 階層、`Enter`/`F2` 名前の編集、`?` ショートカット一覧
 
 ### rmcli

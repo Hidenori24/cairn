@@ -145,3 +145,154 @@ TEST_CASE("controller: 削除・複製・テンプレートの保存") {
   e.c.deleteTemplate(id);
   CHECK(e.c.templates().size() == builtinTemplates().size());
 }
+
+TEST_CASE("controller: 上の絞り込みは薄くするだけ・検索語と列の絞り込みは隠す") {
+  Env e;
+  e.c.start();
+  e.c.createProject(SampleKind::Hierarchy, "H", "");
+  Session* s = e.c.session();
+  const std::size_t all = e.c.visibleRows().size();
+  CHECK(e.c.dimmedSet().empty());
+  e.c.filter().st = StFilter::Done;  // 状況で絞る → 行は減らず、一致しない末端が薄くなる
+  CHECK(e.c.visibleRows().size() == all);
+  const auto dim = e.c.dimmedSet();
+  REQUIRE(dim.size() == static_cast<std::size_t>(s->tree()->n));
+  int nDim = 0;
+  for (int id : s->tree()->leafOrder) nDim += dim[id] ? 1 : 0;
+  CHECK(nDim > 0);
+  CHECK(nDim < static_cast<int>(s->tree()->leafOrder.size()));
+  CHECK(e.c.filterActive());
+  // 列の絞り込みは隠す
+  e.c.columnFilter().toggle("status", "Done");
+  CHECK(e.c.visibleRows().size() < all);
+  for (int id : e.c.visibleLeaves()) CHECK(columnValue("status", s->issues()[id], (*s->rows())[id]) != "Done");
+  CHECK(e.c.filterLabel() == "列・状況");
+  e.c.clearFilter();
+  CHECK(e.c.visibleRows().size() == all);
+  CHECK_FALSE(e.c.filterActive());
+  // 別のプロジェクトを開くと列の絞り込みは解除
+  e.c.columnFilter().toggle("asg", kUnassignedValue);
+  const std::string first = e.c.currentId();
+  e.c.createProject(SampleKind::Regulation, "R", "");
+  CHECK_FALSE(e.c.columnFilter().active());
+  CHECK(e.c.currentId() != first);
+}
+
+TEST_CASE("controller: 保存先の切り替え（コピーする・しない・既定に戻す・決められているときは変えない）") {
+  Env e;
+  e.c.setDataDirInfo({"app/data/projects", false, DataDirSource::Default, false}, "app");
+  e.c.start();
+  e.c.createProject(SampleKind::Hierarchy, "H", "");
+  e.c.createProject(SampleKind::Regulation, "R", "");
+  REQUIRE(e.c.flushNow());
+  CHECK(e.c.defaultDir() == "app/data/projects");
+  CHECK_FALSE(e.c.dataDirLocked());
+  CHECK(e.c.countProjectsIn("data") == 2);
+
+  // コピーして切り替える → 新しい場所に2件。設定には exe からの相対で覚える
+  REQUIRE(e.c.switchDataDir("app/mine", true));
+  CHECK(e.c.dataDir() == "app/mine");
+  CHECK(e.c.projects().size() == 2);
+  CHECK(e.c.countProjectsIn("app/mine") == 2);
+  CHECK(e.c.countProjectsIn("data") == 2);  // 元の場所は消さない
+  CHECK(e.c.prefs().dataDir == "mine");
+  CHECK(e.c.dataDirInfo().source == DataDirSource::Prefs);
+  CHECK(loadPrefs(e.fs, "roadmap_prefs.json").dataDir == "mine");
+  REQUIRE(e.c.session());
+  CHECK(e.c.session()->settings().name == "R");  // 開いていたプロジェクトを開き直す
+  e.c.releaseFrame();
+
+  // コピーしないで空の場所へ → はじめに
+  REQUIRE(e.c.switchDataDir("D:/empty", false));
+  CHECK(e.c.projects().empty());
+  CHECK(e.c.firstRun());
+  CHECK(e.c.session() == nullptr);
+  CHECK(e.c.prefs().dataDir == "D:/empty");
+  e.c.releaseFrame();
+
+  // 同じプロジェクトがある場所へコピー → 場所の方を残す（増えない）
+  e.c.createProject(SampleKind::Empty, "E", "");
+  REQUIRE(e.c.switchDataDir("app/mine", true));
+  CHECK(e.c.projects().size() == 3);
+  REQUIRE(e.c.switchDataDir("app/mine", true));
+  CHECK(e.c.projects().size() == 3);
+
+  // 既定に戻す → 設定は空
+  REQUIRE(e.c.switchDataDir(e.c.defaultDir(), false));
+  CHECK(e.c.prefs().dataDir.empty());
+  CHECK(e.c.dataDirInfo().source == DataDirSource::Default);
+
+  // 書けない場所には切り替えない
+  e.fs.setFailWrites(true);
+  CHECK_FALSE(e.c.switchDataDir("X:/ro", true));
+  CHECK(e.c.dataDir() == "app/data/projects");
+  e.fs.setFailWrites(false);
+
+  // 起動引数で決まっているときは変えない
+  e.c.setDataDirInfo({"arg", false, DataDirSource::Arg, false}, "app");
+  CHECK(e.c.dataDirLocked());
+  CHECK_FALSE(e.c.switchDataDir("app/other", false));
+}
+
+TEST_CASE("controller: 開いたら基準日を今日に合わせる（アプリの設定。プロジェクトごとに起動中1回）") {
+  Env e;
+  e.c.start();
+  const std::string a = e.c.createProject(SampleKind::Empty, "A", "");
+  e.c.session()->setBaseDate("2026-09-01");
+  e.c.afterEdit();
+  const std::string b = e.c.createProject(SampleKind::Empty, "B", "");
+  REQUIRE(e.c.flushNow());
+  // 設定がオフなら変えない
+  e.c.openProject(a);
+  CHECK(e.c.session()->settings().baseDate == "2026-09-01");
+  e.c.prefs().autoBaseToday = true;
+  e.c.openProject(b);
+  e.c.openProject(a);
+  CHECK(e.c.session()->settings().baseDate == "2026-10-19");
+  CHECK(e.c.toasts().back().text.find("2026-09-01") != std::string::npos);  // 前の日付を知らせる
+  // 同じ起動中は1回だけ（手で戻した日付をまた変えない）
+  e.c.session()->setBaseDate("2026-09-01");
+  e.c.afterEdit();
+  e.c.openProject(b);
+  e.c.openProject(a);
+  CHECK(e.c.session()->settings().baseDate == "2026-09-01");
+  // 新しい起動（作り直し）では、前回の日付から今日へ
+  REQUIRE(e.c.flushNow());
+  e.c.prefs().currentProject = a;
+  e.c.savePrefs();
+  AppController c2{e.fs, e.clk, "data", "roadmap_prefs.json"};
+  c2.start();
+  REQUIRE(c2.session());
+  CHECK(c2.prefs().autoBaseToday);
+  CHECK(c2.session()->settings().baseDate == "2026-10-19");
+}
+
+TEST_CASE("controller: 画面の拡大縮小（段階・上下限・100%に戻す・保存）") {
+  Env e;
+  e.c.start();
+  CHECK(e.c.prefs().uiScale == 100);
+  CHECK(e.c.stepUiScale(+1));
+  CHECK(e.c.prefs().uiScale == 110);
+  CHECK(e.c.stepUiScale(+1));
+  CHECK(e.c.prefs().uiScale == 125);
+  CHECK(loadPrefs(e.fs, "roadmap_prefs.json").uiScale == 125);  // すぐ保存する
+  for (int i = 0; i < 20; ++i) e.c.stepUiScale(+1);
+  CHECK(e.c.prefs().uiScale == 200);
+  CHECK_FALSE(e.c.stepUiScale(+1));  // 上限では変わらない
+  for (int i = 0; i < 20; ++i) e.c.stepUiScale(-1);
+  CHECK(e.c.prefs().uiScale == 70);
+  CHECK_FALSE(e.c.stepUiScale(-1));
+  CHECK(e.c.setUiScale(100));
+  CHECK(e.c.prefs().uiScale == 100);
+  CHECK_FALSE(e.c.setUiScale(100));
+  // 段階の間の値（古い設定ファイルなど）からでも、次の段階へ進む
+  e.c.prefs().uiScale = 105;
+  CHECK(e.c.stepUiScale(+1));
+  CHECK(e.c.prefs().uiScale == 110);
+  e.c.prefs().uiScale = 105;
+  CHECK(e.c.stepUiScale(-1));
+  CHECK(e.c.prefs().uiScale == 100);
+  // 範囲外は丸める
+  CHECK(e.c.setUiScale(999));
+  CHECK(e.c.prefs().uiScale == 200);
+}

@@ -51,6 +51,36 @@ void vlog(const char* s) {
   if (gVerbose) std::fprintf(stderr, "[roadmap] %s\n", s);
 }
 
+// ---------------------------------------------------------------- データフォルダの監視（8.5 の任意項目）
+// 変更の通知を受けたら少し待ってから同期する（Excel の保存などで続けて届く通知をまとめる）。
+// 自分の保存でも通知は来るが、同期は更新時刻が覚えているものと同じなら何もしない
+class FolderWatch {
+ public:
+  ~FolderWatch() { close(); }
+  void watch(const std::string& dir) {
+    if (dir == dir_ && h_ != INVALID_HANDLE_VALUE) return;
+    close();
+    dir_ = dir;
+    h_ = FindFirstChangeNotificationW(win::widen(dir).c_str(), FALSE,
+                                      FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE);
+    vlog(h_ == INVALID_HANDLE_VALUE ? "フォルダを監視できません" : "フォルダの監視を始めました");
+  }
+  HANDLE handle() const { return h_; }
+  bool fired() {
+    if (h_ == INVALID_HANDLE_VALUE || WaitForSingleObject(h_, 0) != WAIT_OBJECT_0) return false;
+    FindNextChangeNotification(h_);
+    return true;
+  }
+
+ private:
+  void close() {
+    if (h_ != INVALID_HANDLE_VALUE) FindCloseChangeNotification(h_);
+    h_ = INVALID_HANDLE_VALUE;
+  }
+  std::string dir_;
+  HANDLE h_ = INVALID_HANDLE_VALUE;
+};
+
 // ---------------------------------------------------------------- DirectX 11
 void createRenderTarget() {
   ID3D11Texture2D* back = nullptr;
@@ -116,11 +146,17 @@ bool fileExists(const std::string& p) {
   return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+// 画面の倍率 = DPI × アプリの設定の「文字の大きさ」
+float uiScale() {
+  const int pct = gCtl ? gCtl->prefs().uiScale : 100;
+  return gDpiScale * static_cast<float>(pct) / 100.0f;
+}
+
 void buildFonts(ui::UiState& u) {
   ImGuiIO& io = ImGui::GetIO();
   io.Fonts->Clear();
   const std::string dir = fontsDir();
-  const float px = 13.0f * gDpiScale;
+  const float px = 13.0f * uiScale();
   // 文字の範囲: 日本語（常用漢字を含む約3,000字）+ 記号 + データにある文字
   ImFontGlyphRangesBuilder rb;
   rb.AddRanges(io.Fonts->GetGlyphRangesJapanese());
@@ -198,7 +234,7 @@ void applyTheme() {
   const std::string t = gCtl->prefs().theme;
   const bool dark = t == "dark" || (t == "auto" && win::systemDarkMode());
   gUi->t = dark ? &ui::darkTokens() : &ui::lightTokens();
-  gUi->m.scale = gDpiScale;
+  gUi->m.scale = uiScale();
   gUi->m.compact = gCtl->prefs().density == "compact";
   ui::applyStyle(*gUi->t, gUi->m);
 }
@@ -316,16 +352,19 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
   SystemClock clock;
   const std::string exe = win::exeDir();
   const std::string local = win::localAppDataDir();
-  const DataDirChoice dd = chooseDataDir(fs, args.dataDir, win::envVar("ROADMAP_DATA"), exe, local + "\\projects");
+  // 設定ファイルを先に決め、アプリの設定で選んだ保存先を読む（--data > ROADMAP_DATA > 設定 > 既定）
   std::string prefsPath = joinPath(exe, "roadmap_prefs.json");
   if (!fs.probeWritable(exe)) {
     (void)fs.makeDirs(local);
     prefsPath = joinPath(local, "roadmap_prefs.json");
   }
+  const Prefs bootPrefs = loadPrefs(fs, prefsPath);
+  const DataDirChoice dd =
+      chooseDataDir(fs, args.dataDir, win::envVar("ROADMAP_DATA"), bootPrefs.dataDir, exe, local + "\\projects");
   vlog(("data: " + dd.dir).c_str());
 
   app::AppController ctl(fs, clock, dd.dir, prefsPath);
-  ctl.dataDirFallback = dd.usedFallback;
+  ctl.setDataDirInfo(dd, exe);
   ui::UiState uiState;
   gCtl = &ctl;
   gUi = &uiState;
@@ -364,14 +403,29 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
   ImGui_ImplDX11_Init(gDevice, gContext);
   applyTheme();
   std::string lastTheme = ctl.prefs().theme, lastDensity = ctl.prefs().density;
+  int lastScale = ctl.prefs().uiScale;
   std::string lastProject;
   std::uint64_t lastVersion = 0;
 
   bool done = false;
   int idleFrames = 0;
+  FolderWatch watch;
+  ULONGLONG syncDueAt = 0;  // 0 = 予定なし
   while (!done) {
-    // 入力がなければ少し待つ（保存のタイマーは 50ms ごとに回る）
-    if (idleFrames > 4) MsgWaitForMultipleObjects(0, nullptr, FALSE, 50, QS_ALLINPUT);
+    watch.watch(ctl.dataDir());  // 保存先を切り替えたら監視し直す
+    // 入力がなければ少し待つ（保存のタイマーは 50ms ごとに回る。フォルダの変更でも起きる）
+    if (idleFrames > 4) {
+      HANDLE h = watch.handle();
+      MsgWaitForMultipleObjects(h != INVALID_HANDLE_VALUE ? 1 : 0, &h, FALSE, 50, QS_ALLINPUT);
+    }
+    if (watch.fired()) syncDueAt = GetTickCount64() + 500;
+    // 編集中・ダイアログ中は待つ（入力の途中でプロジェクトを開き直さない）
+    if (syncDueAt != 0 && GetTickCount64() >= syncDueAt && uiState.editField == ui::EditField::None &&
+        uiState.dlg == ui::Dlg::None && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      syncDueAt = 0;
+      vlog("フォルダの変更を読み込みます");
+      ctl.syncFolder(false);
+    }
     MSG msg;
     bool any = false;
     while (PeekMessageW(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
@@ -394,6 +448,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
       lastDensity = ctl.prefs().density;
       applyTheme();
       win::setDarkTitleBar(hwnd, uiState.t->dark);
+    }
+    if (ctl.prefs().uiScale != lastScale) {  // 文字の大きさ → フォントを作り直す
+      lastScale = ctl.prefs().uiScale;
+      gFontsDirty = true;
     }
     if (gFontsDirty) {
       buildFonts(uiState);

@@ -25,6 +25,7 @@ class Win32Platform final : public ui::IPlatform {
   std::optional<std::pair<std::string, std::string>> openTextFile() override;
   bool saveTextFile(const std::string& suggestedName, const std::string& content) override;
   void openFolder(const std::string& path) override;
+  std::optional<std::string> pickFolder(const std::string& start) override;
   bool systemDark() override { return systemDarkMode(); }
   void requestQuit() override { quit_ = true; }
   bool quitRequested() const { return quit_; }

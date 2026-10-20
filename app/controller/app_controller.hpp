@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -94,10 +95,22 @@ class AppController {
   std::vector<std::string> selectionRoots() const;
 
   // ---- 絞り込み ----
+  // 上のバーの条件（filter）: 検索語は一致しない課題を隠し、それ以外（担当・状況・優先度・遅れ/余裕小）は薄くする。
+  // 列見出しの条件（columnFilter）: 一致しない課題を隠す
   Filter& filter() { return filter_; }
   const Filter& filter() const { return filter_; }
-  void clearFilter() { filter_ = Filter{}; }
+  ColumnFilter& columnFilter() { return colFilter_; }
+  const ColumnFilter& columnFilter() const { return colFilter_; }
+  Filter hideFilter() const;  // 隠す条件（検索語だけ）
+  Filter dimFilter() const;   // 薄くする条件（検索語以外）
+  bool filterActive() const { return filter_.active() || colFilter_.active(); }
+  void clearFilter() { filter_ = Filter{}, colFilter_ = ColumnFilter{}; }
   std::string filterLabel() const;  // 効いている条件の名前
+  // 表示する行・末端（隠す条件と列の条件を当てたもの）
+  std::vector<VisibleRow> visibleRows() const;
+  std::vector<int> visibleLeaves() const;
+  // 薄くする課題（添字ごと。薄くする条件がなければ空）
+  std::vector<char> dimmedSet() const;
 
   // ---- 選択への操作（Undo 1回で戻る）----
   void indentSelection();
@@ -119,9 +132,14 @@ class AppController {
 
   // ---- 端末ごとの設定 ----
   Prefs& prefs() { return prefs_; }
+  const Prefs& prefs() const { return prefs_; }
   void savePrefs();
   void setTheme(const std::string& t);
   void setDensity(const std::string& d);
+  // 画面全体の拡大縮小（%）。段階は 70 80 90 100 110 125 150 175 200。変わったら true（すぐ保存する）
+  static constexpr int kUiScaleSteps[] = {70, 80, 90, 100, 110, 125, 150, 175, 200};
+  bool stepUiScale(int dir);  // dir > 0: 次の段階へ / dir < 0: 前の段階へ
+  bool setUiScale(int pct);
   void dismissHint();
 
   // ---- 通知・保存状態 ----
@@ -133,9 +151,21 @@ class AppController {
   const std::string& saveError() const { return saveError_; }
   const std::string& savedAt() const { return savedAt_; }
   void retrySave();
-  const std::string& dataDir() const { return ws_.dataDir(); }
+  const std::string& dataDir() const { return ws_->dataDir(); }
   bool dataDirFallback = false;  // 既定の場所に書けなかった
-  Workspace& workspace() { return ws_; }
+  Workspace& workspace() { return *ws_; }
+
+  // ---- 保存先（アプリの設定）----
+  // 起動時に、決めた保存先とその由来・exe のフォルダを渡す（画面の表示と、設定に覚える相対パスのため）
+  void setDataDirInfo(const DataDirChoice& c, std::string exeDir);
+  const DataDirChoice& dataDirInfo() const { return dirInfo_; }
+  bool dataDirLocked() const;  // 起動引数・環境変数で決まっている（画面からは変えない）
+  std::string defaultDir() const;
+  int countProjectsIn(const std::string& dir);  // その場所にあるプロジェクト（CSV）の数
+  // 保存先を切り替える。copy = 手元のプロジェクトを新しい場所にも書く（同じものがあれば場所の方を残す）。
+  // 今の場所に書けないとき・新しい場所に書けないときは切り替えない
+  Status switchDataDir(const std::string& dir, bool copy);
+  const std::string& prefsPath() const { return prefsPath_; }
   const IClock& clock() const { return clock_; }
 
   // 編集の後に呼ぶ（UI は操作のたびに呼ばなくてもよい。tick でも拾う）
@@ -146,13 +176,17 @@ class AppController {
 
  private:
   void openSession(const std::string& id, bool keepHistory);
+  void applyAutoBaseDate();  // アプリの設定「開いたら基準日を今日に」（利用者が開いたときだけ）
   void scheduleSave();
   void absorbNotices();
   std::int64_t now() const { return clock_.monotonicMs(); }
 
   IFileStore& fs_;
   const IClock& clock_;
-  Workspace ws_;
+  std::unique_ptr<Workspace> ws_;
+  std::set<std::string> baseAdjusted_;  // この起動中に基準日を今日に合わせたプロジェクト
+  DataDirChoice dirInfo_;
+  std::string exeDir_;
   std::string prefsPath_;
   Prefs prefs_;
   std::unique_ptr<Session> session_;
@@ -164,6 +198,7 @@ class AppController {
   std::vector<std::string> sel_;
   std::string cursor_, anchor_;
   Filter filter_;
+  ColumnFilter colFilter_;
 
   std::vector<Toast> toasts_;
   int toastSeq_ = 0;

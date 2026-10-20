@@ -24,7 +24,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "ROADMAP_BUILD_APP": "ON",
-        "ROADMAP_WERROR": "OFF"
+        "ROADMAP_WERROR": "ON"
       }
     },
     {

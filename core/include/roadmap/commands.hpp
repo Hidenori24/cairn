@@ -113,8 +113,9 @@ class Session {
   std::optional<std::string> resolveRef(const std::string& text) const;
   std::vector<std::string> descendantsOf(const std::string& id) const;
   std::vector<std::string> siblings(const std::string& id) const;
-  std::vector<VisibleRow> visibleRows(const Filter& f) const;
-  std::vector<int> visibleLeaves(const Filter& f) const;
+  std::vector<VisibleRow> visibleRows(const Filter& f, const ColumnFilter* cf = nullptr) const;
+  std::vector<int> visibleLeaves(const Filter& f, const ColumnFilter* cf = nullptr) const;
+  std::vector<char> matchSet(const Filter& f) const;  // 添字ごとに条件に一致するか（visSet）
   Summary summary() const;
   std::string exportText(ExportKind kind) const;
   std::vector<std::string> assignees() const;  // 担当者名（重複なし・並べ替え済み）

@@ -467,7 +467,7 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
     if (ImGui::MenuItem("上へ")) s->moveIssue(id, -1), c.afterEdit();
     if (ImGui::MenuItem("下へ")) s->moveIssue(id, 1), c.afterEdit();
     ImGui::Separator();
-    if (ImGui::MenuItem("削除")) s->deleteIssues({id}), c.afterEdit();
+    if (ImGui::MenuItem("削除")) requestDelete(f, {id});
     ImGui::EndPopup();
   }
   ImGui::SameLine();

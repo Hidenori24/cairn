@@ -84,13 +84,21 @@ class Workspace {
   std::set<std::string> backedUp_;   // このプロセスでバックアップ済みの stem
 };
 
-// データフォルダの決定（8.1）: --data > ROADMAP_DATA > <exe>/data/projects（書けなければ fallback）
+// データフォルダの決定（8.1）: --data > ROADMAP_DATA > アプリの設定で選んだ場所 > <exe>/data/projects
+// （設定の場所・既定の場所に書けなければ fallback）
+enum class DataDirSource { Arg, Env, Prefs, Default, Fallback };
 struct DataDirChoice {
   std::string dir;
   bool usedFallback = false;
+  DataDirSource source = DataDirSource::Default;
+  bool prefsDirUnavailable = false;  // 設定で選んだ場所に書けなかった（外したドライブなど）
 };
 DataDirChoice chooseDataDir(IFileStore& fs, const std::string& argDir, const std::string& envDir,
-                            const std::string& exeDir, const std::string& fallbackDir);
+                            const std::string& prefDir, const std::string& exeDir, const std::string& fallbackDir);
+std::string defaultDataDir(const std::string& exeDir);
+// prefs に覚える形（exe のフォルダの中なら相対パス。フォルダごと移しても壊れない）と、その逆
+std::string storableDataDir(const std::string& dir, const std::string& exeDir);
+std::string resolveDataDir(const std::string& stored, const std::string& exeDir);
 
 // roadmap_prefs.json の読み書き（書けなければ黙って失敗）
 Prefs loadPrefs(IFileStore& fs, const std::string& path);

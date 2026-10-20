@@ -76,6 +76,18 @@ void rowClick(Frame& f, const std::string& id) {
   else f.c.select(id);
 }
 
+void requestDelete(Frame& f, std::vector<std::string> ids) {
+  Session* s = f.c.session();
+  if (!s || ids.empty()) return;
+  if (f.c.prefs().confirmDelete) {
+    f.u.pendingDelete = std::move(ids);
+    openDialog(f, Dlg::ConfirmIssueDelete);
+    return;
+  }
+  s->deleteIssues(std::move(ids));
+  f.c.afterEdit();
+}
+
 bool editing(const UiState& u, const std::string& id, EditField field) {
   return u.editField == field && u.editId == id;
 }
@@ -97,6 +109,9 @@ void beginEdit(Frame& f, const std::string& id, EditField field, bool fresh) {
     f.u.editBuf = s->rows() ? csv::fmtNum(s->rows()->at(i).weeks) : "1";
   }
   f.u.editStartValue = f.u.editBuf;
+  f.u.editActive = false;
+  f.u.editArmFrame = ImGui::GetFrameCount();
+  f.u.editPendingChars.clear();
   f.c.select(id);
 }
 
@@ -132,6 +147,8 @@ void endEdit(UiState& u) {
   u.editField = EditField::None;
   u.editId.clear();
   u.editFresh = false;
+  u.editActive = false;
+  u.editPendingChars.clear();
 }
 }  // namespace
 
@@ -148,8 +165,18 @@ bool drawInlineEdit(Frame& f, float w) {
   int tab = 0;
   ImGuiInputTextFlags fl = ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_CallbackCompletion;
   if (u.editField == EditField::Dur) fl |= ImGuiInputTextFlags_CharsDecimal;
+  if (ImGui::GetActiveID() == ImGui::GetID("##e") && !u.editPendingChars.empty()) {
+    // アクティブになる前に打った文字を、このフレームの入力の前に入れる
+    ImGuiIO& io = ImGui::GetIO();
+    ImVector<ImWchar> q;
+    for (ImWchar ch : u.editPendingChars) q.push_back(ch);
+    for (ImWchar ch : io.InputQueueCharacters) q.push_back(ch);
+    io.InputQueueCharacters.swap(q);
+    u.editPendingChars.clear();
+  }
   ImGui::InputText("##e", &u.editBuf, fl, tabCallback, &tab);
   const bool active = ImGui::IsItemActive();
+  u.editActive = active;
   const bool deactivated = ImGui::IsItemDeactivated();
   ImGui::PopID();
   const ImGuiIO& io = ImGui::GetIO();
@@ -257,7 +284,7 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
   }
   const int nc = static_cast<int>(is.comments.size());
   const bool hov = ImGui::IsMouseHoveringRect(pos, ImVec2(pos.x + size.x, pos.y + size.y)) && o.showHoverButtons;
-  float avail = right - x - (nc ? u.m.s(30) : 0) - (hov ? u.m.s(48) : 0);
+  float avail = right - x - (nc ? u.m.s(30) : 0) - (hov ? u.m.s(72) : 0);
   if (r.isPar) ImGui::PushFont(u.fontBold);
   const std::string nm = ellipsize(T.name[r.id], std::max(10.f, avail));
   const ImVec2 nsz = ImGui::CalcTextSize(nm.c_str());
@@ -271,6 +298,14 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
   }
   if (hov) {
     ImGui::PushID(id.c_str());
+    // 削除（子も消える。通知の「元に戻す」で戻せる）
+    ImGui::SetCursorScreenPos(ImVec2(right - u.m.s(72), cy - u.m.s(12)));
+    const ImVec2 b0 = ImGui::GetCursorScreenPos();
+    bool del = false;
+    if (ImGui::InvisibleButton("##del", ImVec2(u.m.s(22), u.m.s(22)))) del = true;
+    const bool delHov = ImGui::IsItemHovered();
+    tip(r.isPar ? "削除（子の課題も削除。元に戻せます）" : "削除（元に戻せます）");
+    drawIcon(dl, "trash", ImVec2(b0.x + u.m.s(3), b0.y + u.m.s(3)), u.m.s(16), delHov ? u.t->late : u.t->muted);
     ImGui::SetCursorScreenPos(ImVec2(right - u.m.s(48), cy - u.m.s(12)));
     const ImVec2 b = ImGui::GetCursorScreenPos();
     if (ImGui::InvisibleButton("##add", ImVec2(u.m.s(22), u.m.s(22)))) {
@@ -286,6 +321,7 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
     tip("詳細を開く");
     drawIcon(dl, "right", ImVec2(b2.x + u.m.s(3), b2.y + u.m.s(3)), u.m.s(16), u.t->muted);
     ImGui::PopID();
+    if (del) requestDelete(f, {id});
   }
 }
 
@@ -442,6 +478,7 @@ void drawTopBar(Frame& f) {
   ImGui::SameLine(0, u.m.s(4));
   if (iconButton(u, "more", "more", S::kMore)) ImGui::OpenPopup("##more");
   if (ImGui::BeginPopup("##more")) {
+    if (ImGui::MenuItem("アプリの設定…", "Ctrl+,")) openDialog(f, Dlg::AppSettings);
     if (ImGui::MenuItem("プロジェクト設定", nullptr, false, s != nullptr)) openDialog(f, Dlg::Settings);
     if (ImGui::MenuItem("担当者の負荷", nullptr, false, s != nullptr)) openDialog(f, Dlg::Workload);
     if (ImGui::MenuItem("読み込み時の注意", nullptr, false, s != nullptr)) openDialog(f, Dlg::Warnings);
@@ -544,8 +581,9 @@ void drawToolBar(Frame& f) {
     ImGui::SameLine(0, u.m.s(12));
     const std::string zoom = c.uiStr("zoom", "week");
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"day", "日"}, {"week", "週"}, {"month", "月"}, {"all", "全体"}}) {
-      if (iconTextButton(u, k, nullptr, l, false, zoom == k)) {
+      if (iconTextButton(u, k, nullptr, l, false, zoom == k && u.customPx <= 0)) {
         c.setUi("zoom", k);
+        u.customPx = 0;
         u.scrollToBase = true;
       }
       ImGui::SameLine(0, u.m.s(2));
@@ -599,7 +637,7 @@ void drawToolBar(Frame& f) {
       if (k == cur) pv = l;
     if (combo("##lane", u.m.s(170), pv.c_str(), items, cur)) c.setUi("lane", cur);
   }
-  if (fl.active()) {
+  if (c.filterActive()) {
     ImGui::SameLine(0, u.m.s(12));
     const std::string l = "絞り込み解除（" + c.filterLabel() + "）";
     if (iconTextButton(u, "clrf", "x", l.c_str())) c.clearFilter();
@@ -771,7 +809,7 @@ void drawContextMenu(Frame& f) {
   if (ImGui::MenuItem("下へ", "Alt+↓", false, multi || pos + 1 < static_cast<std::ptrdiff_t>(sb.size()))) c.moveSelection(1);
   ImGui::Separator();
   ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
-  if (ImGui::MenuItem("削除", "Del")) c.deleteSelection();
+  if (ImGui::MenuItem("削除", "Del")) requestDelete(f, c.selection());
   ImGui::PopStyleColor();
   ImGui::EndPopup();
 }
@@ -838,7 +876,7 @@ void drawBulkBar(Frame& f, ImVec2 origin, float w) {
   if (ImGui::SmallButton("階層を上げる")) c.outdentSelection();
   ImGui::SameLine();
   ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
-  if (ImGui::SmallButton("削除")) c.deleteSelection();
+  if (ImGui::SmallButton("削除")) requestDelete(f, c.selection());
   ImGui::PopStyleColor();
   ImGui::SameLine();
   if (ImGui::SmallButton("選択解除")) c.clearSelection();
@@ -857,7 +895,12 @@ void drawWelcome(Frame& f, ImVec2 size) {
   ImGui::TextUnformatted(S::kWelcome);
   ImGui::PopFont();
   ImGui::TextWrapped("データフォルダにプロジェクトがありません。始め方を選んでください。選んだものだけをデータフォルダに書きます。");
+  ImGui::AlignTextToFramePadding();
   ImGui::TextDisabled("保存先: %s", c.dataDir().c_str());
+  if (!c.dataDirLocked()) {
+    ImGui::SameLine();
+    if (ImGui::SmallButton("変更…")) openDialog(f, Dlg::AppSettings);
+  }
   ImGui::Spacing();
   const ImVec2 bs(w - u.m.s(24), u.m.s(36));
   if (ImGui::Button("空のプロジェクトを作る", bs)) c.createProject(app::SampleKind::Empty, "新しいプロジェクト", "");
@@ -867,11 +910,64 @@ void drawWelcome(Frame& f, ImVec2 size) {
   ImGui::EndChild();
 }
 
+// ---------------------------------------------------------------- 画面全体の拡大縮小
+// 一般的な操作に合わせる: Ctrl+ホイール（タッチパッドのピンチも同じ）、Ctrl+「+」「−」、Ctrl+0 で100%
+// （ガントの時間軸の上の Ctrl+ホイールは、ガントが時間軸の拡大縮小に使う）
+void handleZoom(Frame& f) {
+  AppController& c = f.c;
+  UiState& u = f.u;
+  ImGuiIO& io = ImGui::GetIO();
+  const std::int64_t now = c.clock().monotonicMs();
+  int dir = 0;
+  bool reset = false;
+  if (io.KeyCtrl && !io.KeyAlt) {
+    if (ImGui::IsKeyPressed(ImGuiKey_Equal, true) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, true)) dir = 1;
+    else if (ImGui::IsKeyPressed(ImGuiKey_Minus, true) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, true)) dir = -1;
+    else if (ImGui::IsKeyPressed(ImGuiKey_0, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad0, false)) reset = true;
+    // ホイール: 1ノッチで1段階。細かい回転はためる。段階の作り直し（フォント）が続かないように 0.12 秒あける
+    if (io.MouseWheel != 0.f && !u.wheelConsumed) {
+      u.zoomAcc += io.MouseWheel;
+      if (std::abs(u.zoomAcc) >= 1.f && now - u.zoomLastStepMs >= 120) {
+        dir = u.zoomAcc > 0 ? 1 : -1;
+        u.zoomAcc -= static_cast<float>(dir);
+      }
+    }
+  } else {
+    u.zoomAcc = 0;
+  }
+  if (dir != 0 || reset) {
+    const bool changed = reset ? c.setUiScale(100) : c.stepUiScale(dir);
+    u.zoomLastStepMs = now;
+    u.zoomHint = std::to_string(c.prefs().uiScale) + "%" + (changed ? "" : (reset ? "" : "（これ以上変えられません）"));
+    u.zoomHintUntilMs = now + 1200;
+  }
+}
+
+// 倍率の表示（変えた直後に、画面の上の真ん中へ少しの間）
+void drawZoomHint(Frame& f) {
+  UiState& u = f.u;
+  const std::int64_t now = f.c.clock().monotonicMs();
+  if (u.zoomHint.empty() || now >= u.zoomHintUntilMs) return;
+  ImDrawList* dl = ImGui::GetForegroundDrawList();
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  const ImVec2 ts = ImGui::CalcTextSize(u.zoomHint.c_str());
+  const float pad = u.m.s(12);
+  const ImVec2 a(vp->WorkPos.x + (vp->WorkSize.x - ts.x) / 2 - pad, vp->WorkPos.y + u.m.s(64));
+  const ImVec2 b(a.x + ts.x + pad * 2, a.y + ts.y + pad);
+  dl->AddRectFilled(a, b, IM_COL32(24, 28, 36, 225), u.m.s(8));
+  dl->AddText(ImVec2(a.x + pad, a.y + pad / 2), IM_COL32(255, 255, 255, 255), u.zoomHint.c_str());
+}
+
 // ---------------------------------------------------------------- キーボード（SPEC 10.4.4）
 void handleKeys(Frame& f) {
   AppController& c = f.c;
   UiState& u = f.u;
   ImGuiIO& io = ImGui::GetIO();
+  // Ctrl+, はアプリの設定（ほかのダイアログが開いていないとき）
+  if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Comma, false) && u.dlg == Dlg::None) {
+    openDialog(f, Dlg::AppSettings);
+    return;
+  }
   // Ctrl+K はいつでも
   if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K, false)) {
     u.paletteOpen = !u.paletteOpen;
@@ -947,7 +1043,7 @@ void handleKeys(Frame& f) {
   }
   if ((ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) &&
       !c.selection().empty())
-    c.deleteSelection();
+    requestDelete(f, c.selection());
   if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) u.detailOpen = !u.detailOpen;
 }
 
@@ -1005,6 +1101,14 @@ void collectGlyphs(const AppController& c, std::set<ImWchar>& out) {
 void drawApp(AppController& c, UiState& u, IPlatform& p) {
   Frame f{c, u, p};
   if (u.imeCooldown > 0) --u.imeCooldown;
+  // その場編集を始めたが入力欄がまだアクティブでない間に打った文字は、取っておいてアクティブになったら入れる（B13）。
+  // 編集を始めたフレームの文字（N など、始めるのに押したキー）は前のフレームで捨てられているので入らない
+  // 入力欄が出ないまま（行が見えないなど）なら 30 フレームでやめる（ほかの入力を塞がないように）
+  if (u.editField != EditField::None && !u.editActive && ImGui::GetFrameCount() - u.editArmFrame <= 30) {
+    ImGuiIO& io = ImGui::GetIO();
+    for (ImWchar ch : io.InputQueueCharacters) u.editPendingChars.push_back(ch);
+    io.InputQueueCharacters.resize(0);
+  }
   c.tick();
   const ImGuiViewport* vp = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(vp->WorkPos);
@@ -1068,8 +1172,11 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
     ImGui::End();
   }
   drawToasts(f);
+  handleZoom(f);
+  drawZoomHint(f);
   handleKeys(f);
   ImGui::PopFont();
+  u.openColFilter.clear();  // 見出しが出ていない列の要求は捨てる
   c.afterEdit();
   c.releaseFrame();
 }

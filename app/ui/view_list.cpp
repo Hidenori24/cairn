@@ -1,5 +1,9 @@
 // リストビュー（SPEC 10.7.1）と、表の行（ガントの左の表と共有）
 #include <algorithm>
+#include <map>
+
+#include <imgui.h>
+#include <imgui_stdlib.h>
 
 #include "roadmap/text.hpp"
 #include "ui/icons.hpp"
@@ -39,6 +43,105 @@ const char* colKey(Col c) {
   }
 }
 
+// 列の絞り込みのキー（絞り込めない列は空）
+const char* filterKey(Col c) {
+  switch (c) {
+    case Col::Name: return "name";
+    case Col::Type: return "type";
+    case Col::Status: return "status";
+    case Col::Asg: return "asg";
+    case Col::Prio: return "prio";
+    case Col::Float: return "float";
+    default: return "";
+  }
+}
+
+bool columnFiltered(const ColumnFilter& cf, const std::string& col) {
+  if (col == "name") return !text::trim(cf.name).empty();
+  const auto it = cf.hide.find(col);
+  return it != cf.hide.end() && !it->second.empty();
+}
+
+// 絞り込みの一覧に出す値（いまある値 + 隠したまま消えた値）を、列ごとの順に
+std::vector<std::string> filterValues(const Session& s, const ColumnFilter& cf, const std::string& col) {
+  const Tree& T = *s.tree();
+  std::vector<std::string> v = columnValues(col, T, s.viewIssues(), *s.rows());
+  if (const auto it = cf.hide.find(col); it != cf.hide.end())
+    for (const auto& h : it->second)
+      if (std::find(v.begin(), v.end(), h) == v.end()) v.push_back(h);
+  const auto rank = [&](const std::string& x) -> int {
+    if (col == "status") return static_cast<int>(statusCat(x));
+    if (col == "prio") return prioRank(x);
+    if (col == "float") {
+      static const char* const order[] = {"遅れ", "余裕小", "余裕あり", "完了"};
+      for (int k = 0; k < 4; ++k)
+        if (x == order[k]) return k;
+      return 4;
+    }
+    return x == kUnassignedValue || x == kNoneValue ? 1 : 0;
+  };
+  const bool byName = col == "asg" || col == "type";
+  std::stable_sort(v.begin(), v.end(), [&](const std::string& a, const std::string& b) {
+    if (rank(a) != rank(b)) return rank(a) < rank(b);
+    return byName && jaCompare(a, b) < 0;
+  });
+  return v;
+}
+
+// 列の絞り込みのポップアップ（一致しないものは隠す）
+void drawColumnFilterPopup(Frame& f, const std::string& col, const char* title, ImVec2 anchor) {
+  UiState& u = f.u;
+  Session* s = f.c.session();
+  ColumnFilter& cf = f.c.columnFilter();
+  ImGui::SetNextWindowPos(anchor, ImGuiCond_Appearing);  // 漏斗の下に出す
+  ImGui::SetNextWindowSizeConstraints(ImVec2(u.m.s(220), 0), ImVec2(u.m.s(360), u.m.s(460)));
+  if (!ImGui::BeginPopup("##colf")) return;
+  ImGui::PushFont(u.fontBold);
+  ImGui::Text("「%s」で絞り込む", title);
+  ImGui::PopFont();
+  if (col == "name") {
+    ImGui::TextDisabled("件名・ID を含むものだけを表示");
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(u.m.s(240));
+    ImGui::InputTextWithHint("##nf", "含む文字", &cf.name);
+    if (ImGui::IsItemDeactivated() && ImGui::IsKeyPressed(ImGuiKey_Enter)) ImGui::CloseCurrentPopup();
+  } else if (s && s->tree()) {
+    ImGui::TextDisabled("チェックを外した値は隠します");
+    const auto values = filterValues(*s, cf, col);
+    std::map<std::string, int> count;
+    const Tree& T = *s->tree();
+    for (int id : T.leafOrder) ++count[columnValue(col, s->viewIssues()[id], (*s->rows())[id])];
+    bool all = !columnFiltered(cf, col);
+    if (ImGui::Checkbox("すべて", &all)) {
+      cf.clear(col);
+      if (!all)
+        for (const auto& v : values) cf.hide[col].insert(v);
+    }
+    ImGui::Separator();
+    const float listH = std::min(u.m.s(320), ImGui::GetFrameHeightWithSpacing() * static_cast<float>(values.size()) + u.m.s(4));
+    ImGui::BeginChild("##vals", ImVec2(0, listH));
+    for (const auto& v : values) {
+      ImGui::PushID(v.c_str());
+      bool on = !cf.hidden(col, v);
+      const std::string label = v + "  (" + std::to_string(count[v]) + ")";
+      if (ImGui::Checkbox(label.c_str(), &on)) cf.toggle(col, v);
+      ImGui::SameLine(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize("だけ").x - u.m.s(10));
+      if (ImGui::SmallButton("だけ")) {
+        cf.clear(col);
+        for (const auto& w : values)
+          if (w != v) cf.hide[col].insert(w);
+      }
+      ImGui::PopID();
+    }
+    ImGui::EndChild();
+  }
+  if (columnFiltered(cf, col)) {
+    ImGui::Separator();
+    if (ImGui::Selectable("この列の絞り込みを解除")) cf.clear(col);
+  }
+  ImGui::EndPopup();
+}
+
 void textIn(ImDrawList* dl, const UiState& u, ImVec2 p, ImVec2 sz, const std::string& s, ImU32 col, ImFont* font = nullptr) {
   if (font) ImGui::PushFont(font);
   const std::string t = ellipsize(s, sz.x - u.m.s(8));
@@ -53,17 +156,37 @@ void drawTableHeader(Frame& f, ImVec2 pos, float width, float h, const std::vect
   ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + h), u.t->surface2);
   dl->AddLine(ImVec2(pos.x, pos.y + h - 1), ImVec2(pos.x + width, pos.y + h - 1), u.t->line);
+  const ColumnFilter& cf = f.c.columnFilter();
   float x = pos.x;
   for (const auto& cd : cols) {
     const char* title = colTitle(cd.col);
+    const std::string fk = filterKey(cd.col);
+    const float fw = fk.empty() ? 0.f : u.m.s(22);  // 漏斗のボタンの幅
     if (*title) {
       const ImVec2 ts = ImGui::CalcTextSize(title);
       std::string label = title;
       if (sortable && u.sortKey == colKey(cd.col) && u.sortDir) label += u.sortDir > 0 ? " ▲" : " ▼";
-      dl->AddText(ImVec2(x + u.m.s(6), pos.y + (h - ts.y) / 2), u.t->muted, label.c_str());
+      const bool filtered = !fk.empty() && columnFiltered(cf, fk);
+      dl->AddText(ImVec2(x + u.m.s(6), pos.y + (h - ts.y) / 2), filtered ? u.t->accent : u.t->muted, label.c_str());
+      ImGui::PushID(title);
+      if (!fk.empty()) {
+        // 列の絞り込み（見出しにマウスを載せたとき・絞り込み中に出す）
+        const float lx = x + u.m.s(6) + ImGui::CalcTextSize(label.c_str()).x + u.m.s(2);  // 列名のすぐ右
+        const ImVec2 bp(std::min(lx, x + cd.w - fw), pos.y);
+        const bool cellHov = ImGui::IsMouseHoveringRect(ImVec2(x, pos.y), ImVec2(x + cd.w, pos.y + h)) && ImGui::IsWindowHovered();
+        ImGui::SetCursorScreenPos(bp);
+        if (ImGui::InvisibleButton("##cf", ImVec2(fw, h)) || u.openColFilter == fk) {
+          ImGui::OpenPopup("##colf");
+          u.openColFilter.clear();
+        }
+        const bool btnHov = ImGui::IsItemHovered();
+        if (btnHov) tip("この列で絞り込む（一致しないものは隠す）");
+        const ImU32 ic = filtered ? u.t->accent : withAlpha(u.t->muted, btnHov ? 1.f : cellHov ? 0.7f : 0.25f);
+        drawIcon(dl, "filter", ImVec2(bp.x + (fw - u.m.s(13)) / 2, pos.y + (h - u.m.s(13)) / 2), u.m.s(13), ic);
+        drawColumnFilterPopup(f, fk, title, ImVec2(bp.x, pos.y + h));
+      }
       if (sortable) {
         ImGui::SetCursorScreenPos(ImVec2(x, pos.y));
-        ImGui::PushID(title);
         if (ImGui::InvisibleButton("##sort", ImVec2(cd.w, h))) {
           // 昇順 → 降順 → 解除
           if (u.sortKey != colKey(cd.col)) {
@@ -76,8 +199,8 @@ void drawTableHeader(Frame& f, ImVec2 pos, float width, float h, const std::vect
             u.sortKey.clear();
           }
         }
-        ImGui::PopID();
       }
+      ImGui::PopID();
     }
     x += cd.w;
   }
@@ -254,11 +377,12 @@ void drawListView(Frame& f, ImVec2 size) {
   std::vector<VisibleRow> rows;
   const bool sorting = u.sortDir != 0 && !u.sortKey.empty();
   if (sorting) {
-    for (int id : sortedLeaves(*s, s->visibleLeaves(c.filter()), u.sortKey, u.sortDir))
+    for (int id : sortedLeaves(*s, c.visibleLeaves(), u.sortKey, u.sortDir))
       rows.push_back({id, T.depth[id], false, false});
   } else {
-    rows = s->visibleRows(c.filter());
+    rows = c.visibleRows();
   }
+  const std::vector<char> dim = c.dimmedSet();
   u.order.clear();
   for (const auto& r : rows) u.order.push_back(T.ids[r.id]);
 
@@ -277,9 +401,17 @@ void drawListView(Frame& f, ImVec2 size) {
   const float viewH = ImGui::GetWindowHeight();
   const int first = std::max(0, static_cast<int>((scrollY - top) / h) - 1);
   const int last = std::min(static_cast<int>(rows.size()), static_cast<int>((scrollY + viewH - top) / h) + 2);
-  for (int i = first; i < last; ++i) {
-    const ImVec2 p(origin.x, origin.y + top + h * static_cast<float>(i));
-    drawTableRow(f, rows[i], p, width, cols, sorting, T.ids[rows[i].id] == c.cursor());
+  {
+    // 見出しの下だけに描く（見出しに隠れた行がクリックを取らないように）
+    const ImVec2 wp = ImGui::GetWindowPos();
+    ImGui::PushClipRect(ImVec2(wp.x, wp.y + top), ImVec2(wp.x + ImGui::GetWindowWidth(), wp.y + viewH), true);
+    for (int i = first; i < last; ++i) {
+      const ImVec2 p(origin.x, origin.y + top + h * static_cast<float>(i));
+      const std::string& sid = T.ids[rows[i].id];
+      FadeScope fade(ImGui::GetWindowDrawList(), isDimmed(u, dim, rows[i].id, sid), dimAlpha(c));
+      drawTableRow(f, rows[i], p, width, cols, sorting, sid == c.cursor());
+    }
+    ImGui::PopClipRect();
   }
   // 見出し（最後に描いて前面に）
   const ImVec2 hp(origin.x, origin.y + scrollY);

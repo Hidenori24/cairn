@@ -13,9 +13,9 @@ FetchContent_MakeAvailable(nlohmann_json)
 if(ROADMAP_BUILD_TESTS)
   FetchContent_Declare(doctest
     GIT_REPOSITORY https://github.com/doctest/doctest.git
-    GIT_TAG v2.4.11
+    GIT_TAG v2.5.3
     GIT_SHALLOW TRUE
-    FIND_PACKAGE_ARGS 2.4)
+    FIND_PACKAGE_ARGS 2.5)
   FetchContent_MakeAvailable(doctest)
 endif()
 

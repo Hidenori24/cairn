@@ -96,6 +96,8 @@ struct NullPlatform : ui::IPlatform {
   std::optional<std::pair<std::string, std::string>> openTextFile() override { return std::nullopt; }
   bool saveTextFile(const std::string&, const std::string&) override { return true; }
   void openFolder(const std::string&) override {}
+  std::optional<std::string> pickFolder(const std::string&) override { return picked; }
+  std::optional<std::string> picked;
   bool systemDark() override { return false; }
   void requestQuit() override {}
 };
@@ -200,6 +202,53 @@ int main(int argc, char** argv) {
   u.dlg = ui::Dlg::Settings;
   u.dlgOpening = true;
   shot("11_settings");
+  u.dlg = ui::Dlg::None;
+  frames(2);
+  // 上の絞り込み（一致しないものは薄く）・列の絞り込み・行のごみ箱
+  c.clearSelection();
+  c.filter().st = StFilter::Done;
+  shot("13_dim_gantt");
+  c.setView(app::View::Board);
+  c.setUi("lane", "none");
+  shot("14_dim_board");
+  c.filter() = {};
+  c.setView(app::View::List);
+  u.openColFilter = "asg";
+  shot("15_colfilter_popup");
+  ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, true);
+  frames(1);
+  ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, false);
+  c.columnFilter().toggle("status", "Done");
+  c.setView(app::View::Gantt);
+  ImGui::GetIO().AddMousePosEvent(200, 190);
+  shot("16_colfilter_hover");
+  c.clearFilter();
+  ImGui::GetIO().AddMousePosEvent(-1, -1);
+  // ガントの時間軸を Ctrl+ホイールで変えた幅
+  c.setView(app::View::Gantt);
+  c.setUi("zoom", "week");
+  u.customProject = c.currentId();
+  u.customPx = 16.f;
+  shot("20_gantt_custom_wide");
+  u.customPx = 3.2f;
+  shot("21_gantt_custom_narrow");
+  u.customPx = 0;
+  // アプリの設定（保存先の切り替えの確認中）・削除の確認
+  u.dlg = ui::Dlg::AppSettings;
+  u.dlgOpening = true;
+  frames(2);
+  shot("17_app_settings");
+  u.pendingDir = "D:/共有/projects";
+  u.pendingCount = 0;
+  u.pendingCopy = true;
+  shot("18_app_settings_switch");
+  u.pendingDir.clear();
+  u.dlg = ui::Dlg::None;
+  frames(2);
+  u.pendingDelete = {"11"};
+  u.dlg = ui::Dlg::ConfirmIssueDelete;
+  u.dlgOpening = true;
+  shot("19_confirm_delete");
   u.dlg = ui::Dlg::None;
   frames(2);
   u.t = &ui::darkTokens();
