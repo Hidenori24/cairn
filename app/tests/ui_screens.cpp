@@ -195,10 +195,15 @@ int main(int argc, char** argv) {
   shot("06_board");
   c.setView(app::View::Goals);
   shot("07_goals");
+  c.setView(app::View::Stats);
+  shot("07b_stats");
   c.createProject(app::SampleKind::Hierarchy, "階層デモ（セキュアブート）", "DEV");
   c.setView(app::View::Gantt);
   c.select("11");
   shot("08_hierarchy_gantt");
+  c.setView(app::View::Stats);
+  shot("08b_stats_hierarchy");
+  c.setView(app::View::Gantt);
   c.setSelection({"12", "13", "14"}, "14");
   shot("09_bulk");
   u.paletteOpen = true;
@@ -263,6 +268,12 @@ int main(int argc, char** argv) {
   c.session()->setResource({true, 1});
   c.afterEdit();
   shot("12_dark_leveling");
+  c.createProject(app::SampleKind::EmbeddedSw, "組込みソフトウェア開発", "DEV");
+  c.setView(app::View::Gantt);
+  c.setUi("zoom", "all");
+  shot("17_embedded_template");
+  c.setView(app::View::Stats);
+  shot("17b_embedded_stats");
   ImGui::DestroyContext();
   return 0;
 }

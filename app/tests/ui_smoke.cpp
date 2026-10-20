@@ -102,7 +102,7 @@ int main() {
     ss << in.rdbuf();
     check(h.c.importText(ss.str(), "サンプル", app::ImportMode::New).ok, "サンプルの取り込み");
   }
-  for (auto v : {app::View::Gantt, app::View::Board, app::View::List, app::View::Goals}) {
+  for (auto v : {app::View::Gantt, app::View::Board, app::View::List, app::View::Goals, app::View::Stats}) {
     h.c.setView(v);
     h.frame(3);
   }
@@ -385,7 +385,7 @@ int main() {
   h.u.m.compact = true;
   h.u.m.scale = 2.0f;
   ui::applyStyle(*h.u.t, h.u.m);
-  for (auto v : {app::View::Gantt, app::View::Board, app::View::List, app::View::Goals}) {
+  for (auto v : {app::View::Gantt, app::View::Board, app::View::List, app::View::Goals, app::View::Stats}) {
     h.c.setView(v);
     h.frame(3);
   }

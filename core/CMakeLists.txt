@@ -3,6 +3,7 @@ include(${PROJECT_SOURCE_DIR}/cmake/EmbedFile.cmake)
 set(_gen ${CMAKE_CURRENT_BINARY_DIR}/generated)
 roadmap_embed_file(${_gen}/sample_hierarchy.cpp hierarchyCsv ${PROJECT_SOURCE_DIR}/golden/samples/hierarchy_demo.csv)
 roadmap_embed_file(${_gen}/sample_leveling.cpp levelingCsv ${PROJECT_SOURCE_DIR}/golden/samples/leveling_demo.csv)
+roadmap_embed_file(${_gen}/sample_embedded_sw.cpp embeddedSwCsv ${PROJECT_SOURCE_DIR}/core/samples/embedded_sw.csv)
 
 add_library(roadmap_core STATIC
   src/text.cpp
@@ -20,9 +21,11 @@ add_library(roadmap_core STATIC
   src/filestore.cpp
   src/store.cpp
   src/jira_check.cpp
+  src/stats.cpp
   src/gen.cpp
   ${_gen}/sample_hierarchy.cpp
   ${_gen}/sample_leveling.cpp
+  ${_gen}/sample_embedded_sw.cpp
 )
 target_include_directories(roadmap_core PUBLIC include)
 target_link_libraries(roadmap_core PUBLIC nlohmann_json::nlohmann_json)

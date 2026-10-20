@@ -379,7 +379,7 @@ void drawTopBar(Frame& f) {
     const char* icon;
     const char* label;
   } tabs[] = {{View::Gantt, "gantt", S::kViewGantt}, {View::Board, "board", S::kViewBoard},
-              {View::List, "list", S::kViewList}, {View::Goals, "target", S::kViewGoals}};
+              {View::List, "list", S::kViewList}, {View::Goals, "target", S::kViewGoals}, {View::Stats, "chart", S::kViewStats}};
   for (const auto& t : tabs) {
     ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
     if (iconTextButton(u, t.label, t.icon, t.label, false, cur == t.v, s != nullptr)) c.setView(t.v);
@@ -894,7 +894,7 @@ void drawWelcome(Frame& f, ImVec2 size) {
   UiState& u = f.u;
   const float w = std::min(size.x - u.m.s(40), u.m.s(560));
   ImGui::SetCursorPos(ImVec2((size.x - w) / 2, std::max(u.m.s(40), size.y * 0.18f)));
-  ImGui::BeginChild("##welcome", ImVec2(w, u.m.s(340)), ImGuiChildFlags_Border);
+  ImGui::BeginChild("##welcome", ImVec2(w, u.m.s(390)), ImGuiChildFlags_Border);
   ImGui::PushFont(u.fontLarge);
   ImGui::TextUnformatted(S::kWelcome);
   ImGui::PopFont();
@@ -909,6 +909,7 @@ void drawWelcome(Frame& f, ImVec2 size) {
   const ImVec2 bs(w - u.m.s(24), u.m.s(36));
   if (ImGui::Button("空のプロジェクトを作る", bs)) c.createProject(app::SampleKind::Empty, "新しいプロジェクト", "");
   if (ImGui::Button("サンプル（階層デモ）", bs)) c.createProject(app::SampleKind::Hierarchy, "階層デモ（セキュアブート）", "DEV");
+  if (ImGui::Button("組込みソフトウェア開発の雛形", bs)) c.createProject(app::SampleKind::EmbeddedSw, "組込みソフトウェア開発", "DEV");
   if (ImGui::Button(S::kImportCsv, bs)) openDialog(f, Dlg::Import);
   ImGui::EndChild();
 }
@@ -1003,6 +1004,7 @@ void handleKeys(Frame& f) {
     if (ImGui::IsKeyPressed(ImGuiKey_2, false)) c.setView(View::Board);
     if (ImGui::IsKeyPressed(ImGuiKey_3, false)) c.setView(View::List);
     if (ImGui::IsKeyPressed(ImGuiKey_4, false)) c.setView(View::Goals);
+    if (ImGui::IsKeyPressed(ImGuiKey_5, false)) c.setView(View::Stats);
   }
   for (ImWchar ch : io.InputQueueCharacters) {
     if (ch == '/') u.focusSearch = true;
@@ -1142,6 +1144,7 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
       case View::Board: drawBoardView(f, mainSize); break;
       case View::List: drawListView(f, mainSize); break;
       case View::Goals: drawGoalsView(f, mainSize); break;
+      case View::Stats: drawStatsView(f, mainSize); break;
       default: drawGanttView(f, mainSize); break;
     }
   }

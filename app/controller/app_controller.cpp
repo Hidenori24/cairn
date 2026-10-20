@@ -14,6 +14,7 @@ const char* viewKey(View v) {
     case View::Board: return "board";
     case View::List: return "list";
     case View::Goals: return "goals";
+    case View::Stats: return "stats";
     default: return "gantt";
   }
 }
@@ -21,6 +22,7 @@ View viewFromKey(const std::string& k) {
   if (k == "board") return View::Board;
   if (k == "list") return View::List;
   if (k == "goals") return View::Goals;
+  if (k == "stats") return View::Stats;
   return View::Gantt;
 }
 
@@ -282,6 +284,8 @@ std::string AppController::createProject(SampleKind kind, const std::string& nam
   if (kind == SampleKind::Hierarchy) {
     csvText = std::string(samples::hierarchyCsv());
     base = samples::kSampleBase;
+  } else if (kind == SampleKind::EmbeddedSw) {
+    csvText = std::string(samples::embeddedSwCsv());  // 雛形は今日を基準日にする
   }
   const std::string name = nameIn.empty() ? "新しいプロジェクト" : nameIn;
   const std::string id = ws_->add(newRecord(name, text::toUpper(key), csvText, base, clock_), true);

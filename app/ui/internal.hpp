@@ -17,6 +17,7 @@ void drawListView(Frame& f, ImVec2 size);
 void drawGanttView(Frame& f, ImVec2 size);
 void drawBoardView(Frame& f, ImVec2 size);
 void drawGoalsView(Frame& f, ImVec2 size);
+void drawStatsView(Frame& f, ImVec2 size);
 void drawDetailPanel(Frame& f, ImVec2 size);
 void drawPalette(Frame& f);
 void drawDialogs(Frame& f);

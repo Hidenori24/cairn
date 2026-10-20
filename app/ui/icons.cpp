@@ -50,6 +50,7 @@ const std::map<std::string, const char*>& paths() {
       {"warn", "M12 3 2 21h20zM12 10v5M12 18h.01"},
       {"pencil", "M4 20h4L19 9l-4-4L4 16zM13 7l4 4"},
       {"flag", "M5 21V4M5 4h12l-2 4 2 4H5"},
+      {"chart", "M4 20V10M10 20V4M16 20v-8M22 20H2"},
   };
   return m;
 }

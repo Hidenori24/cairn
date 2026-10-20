@@ -52,6 +52,7 @@ std::vector<Cmd> buildCommands(Frame& f) {
     add("表示", "ボードを表示", "2", [&c] { c.setView(app::View::Board); });
     add("表示", "リストを表示", "3", [&c] { c.setView(app::View::List); });
     add("表示", "ギャップを表示", "4", [&c] { c.setView(app::View::Goals); });
+    add("表示", "統計を表示", "5", [&c] { c.setView(app::View::Stats); });
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"day", "日"}, {"week", "週"}, {"month", "月"}, {"all", "全体"}})
       add("表示", std::string("ガントの拡大率: ") + l, nullptr, [&c, &u, key = std::string(k)] {
         c.setUi("zoom", key);

@@ -15,8 +15,8 @@
 
 namespace roadmap::app {
 
-enum class View { Gantt, Board, List, Goals };
-const char* viewKey(View v);  // "gantt" / "board" / "list" / "goals"
+enum class View { Gantt, Board, List, Goals, Stats };
+const char* viewKey(View v);  // "gantt" / "board" / "list" / "goals" / "stats"
 View viewFromKey(const std::string& k);
 
 enum class SaveState { Saved, Saving, Error };
@@ -28,7 +28,7 @@ struct Toast {
   std::int64_t expiresAt = 0;
 };
 
-enum class SampleKind { Empty, Hierarchy };
+enum class SampleKind { Empty, Hierarchy, EmbeddedSw };
 enum class ImportMode { New, Replace };
 
 struct ImportOutcome {

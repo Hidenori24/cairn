@@ -329,7 +329,7 @@ TEST_CASE("commands: 担当者の並び（簡易な日本語照合）") {
 
 TEST_CASE("commands: サンプルを開ける") {
   auto clk = clockAt(2026, 10, 19);
-  for (auto sv : {samples::hierarchyCsv(), samples::levelingCsv()}) {
+  for (auto sv : {samples::hierarchyCsv(), samples::levelingCsv(), samples::embeddedSwCsv()}) {
     auto rec = newRecord("s", "", std::string(sv), samples::kSampleBase, clk);
     auto h = hydrate(rec);
     REQUIRE(h.ok());

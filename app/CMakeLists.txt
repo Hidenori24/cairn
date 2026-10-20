@@ -32,6 +32,7 @@ add_library(roadmap_ui STATIC
   ui/view_gantt.cpp
   ui/view_board.cpp
   ui/view_goals.cpp
+  ui/view_stats.cpp
   ui/panel_detail.cpp
   ui/palette.cpp
   ui/dialogs.cpp

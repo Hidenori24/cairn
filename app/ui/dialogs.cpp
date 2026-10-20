@@ -99,9 +99,14 @@ void dlgNewProject(Frame& f) {
   ImGui::TextUnformatted("雛形");
   ImGui::RadioButton("空", &u.dChoice, 0);
   ImGui::RadioButton("階層デモ（5階層の例）", &u.dChoice, 1);
+  ImGui::RadioButton("組込みソフトウェア開発の雛形（要求〜量産移管）", &u.dChoice, 2);
   const int b = buttons(f, {"作成", "キャンセル"});
   if (b == 0 || enter) {
-    const auto kind = u.dChoice == 1 ? app::SampleKind::Hierarchy : app::SampleKind::Empty;
+    const auto kind = u.dChoice == 1   ? app::SampleKind::Hierarchy
+                      : u.dChoice == 2 ? app::SampleKind::EmbeddedSw
+                                       : app::SampleKind::Empty;
+    if (u.dChoice == 2 && text::trim(u.dName) == "新しいプロジェクト") u.dName = "組込みソフトウェア開発";
+    if (u.dChoice == 2 && u.dKey.empty()) u.dKey = "DEV";
     f.c.createProject(kind, text::trim(u.dName), u.dKey);
     close(f);
   } else if (b == 1) {
@@ -642,7 +647,7 @@ void dlgWarnings(Frame& f) {
 
 void dlgShortcuts(Frame& f) {
   const std::pair<const char*, const char*> global[] = {
-      {"Ctrl+K", "コマンドパレット"}, {"Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y", "元に戻す / やり直す"}, {"1 2 3 4", "ガント / ボード / リスト / ギャップ"},
+      {"Ctrl+K", "コマンドパレット"}, {"Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y", "元に戻す / やり直す"}, {"1 2 3 4 5", "ガント / ボード / リスト / ギャップ / 統計"},
       {"/", "絞り込み欄へ"},        {"?", "この一覧"},  {"Ctrl+,", "アプリの設定"},
       {"Ctrl+ホイール / Ctrl+「+」「-」 / Ctrl+0", "画面全体の拡大縮小 / 100%に戻す"},
       {"Ctrl+ホイール（ガントの時間軸の上）", "ガントの時間軸の拡大縮小（マウスの位置の日付を動かさない）"},

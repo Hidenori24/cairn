@@ -37,6 +37,24 @@ TEST_CASE("controller: 初回（フォルダが空）→ サンプルを作る �
   CHECK(e.fs.exists("roadmap_prefs.json"));
 }
 
+TEST_CASE("controller: 組込みソフトウェア開発の雛形は今日を基準日に、マイルストーン4つで作る") {
+  Env e;
+  e.c.start();
+  e.c.createProject(SampleKind::EmbeddedSw, "組込み", "dev");
+  Session* s = e.c.session();
+  REQUIRE(s);
+  CHECK(s->settings().key == "DEV");
+  CHECK(s->settings().baseDate == "2026-10-19");  // 雛形は日付を持たないので、今日から積む
+  CHECK(s->summary().total > 20);
+  const Tree* T = s->tree();
+  REQUIRE(T);
+  int ms = 0;
+  for (int id : T->dfs)
+    if (T->isLeaf(id) && T->kind[id] == Kind::Ms) ++ms;
+  CHECK(ms == 4);
+  CHECK(s->error().empty());
+}
+
 TEST_CASE("controller: 編集 → 保存・失敗したら 2→5→10秒で再試行") {
   Env e;
   e.c.start();

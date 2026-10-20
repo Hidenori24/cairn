@@ -15,6 +15,7 @@ add_executable(roadmap_unit_tests
   unit/test_property.cpp
   unit/test_jira_check.cpp
   unit/test_controller.cpp
+  unit/test_stats.cpp
 )
 target_link_libraries(roadmap_unit_tests PRIVATE roadmap_core roadmap_controller roadmap_test_main)
 target_compile_definitions(roadmap_unit_tests PRIVATE ROADMAP_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/golden")

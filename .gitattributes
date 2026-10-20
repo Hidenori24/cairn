@@ -1,6 +1,7 @@
 # 正解データ・サンプルは改行コード（CRLF）を含めてバイト単位で照合するため、git に変換させない
 golden/** -text
 app/resources/*.csv -text
+core/samples/*.csv -text
 *.cpp text eol=lf
 *.hpp text eol=lf
 *.h text eol=lf
