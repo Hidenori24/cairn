@@ -6,6 +6,37 @@
 
 namespace roadmap {
 
+Json attachmentsToJson(const AttachmentMap& m) {
+  Json o = Json::object();
+  for (const auto& [id, list] : m) {
+    if (list.empty()) continue;
+    Json a = Json::array();
+    for (const auto& x : list) a.push_back(Json{{"name", x.name}, {"size", x.size}, {"at", x.at}, {"who", x.who}});
+    o[id] = std::move(a);
+  }
+  return o;
+}
+
+AttachmentMap attachmentsFromJson(const Json& j) {
+  AttachmentMap m;
+  if (!j.is_object()) return m;
+  for (auto it = j.begin(); it != j.end(); ++it) {
+    if (!it.value().is_array()) continue;
+    for (const auto& x : it.value()) {
+      if (!x.is_object() || !x.contains("name") || !x["name"].is_string()) continue;
+      Attachment a;
+      a.name = x["name"].get<std::string>();
+      if (a.name.empty()) continue;
+      if (x.contains("size") && x["size"].is_number() && x["size"].get<double>() >= 0)
+        a.size = static_cast<std::uint64_t>(x["size"].get<double>());
+      if (x.contains("at") && x["at"].is_string()) a.at = x["at"].get<std::string>();
+      if (x.contains("who") && x["who"].is_string()) a.who = x["who"].get<std::string>();
+      m[it.key()].push_back(std::move(a));
+    }
+  }
+  return m;
+}
+
 TagName tagOf(std::string_view s) {
   TagName none{"", std::string(s)};
   if (s.empty() || s[0] != '[') return none;

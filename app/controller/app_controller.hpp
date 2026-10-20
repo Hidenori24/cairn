@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "roadmap/attachments.hpp"
 #include "roadmap/commands.hpp"
 #include "roadmap/store.hpp"
 
@@ -131,6 +132,23 @@ class AppController {
   std::string addChild();
   void undo();
   void redo();
+
+  // ---- 添付ファイル（SPEC 8.7。取り消しの対象外。本体は <プロジェクト>/添付/<Issue Id>/）----
+  // 添付できるか（プロジェクトを開いていて、フォルダ構成であること。平置きのプロジェクトには置き場がない）
+  bool canAttach() const;
+  std::string attachDisabledReason() const;  // canAttach() が false のときの理由（画面に出す）
+  const std::vector<Attachment>& attachmentsOf(const std::string& issueId) const;
+  std::size_t attachmentCount(const std::string& issueId) const;
+  // ファイルまたはフォルダのパス（UTF-8）を課題に付ける。結果は通知にも出す。すぐ保存する
+  AttachOutcome attachFiles(const std::string& issueId, const std::vector<std::string>& files);
+  // 中身を直接付ける（クリップボードの画像など）
+  bool attachData(const std::string& issueId, const std::string& name, const std::string& data);
+  // _削除済み へ移して外す。移せなければ false（通知を出す）
+  bool removeAttachment(const std::string& issueId, std::size_t index);
+  // 本体のパス（開く・サムネイル用）。なければ空
+  std::string attachmentFile(const std::string& issueId, std::size_t index) const;
+  // プロジェクトのフォルダ（平置き・まだ書いていないときは空）
+  std::string currentProjectDir() const;
 
   // ---- テンプレート ----
   std::vector<Template> templates() const;

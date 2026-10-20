@@ -162,6 +162,97 @@ void AppController::absorbNotices() {
   for (auto& n : session_->takeNotices()) toast(n.text, n.action);
 }
 
+// ---- 添付ファイル ----
+std::string AppController::currentProjectDir() const {
+  const ProjectEntry* e = ws_->find(currentId_);
+  return e ? ws_->projectDir(*e) : "";
+}
+bool AppController::canAttach() const {
+  if (!session_) return false;
+  const ProjectEntry* e = ws_->find(currentId_);
+  return e && e->layout == Layout::Folder;
+}
+std::string AppController::attachDisabledReason() const {
+  if (!session_) return "プロジェクトを開いてから添付してください";
+  if (!canAttach())
+    return "このプロジェクトは以前の保存形式（1つのCSVを置く形）なので、添付を置く場所がありません。"
+           "アプリの設定でフォルダ構成へ移してください";
+  return "";
+}
+const std::vector<Attachment>& AppController::attachmentsOf(const std::string& issueId) const {
+  static const std::vector<Attachment> none;
+  if (!session_) return none;
+  const auto& m = session_->attachments();
+  const auto it = m.find(issueId);
+  return it == m.end() ? none : it->second;
+}
+std::size_t AppController::attachmentCount(const std::string& issueId) const { return attachmentsOf(issueId).size(); }
+
+AttachOutcome AppController::attachFiles(const std::string& issueId, const std::vector<std::string>& files) {
+  AttachOutcome out;
+  if (!canAttach()) {
+    toast(attachDisabledReason());
+    return out;
+  }
+  if (currentProjectDir().empty() && !flushNow()) {  // まだ書いていないプロジェクトは、先にフォルダを作る
+    toast("保存できないため、添付を置けません");
+    return out;
+  }
+  const std::string dir = currentProjectDir();
+  if (dir.empty()) return out;
+  out = roadmap::attachFiles(fs_, clock_, dir, session_->attachments(), issueId, files, prefs_.me);
+  if (!out.added.empty()) {
+    session_->touchAttachments();
+    flushNow();
+  }
+  std::string msg;
+  if (!out.added.empty()) msg = std::to_string(out.added.size()) + " 件を添付しました";
+  if (!out.rejected.empty()) {
+    const AttachRejected& r = out.rejected.front();
+    if (!msg.empty()) msg += "。";
+    msg += std::to_string(out.rejected.size()) + " 件は付けられませんでした（" + (r.name.empty() ? "" : r.name + ": ") + r.reason + "）";
+  }
+  if (!msg.empty()) toast(msg);
+  return out;
+}
+
+bool AppController::attachData(const std::string& issueId, const std::string& name, const std::string& data) {
+  if (!canAttach()) {
+    toast(attachDisabledReason());
+    return false;
+  }
+  if (currentProjectDir().empty() && !flushNow()) return false;
+  auto r = roadmap::attachData(fs_, clock_, currentProjectDir(), session_->attachments(), issueId, name, data, prefs_.me);
+  if (!r) {
+    toast("添付できませんでした（" + r.error() + "）");
+    return false;
+  }
+  session_->touchAttachments();
+  flushNow();
+  toast("1 件を添付しました");
+  return true;
+}
+
+bool AppController::removeAttachment(const std::string& issueId, std::size_t index) {
+  if (!session_) return false;
+  auto s = roadmap::removeAttachment(fs_, currentProjectDir(), session_->attachments(), issueId, index);
+  if (!s) {
+    toast("添付を外せませんでした（" + s.error() + "）");
+    return false;
+  }
+  session_->touchAttachments();
+  flushNow();
+  toast("添付を外しました（ファイルは「" + std::string(kAttachDeleted) + "」フォルダに移してあります）");
+  return true;
+}
+
+std::string AppController::attachmentFile(const std::string& issueId, std::size_t index) const {
+  const auto& list = attachmentsOf(issueId);
+  const std::string dir = currentProjectDir();
+  if (dir.empty() || index >= list.size()) return "";
+  return attachmentPath(dir, issueId, list[index]);
+}
+
 void AppController::afterEdit() {
   if (!session_) return;
   absorbNotices();
@@ -326,6 +417,7 @@ void AppController::duplicateProject() {
   ProjectRecord rec = recordOf(session_->data());
   rec.settings.id.clear();
   rec.settings.name += " のコピー";
+  rec.settings.attachments.clear();  // 添付の本体は複製しない（メタ情報だけ残ると、無いファイルを指してしまう）
   const std::string id = ws_->add(std::move(rec), true);
   openSession(id, false);
   scheduleSave();
