@@ -41,6 +41,21 @@ std::string ellipsize(const std::string& s, float maxW) {
   return text::fromU32(u.substr(0, lo)) + "…";
 }
 
+std::vector<std::string> ancestorNames(const Tree& T, int idx) {
+  std::vector<std::string> out;
+  // 循環があっても止まるよう、たどる回数に上限を置く
+  for (int a = T.parentOf[idx], guard = 0; a >= 0 && guard < T.n; a = T.parentOf[a], ++guard) out.insert(out.begin(), T.name[a]);
+  return out;
+}
+
+std::string ancestorLabel(const Tree& T, int idx, float maxW) {
+  const std::vector<std::string> names = ancestorNames(T, idx);
+  if (names.empty()) return "";
+  const auto kept = text::ancestorPath(
+      names, [](const std::string& s) { return ImGui::CalcTextSize(s.c_str()).x; }, maxW);
+  return ellipsize(text::ancestorPathText(names, kept), maxW);
+}
+
 void tip(const char* t) {
   if (t && *t && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", t);
 }

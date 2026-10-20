@@ -247,6 +247,34 @@ void openTplSave(Frame& f, const std::string& id) {
   openDialog(f, Dlg::TplSave);
 }
 
+namespace {
+// その場編集中の入力欄の上に、親の名前（`要件定義 › 認証 ›`）を薄く出す。行の高さは変えない。
+// 上に置けない（表の先頭で見出しに隠れる）ときは行の下に置く
+void drawEditParentHint(const UiState& u, const Tree& T, int idx, ImVec2 inputPos, float rowH) {
+  const std::string tail = " ›";
+  const ImVec2 clipMin = ImGui::GetWindowDrawList()->GetClipRectMin();
+  const ImVec2 clipMax = ImGui::GetWindowDrawList()->GetClipRectMax();
+  const float pad = u.m.s(6);
+  const float maxW = std::max(u.m.s(80), std::min(u.m.s(420), clipMax.x - inputPos.x - u.m.s(8)) - 2 * pad);
+  const float tailW = ImGui::CalcTextSize(tail.c_str()).x;
+  const std::string path = ancestorLabel(T, idx, maxW - tailW);
+  if (path.empty()) return;
+  const std::string label = path + tail;
+  const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+  const ImVec2 sz(ts.x + 2 * pad, ts.y + u.m.s(4));
+  float y = inputPos.y - sz.y;
+  if (y < clipMin.y) y = inputPos.y + rowH;
+  const ImVec2 a(std::max(clipMin.x, inputPos.x - u.m.s(2)), y);
+  const ImVec2 b(a.x + sz.x, a.y + sz.y);
+  ImDrawList* fg = ImGui::GetForegroundDrawList();
+  fg->PushClipRect(clipMin, clipMax, false);
+  fg->AddRectFilled(a, b, u.t->surface, u.m.s(4));
+  fg->AddRect(a, b, u.t->line2, u.m.s(4));
+  fg->AddText(ImVec2(a.x + pad, a.y + u.m.s(2)), u.t->muted, label.c_str());
+  fg->PopClipRect();
+}
+}  // namespace
+
 void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const NameCellOpts& o) {
   UiState& u = f.u;
   Session* s = f.c.session();
@@ -279,6 +307,7 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
   if (editing(u, id, EditField::Name)) {
     ImGui::SetCursorScreenPos(ImVec2(x, cy - ImGui::GetFrameHeight() / 2));
     drawInlineEdit(f, std::max(u.m.s(60), right - x));
+    drawEditParentHint(u, T, r.id, ImVec2(x, pos.y), size.y);
     return;
   }
   const int nc = static_cast<int>(is.comments.size());
@@ -294,6 +323,20 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
     drawIcon(dl, "message", ImVec2(x, cy - u.m.s(6)), u.m.s(12), u.t->muted);
     const std::string n = std::to_string(nc);
     dl->AddText(ImVec2(x + u.m.s(14), cy - ImGui::GetTextLineHeight() / 2), u.t->muted, n.c_str());
+    x += u.m.s(30);
+  }
+  if (o.showPath && r.depth > 0) {
+    // 平らな一覧: 件名の右に、親の名前を薄く。残りの幅に収まらなければ真ん中を省略
+    const float room = right - x - (hov ? u.m.s(72) : 0);
+    if (room >= u.m.s(60)) {
+      const std::string path = ancestorLabel(T, r.id, room);
+      if (!path.empty()) {
+        const ImVec2 psz = ImGui::CalcTextSize(path.c_str());
+        dl->AddText(ImVec2(x, cy - psz.y / 2), withAlpha(u.t->muted, 0.85f), path.c_str());
+        if (ImGui::IsMouseHoveringRect(ImVec2(x, pos.y), ImVec2(x + psz.x, pos.y + size.y)) && ImGui::IsWindowHovered())
+          ImGui::SetTooltip("親: %s", text::join(ancestorNames(T, r.id), " › ").c_str());
+      }
+    }
   }
   if (hov) {
     ImGui::PushID(id.c_str());

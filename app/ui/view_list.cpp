@@ -254,7 +254,7 @@ void drawTableRow(Frame& f, const VisibleRow& r, ImVec2 pos, float width, const 
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.f)) u.rowDrag = {id, true};
         break;
       }
-      case Col::Name: drawNameCell(f, r, cp, cs, NameCellOpts{true, !flat}); break;
+      case Col::Name: drawNameCell(f, r, cp, cs, NameCellOpts{true, !flat, flat}); break;
       case Col::Type: textIn(dl, u, cp, cs, o.type, u.t->muted); break;
       case Col::Status: {
         ImGui::SetCursorScreenPos(ImVec2(x + u.m.s(4), pos.y + (h - u.m.s(24)) / 2));
