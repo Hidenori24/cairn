@@ -198,9 +198,8 @@ bool drawInlineEdit(Frame& f, float w) {
     if (field == EditField::Name && (io.KeyShift || io.KeyCtrl || fresh)) {
       const Issue* o = s->issue(id);
       std::string nid;
-      if (io.KeyShift) nid = s->addIssue(id, "");
-      else if (o) nid = s->addIssue(o->parent, id);
-      f.c.afterEdit();
+      if (io.KeyShift) nid = f.c.createIssue(id, "");
+      else if (o) nid = f.c.createIssue(o->parent, id);
       if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
     }
     return false;
@@ -310,10 +309,8 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
     const ImVec2 b = ImGui::GetCursorScreenPos();
     if (ImGui::InvisibleButton("##add", ImVec2(u.m.s(22), u.m.s(22)))) {
       deferAfterFrame(f, [&f, id] {
-        Session* ss = f.c.session();
-        if (!ss) return;
-        const std::string nid = ss->addIssue(id, "");
-        f.c.afterEdit();
+        if (!f.c.session()) return;
+        const std::string nid = f.c.createIssue(id, "");
         if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
       });
     }
@@ -475,8 +472,7 @@ void drawTopBar(Frame& f) {
   if (iconButton(u, "redo", "redo", "やり直す (Ctrl+Shift+Z)", s && s->canRedo())) c.redo();
   ImGui::SameLine(0, u.m.s(6));
   if (iconTextButton(u, "add", nullptr, S::kAddIssue, true, false, s != nullptr)) {
-    const std::string id = s->addIssue("", "");
-    c.afterEdit();
+    const std::string id = c.createIssue("", "");
     if (!id.empty()) beginEdit(f, id, EditField::Name, true);
   }
   ImGui::SameLine(0, u.m.s(4));
@@ -786,13 +782,11 @@ void drawContextMenu(Frame& f) {
     if (ImGui::MenuItem("名前を変更", "F2")) beginEdit(f, id, EditField::Name);
     ImGui::Separator();
     if (ImGui::MenuItem("子を追加", "Shift+N")) {
-      const auto nid = s->addIssue(id, "");
-      c.afterEdit();
+      const auto nid = c.createIssue(id, "");
       if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
     }
     if (ImGui::MenuItem("同じ階層に追加", "N")) {
-      const auto nid = s->addIssue(s->issue(id)->parent, id);
-      c.afterEdit();
+      const auto nid = c.createIssue(s->issue(id)->parent, id);
       if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
     }
   }

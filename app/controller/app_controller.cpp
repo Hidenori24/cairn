@@ -4,6 +4,7 @@
 #include <iterator>
 #include <unordered_set>
 
+#include "roadmap/issue_name.hpp"
 #include "roadmap/samples.hpp"
 #include "roadmap/text.hpp"
 
@@ -646,20 +647,47 @@ void AppController::setAssigneeFor(const std::vector<std::string>& ids, const st
   session_->bulk(ids, [&](Issue& o) { o.assignee = w; });
   afterEdit();
 }
+std::string AppController::newIssueName(const std::string& parentId) const {
+  if (!session_) return "";
+  NewNameInput in;
+  in.mode = newNameModeFromKey(prefs_.newNameFormat);
+  if (in.mode == NewNameMode::Keep) return "";
+  in.custom = prefs_.newNameCustom;
+  in.today = clock_.todayIso();
+  const Tree* T = session_->tree();
+  const int p = parentId.empty() || !T ? -1 : T->find(parentId);
+  if (p >= 0) {
+    in.hasParent = true;
+    in.parentName = T->name[p];
+    in.parentDid = T->did[p];
+  }
+  // 兄弟の名前（番号タグ [T01-1] を除いた表示名。タグがなければ件名と同じ）
+  const std::string par = p >= 0 ? parentId : std::string();
+  for (const Issue& o : session_->issues()) {
+    if (o.parent != par) continue;
+    const int k = T ? T->find(o.id) : -1;
+    in.siblings.push_back(k >= 0 ? T->name[k] : o.summary);
+  }
+  return makeNewIssueName(in);
+}
+std::string AppController::createIssue(std::string parentId, std::string afterId) {
+  if (!session_) return "";
+  const std::string id = session_->addIssue(parentId, afterId, newIssueName(parentId));
+  afterEdit();
+  return id;
+}
 std::string AppController::addSibling() {
   if (!session_) return "";
   std::string id;
-  if (cursor_.empty() || !session_->issue(cursor_)) id = session_->addIssue("", "");
-  else id = session_->addIssue(session_->issue(cursor_)->parent, cursor_);
-  afterEdit();
+  if (cursor_.empty() || !session_->issue(cursor_)) id = createIssue("", "");
+  else id = createIssue(session_->issue(cursor_)->parent, cursor_);
   if (!id.empty()) select(id);
   return id;
 }
 std::string AppController::addChild() {
   if (!session_) return "";
   if (cursor_.empty()) return addSibling();
-  const std::string id = session_->addIssue(cursor_, "");
-  afterEdit();
+  const std::string id = createIssue(cursor_, "");
   if (!id.empty()) select(id);
   return id;
 }

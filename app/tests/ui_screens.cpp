@@ -250,6 +250,10 @@ int main(int argc, char** argv) {
   u.dlgOpening = true;
   frames(2);
   shot("17_app_settings");
+  c.prefs().newNameFormat = "custom";
+  c.select("11");
+  shot("17b_app_settings_newname");
+  c.prefs().newNameFormat = "keep";
   u.pendingDir = "D:/共有/projects";
   u.pendingCount = 0;
   u.pendingCopy = true;
