@@ -1,4 +1,5 @@
 #include "roadmap/commands.hpp"
+#include "roadmap/other_links.hpp"
 
 #include <algorithm>
 #include <unordered_map>
@@ -502,6 +503,27 @@ bool Session::removeLink(std::string from, std::string to) {
   return mutate([&](ProjectData& P) {
     auto& b = P.issues[indexOf(P.issues, from)].blocks;
     b.erase(std::remove(b.begin(), b.end(), to), b.end());
+  });
+}
+
+bool Session::addOtherLink(std::string id, std::string kind, bool outward, std::string ref) {
+  const auto ix = indexOf(P_.issues, id);
+  if (ix < 0) return false;
+  if (const std::string why = roadmap::checkAddOtherLink(P_.meta, P_.issues, static_cast<std::size_t>(ix), kind, outward, ref);
+      !why.empty()) {
+    notify(why);
+    return false;
+  }
+  return mutate([&](ProjectData& P) {
+    roadmap::addOtherLink(P.meta, P.issues, static_cast<std::size_t>(indexOf(P.issues, id)), kind, outward, ref);
+  });
+}
+
+bool Session::removeOtherLink(std::string id, std::size_t col) {
+  const auto ix = indexOf(P_.issues, id);
+  if (ix < 0) return false;
+  return mutate([&](ProjectData& P) {
+    roadmap::removeOtherLink(P.meta, P.issues, static_cast<std::size_t>(indexOf(P.issues, id)), col);
   });
 }
 

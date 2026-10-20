@@ -101,6 +101,9 @@ class Session {
   bool setDeadline(std::string id, OptDay day);
   bool addLink(std::string from, std::string to);
   bool removeLink(std::string from, std::string to);
+  // Blocks 以外のリンク（Relates など。Issue #12）。日程には影響しない。値は未知の列に入る
+  bool addOtherLink(std::string id, std::string kind, bool outward, std::string ref);
+  bool removeOtherLink(std::string id, std::size_t col);
   // 選んだ課題を A→B→C と順につなぐ（終了→開始）。order は画面の表示順（空なら木の順）。
   // 親子の両方が選ばれていれば子は数えない。すでにあるつなぎは足さない。
   // 1つでも循環になるなら何も変えず、理由を通知する。全体で Undo 1回

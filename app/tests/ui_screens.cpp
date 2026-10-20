@@ -269,6 +269,16 @@ int main(int argc, char** argv) {
     u.linkPick = {true, "22", true, c.currentId()};
     shot("23_link_pick_mode");
     u.linkPick = {};
+    // Blocks 以外の関連リンク（日程には使わない）
+    if (roadmap::Session* ss = c.session()) {
+      ss->addOtherLink("22", "Relates", true, "9");
+      ss->addOtherLink("22", "Relates", false, "10");
+      ss->addOtherLink("22", "Duplicate", true, "PRJ-999");
+      c.afterEdit();
+      shot("24_other_links");
+      for (int k = 0; k < 3; ++k) ss->undo();
+      c.afterEdit();
+    }
     u.detailOpen = false;
     frames(2);
   }
