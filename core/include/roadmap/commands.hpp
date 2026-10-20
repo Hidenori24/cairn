@@ -7,11 +7,14 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "roadmap/clock.hpp"
 #include "roadmap/filter.hpp"
+#include "roadmap/link_candidates.hpp"
 #include "roadmap/outline.hpp"
+#include "roadmap/pred_edit.hpp"
 #include "roadmap/schedule.hpp"
 #include "roadmap/templates.hpp"
 
@@ -31,6 +34,18 @@ struct ChainResult {
   bool ok = false;    // 失敗（件数不足・循環）なら false。すでにつながっているだけのときは true
   int added = 0;      // 足したつなぎの数
   int existing = 0;   // すでにあったので足さなかったつなぎの数
+};
+
+// 依存を足したらどうなるか（つなぐ前の確認。ガントのドラッグのプレビュー）
+struct LinkPreview {
+  struct Shift {
+    int idx = -1;  // tree() の添字（葉）
+    Day oldStart = 0, oldFinish = 0, newStart = 0, newFinish = 0;
+  };
+  bool ok = false;                 // つなげる（block == None で、計算もできる）
+  LinkBlock block = LinkBlock::None;
+  std::vector<Shift> shifts;       // 日程が動く葉（先行の影響を受けた後続・その下流）
+  int delayDays = 0;               // 後続（相手）の配下の葉の最大の遅れ（営業日。遅れなければ 0）
 };
 
 class Session {
@@ -100,11 +115,24 @@ class Session {
   bool setEarliest(std::string id, OptDay day);
   bool setDeadline(std::string id, OptDay day);
   bool addLink(std::string from, std::string to);
+  // from → to をつないだときの日程の変化を、課題を変えずに計算する（循環などでつなげない組は ok=false と理由）
+  // dropFrom → dropTo を指定すると、そのつなぎを外した状態で判定・計算する（付け替えのプレビュー）
+  LinkPreview previewLink(const std::string& from, const std::string& to, const std::string& dropFrom = {},
+                          const std::string& dropTo = {}) const;
   bool removeLink(std::string from, std::string to);
+  // Blocks 以外のリンク（Relates など。Issue #12）。日程には影響しない。値は未知の列に入る
+  bool addOtherLink(std::string id, std::string kind, bool outward, std::string ref);
+  bool removeOtherLink(std::string id, std::size_t col);
+  // oldFrom → oldTo のつなぎを newFrom → newTo に付け替える（片方の端だけ変えるのが普通）。
+  // 元のつなぎがない・同じ組・つなげない相手（循環・重複・親子・自分自身）なら何も変えず false。Undo 1回
+  bool relinkIssue(std::string oldFrom, std::string oldTo, std::string newFrom, std::string newTo);
   // 選んだ課題を A→B→C と順につなぐ（終了→開始）。order は画面の表示順（空なら木の順）。
   // 親子の両方が選ばれていれば子は数えない。すでにあるつなぎは足さない。
   // 1つでも循環になるなら何も変えず、理由を通知する。全体で Undo 1回
   ChainResult chainIssues(std::vector<std::string> ids, const std::vector<std::string>& order = {});
+  // 「先行」列の入力（例 `DEV-12, DEV-15`）のとおりに id の先行を変える。いまとの差分（追加・削除）だけを反映し、全体で Undo 1回。
+  // 問題（存在しない・重複・循環など）があれば何も変えず、plan.ok = false と理由を返す
+  PredPlan setPredecessors(const std::string& id, std::string_view text);
   // 選んだ課題どうしのつなぎをすべて外す（選ばない課題とのつなぎは残す）。外した数を返す。Undo 1回
   int unchainIssues(const std::vector<std::string>& ids);
   bool addComment(std::string id, std::string text, std::string who);
@@ -125,6 +153,10 @@ class Session {
   void touchUi();  // ui を書き換えたら呼ぶ（保存の予約）
   void setCollapsed(std::string id, bool collapsed);
   bool isCollapsed(const std::string& id) const;
+  // 添付のメタ情報（本体のファイルは attachments.hpp。取り消しの対象外で、保存はする）
+  const AttachmentMap& attachments() const { return P_.settings.attachments; }
+  AttachmentMap& attachments() { return P_.settings.attachments; }
+  void touchAttachments() { persist(); }  // attachments() を書き換えたら呼ぶ（保存の予約）
   // 置き換えの取り込み（Undo で戻せる）
   void replaceIssues(std::vector<Issue> issues, ProjectMeta meta, std::vector<std::string> warns);
 

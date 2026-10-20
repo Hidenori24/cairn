@@ -19,6 +19,8 @@ void drawBoardView(Frame& f, ImVec2 size);
 void drawGoalsView(Frame& f, ImVec2 size);
 void drawStatsView(Frame& f, ImVec2 size);
 void drawDetailPanel(Frame& f, ImVec2 size);
+// 詳細パネルの「添付」タブ（i = 課題の添字）
+void drawAttachTab(Frame& f, int i);
 void drawPalette(Frame& f);
 void drawDialogs(Frame& f);
 void drawGoalPopover(Frame& f);
@@ -55,6 +57,25 @@ void openTplSave(Frame& f, const std::string& id);
 // クリップボードの複数行を、選んだ課題の子としてまとめて作る（プレビューのダイアログを開く）
 void startPasteChildren(Frame& f);
 
+// ---- 添付とファイルのドロップ ----
+// この範囲（画面の座標。描画中のクリップ範囲に切り詰める）を、課題 issueId のドロップ先にする
+void registerDropTarget(Frame& f, const std::string& issueId, ImVec2 a, ImVec2 b);
+// 前のフレームに描いたドロップ先と照らして、pendingDrop を処理する（drawApp の先頭で呼ぶ）
+void processDrop(Frame& f);
+// 添付の本体を開く。実行ファイルなどは先に警告のダイアログを出す（確認したら開く）
+void openAttachment(Frame& f, const std::string& issueId, std::size_t index);
+// 添付の画像のテクスチャ（maxDim = 縮小の上限）。まだ作っていなければ nullptr（デコードは1フレームに1枚まで。
+// 次のフレーム以降に出る）。壊れている・対応していないものは failed が true の項目を返す。画像でなければ nullptr
+inline constexpr int kPreviewMaxPx = 1280;  // プレビューするときの画像の長辺（これより大きい画像は縮小して読む）
+const UiState::ImageTex* attachmentImage(Frame& f, const std::string& issueId, std::size_t index, int maxDim);
+// 画像をクリックしたときのプレビュー（画像でなければ何もしない）
+void openImagePreview(Frame& f, const std::string& issueId, std::size_t index);
+// テクスチャを解放する（releaseImages = 全部。trimImages = しばらく使っていないものだけ）
+void releaseImages(Frame& f);
+void trimImages(Frame& f);
+// 添付の数のバッジ（クリップのアイコンと数）を描く。幅を返す。クリックされたら clicked を true にする
+float drawAttachBadge(Frame& f, ImVec2 pos, float cy, int count, bool* clicked);
+
 // 件名セル（開閉・種別・表示ID・件名・コメント数・ホバー時の小ボタン）
 struct NameCellOpts {
   bool showHoverButtons = true;
@@ -65,7 +86,7 @@ struct NameCellOpts {
 void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const NameCellOpts& o = {});
 
 // 表の列（リストとガントの左の表で共有）
-enum class Col { Grip, Name, Type, Status, Asg, Prio, Start, Finish, Dur, Float, Deadline };
+enum class Col { Grip, Name, Type, Status, Asg, Prio, Start, Finish, Dur, Float, Deadline, Pred };
 struct ColDef {
   Col col;
   float w;

@@ -34,10 +34,14 @@ add_library(roadmap_ui STATIC
   ui/view_goals.cpp
   ui/view_stats.cpp
   ui/panel_detail.cpp
+  ui/panel_attach.cpp
+  ui/image_decode.cpp
   ui/palette.cpp
   ui/dialogs.cpp
 )
 target_include_directories(roadmap_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# stb_image（画像のデコード。単一ヘッダ・パブリックドメイン。third_party/stb に同梱）。警告を出さない SYSTEM 扱い
+target_include_directories(roadmap_ui SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/third_party/stb)
 target_link_libraries(roadmap_ui PUBLIC roadmap_controller imgui_lib)
 roadmap_set_warnings(roadmap_ui)
 target_compile_definitions(roadmap_ui PRIVATE ROADMAP_VERSION="${PROJECT_VERSION}")

@@ -161,6 +161,10 @@ void beginEdit(Frame& f, const std::string& id, EditField field, bool fresh) {
   else if (field == EditField::Dur) {
     const int i = s->find(id);
     f.u.editBuf = s->rows() ? csv::fmtNum(s->rows()->at(i).weeks) : "1";
+  } else if (field == EditField::Pred) {
+    const int i = T ? T->find(id) : -1;
+    f.u.editBuf = i >= 0 && s->computed() ? formatPredsForEdit(*T, s->viewIssues(), s->computed()->declPreds[static_cast<std::size_t>(i)]) : "";
+    f.u.editCursorEnd = true;  // 既存の先行の後ろに足せるように、カーソルは末尾
   }
   f.u.editStartValue = f.u.editBuf;
   f.u.editActive = false;
@@ -172,8 +176,17 @@ void beginEdit(Frame& f, const std::string& id, EditField field, bool fresh) {
 namespace {
 // Tab を拾う。CallbackCompletion を使うと Tab で入力欄から抜けず、ここが呼ばれる
 // （AllowTabInput は SetKeyboardFocusHere による編集開始を打ち消してしまうので使わない）
+struct EditCb {
+  int tab = 0;
+  bool toEnd = false;  // 最初のフレームでカーソルを末尾に置く
+};
 int tabCallback(ImGuiInputTextCallbackData* d) {
-  if (d->EventFlag == ImGuiInputTextFlags_CallbackCompletion) *static_cast<int*>(d->UserData) = ImGui::GetIO().KeyShift ? -1 : 1;
+  auto* cb = static_cast<EditCb*>(d->UserData);
+  if (d->EventFlag == ImGuiInputTextFlags_CallbackCompletion) cb->tab = ImGui::GetIO().KeyShift ? -1 : 1;
+  else if (d->EventFlag == ImGuiInputTextFlags_CallbackAlways && cb->toEnd) {
+    d->CursorPos = d->SelectionStart = d->SelectionEnd = d->BufTextLen;
+    cb->toEnd = false;
+  }
   return 0;
 }
 
@@ -191,6 +204,9 @@ bool commitEdit(Frame& f) {
     } else if (f.u.editField == EditField::Dur) {
       auto d = csv::parseDur(v, true);
       if (d && *d >= 0) changed = s->setDuration(id, text::jsRound(*d * 2) / 2);
+    } else if (f.u.editField == EditField::Pred) {
+      const PredPlan pp = s->setPredecessors(id, v);  // 問題があれば何も変えない（呼び出し側が先に確かめる）
+      changed = pp.ok && pp.changed();
     }
   }
   f.c.afterEdit();
@@ -202,7 +218,49 @@ void endEdit(UiState& u) {
   u.editId.clear();
   u.editFresh = false;
   u.editActive = false;
+  u.editCursorEnd = false;
   u.editPendingChars.clear();
+}
+
+// 先行列の入力欄の下（なければ上）に、エラーの理由（赤）か候補（薄く）を出す。操作はできない表示だけ
+void drawPredHint(const UiState& u, const Tree& T, const std::vector<Issue>& issues, int self, const PredPlan& plan,
+                  const std::string& buf, ImVec2 itemMin, ImVec2 itemMax) {
+  std::vector<std::pair<std::string, bool>> lines;  // 文字, 赤か
+  if (!plan.ok) {
+    const std::size_t shown = std::min<std::size_t>(plan.problems.size(), 3);
+    for (std::size_t i = 0; i < shown; ++i) lines.emplace_back(plan.problems[i].reason, true);
+    if (plan.problems.size() > shown) lines.emplace_back("ほか" + std::to_string(plan.problems.size() - shown) + "件", true);
+    lines.emplace_back("Enter では確定しません。直すか Esc で取り消します", false);
+  }
+  // 入力中の項目の候補（誤りがあるときも、直す手がかりとして出す）
+  const auto sg = predSuggestions(T, issues, self, buf, plan.ok ? 5 : 3);
+  if (!sg.empty()) {
+    lines.emplace_back("候補（Tab で先頭を入力）", false);
+    for (const int i : sg) lines.emplace_back(T.did[static_cast<std::size_t>(i)] + "  " + T.name[static_cast<std::size_t>(i)], false);
+  }
+  if (lines.empty()) return;
+  const float pad = u.m.s(6);
+  const float lh = ImGui::GetTextLineHeight();
+  float w = 0;
+  for (const auto& l : lines) w = std::max(w, ImGui::CalcTextSize(l.first.c_str()).x);
+  const ImVec2 disp = ImGui::GetIO().DisplaySize;
+  w = std::min(w, std::max(u.m.s(160), disp.x - 2 * pad - u.m.s(8)));
+  const float h = lh * static_cast<float>(lines.size()) + 2 * pad;
+  float y = itemMax.y + u.m.s(2);
+  if (y + h > disp.y) y = itemMin.y - h - u.m.s(2);
+  const float x = std::max(u.m.s(4), std::min(itemMin.x, disp.x - (w + 2 * pad) - u.m.s(4)));
+  ImDrawList* fg = ImGui::GetForegroundDrawList();
+  fg->PushClipRect(ImVec2(0, 0), disp, false);
+  fg->AddRectFilled(ImVec2(x, y), ImVec2(x + w + 2 * pad, y + h), u.t->surface, u.m.s(4));
+  fg->AddRect(ImVec2(x, y), ImVec2(x + w + 2 * pad, y + h), plan.ok ? u.t->line2 : u.t->late, u.m.s(4));
+  float ty = y + pad;
+  for (const auto& l : lines) {
+    fg->PushClipRect(ImVec2(x + pad, ty), ImVec2(x + pad + w, ty + lh), true);
+    fg->AddText(ImVec2(x + pad, ty), l.second ? u.t->late : u.t->muted, l.first.c_str());
+    fg->PopClipRect();
+    ty += lh;
+  }
+  fg->PopClipRect();
 }
 }  // namespace
 
@@ -216,9 +274,12 @@ bool drawInlineEdit(Frame& f, float w) {
     ImGui::ActivateItemByID(ImGui::GetID("##e"));
     u.editFocus = false;
   }
-  int tab = 0;
+  EditCb cb;
+  cb.toEnd = u.editCursorEnd;
+  u.editCursorEnd = false;
   ImGuiInputTextFlags fl = ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_CallbackCompletion;
   if (u.editField == EditField::Dur) fl |= ImGuiInputTextFlags_CharsDecimal;
+  if (u.editField == EditField::Pred) fl |= ImGuiInputTextFlags_CallbackAlways;  // カーソルを末尾に置く
   if (ImGui::GetActiveID() == ImGui::GetID("##e") && !u.editPendingChars.empty()) {
     // アクティブになる前に打った文字を、このフレームの入力の前に入れる
     ImGuiIO& io = ImGui::GetIO();
@@ -228,7 +289,9 @@ bool drawInlineEdit(Frame& f, float w) {
     io.InputQueueCharacters.swap(q);
     u.editPendingChars.clear();
   }
-  ImGui::InputText("##e", &u.editBuf, fl, tabCallback, &tab);
+  ImGui::InputText("##e", &u.editBuf, fl, tabCallback, &cb);
+  const int tab = cb.tab;
+  const ImVec2 itemMin = ImGui::GetItemRectMin(), itemMax = ImGui::GetItemRectMax();
   const bool active = ImGui::IsItemActive();
   u.editActive = active;
   const bool deactivated = ImGui::IsItemDeactivated();
@@ -245,7 +308,24 @@ bool drawInlineEdit(Frame& f, float w) {
     endEdit(u);
     return false;
   }
+  // 先行列: 入力が変わっていれば検証する。問題があれば確定しない（理由は入力欄の近くに赤で出す）
+  const Tree* tr = s->tree();
+  const bool isPred = field == EditField::Pred && tr;
+  const bool predEdited = isPred && text::trim(u.editBuf) != text::trim(u.editStartValue);
+  PredPlan pp;
+  if (predEdited) pp = planPredEdit(*tr, s->viewIssues(), tr->find(id), u.editBuf);
+  const bool predBlocked = predEdited && !pp.ok;
+  const auto hint = [&] {
+    if (isPred && (predBlocked || predEdited))
+      drawPredHint(u, *tr, s->viewIssues(), tr->find(id), pp, u.editBuf, itemMin, itemMax);
+  };
   if (enterPressed(u) && (active || deactivated)) {
+    if (predBlocked) {  // 確定せず、入力を続けさせる
+      u.editFocus = true;
+      u.editCursorEnd = true;
+      hint();
+      return true;
+    }
     const bool fresh = u.editFresh;
     commitEdit(f);
     endEdit(u);
@@ -268,7 +348,16 @@ bool drawInlineEdit(Frame& f, float w) {
     u.editStartValue = u.editBuf;
     return true;
   }
-  if (active && !io.KeyAlt && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_DownArrow))) {
+  if (tab > 0 && isPred) {  // Tab: 入力中の項目を、先頭の候補で置き換える
+    const std::string next = completePredText(*tr, s->viewIssues(), tr->find(id), u.editBuf);
+    if (next != u.editBuf) {
+      u.editBuf = next;
+      u.editFocus = true;
+      u.editCursorEnd = true;
+    }
+    return true;
+  }
+  if (active && !io.KeyAlt && !predBlocked && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_DownArrow))) {
     const int dir = ImGui::IsKeyPressed(ImGuiKey_UpArrow) ? -1 : 1;
     commitEdit(f);
     endEdit(u);
@@ -280,10 +369,12 @@ bool drawInlineEdit(Frame& f, float w) {
     return false;
   }
   if (deactivated) {
-    commitEdit(f);
+    if (predBlocked) f.c.toast("先行の入力に誤りがあるため、反映しませんでした");
+    else commitEdit(f);
     endEdit(u);
     return false;
   }
+  hint();
   return true;
 }
 
@@ -365,8 +456,9 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
     return;
   }
   const int nc = static_cast<int>(is.comments.size());
+  const int na = static_cast<int>(f.c.attachmentCount(id));
   const bool hov = ImGui::IsMouseHoveringRect(pos, ImVec2(pos.x + size.x, pos.y + size.y)) && o.showHoverButtons;
-  float avail = right - x - (nc ? u.m.s(30) : 0) - (hov ? u.m.s(72) : 0);
+  float avail = right - x - (nc ? u.m.s(30) : 0) - (na ? u.m.s(30) : 0) - (hov ? u.m.s(72) : 0);
   if (r.isPar) ImGui::PushFont(u.fontBold);
   const std::string nm = ellipsize(T.name[r.id], std::max(10.f, avail));
   const ImVec2 nsz = ImGui::CalcTextSize(nm.c_str());
@@ -378,6 +470,13 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
     const std::string n = std::to_string(nc);
     dl->AddText(ImVec2(x + u.m.s(14), cy - ImGui::GetTextLineHeight() / 2), u.t->muted, n.c_str());
     x += u.m.s(30);
+  }
+  if (na) {
+    bool clicked = false;
+    ImGui::PushID(id.c_str());
+    x += drawAttachBadge(f, ImVec2(x, pos.y), cy, na, &clicked) + u.m.s(8);
+    ImGui::PopID();
+    if (clicked) openDetail(f, id, 3);
   }
   if (o.showPath && r.depth > 0) {
     // 平らな一覧: 件名の右に、親の名前を薄く。残りの幅に収まらなければ真ん中を省略
@@ -724,6 +823,15 @@ void drawToolBar(Frame& f) {
     if (v == View::Gantt) {
       ImGui::SameLine();
       if (iconTextButton(u, "tobase", "calendar", "基準日へ")) u.scrollToBase = true;
+      // 依存の見せ方（選んだ課題の連鎖をたどる・余裕 0 の連鎖を強調）。どちらかがオンなら押した見た目にする
+      ImGui::SameLine();
+      const bool depTrace = c.uiBool("dep", "trace", false), depCrit = c.uiBool("dep", "crit", false);
+      if (iconTextButton(u, "dep", nullptr, "依存 ▼", false, depTrace || depCrit)) ImGui::OpenPopup("##dep");
+      if (ImGui::BeginPopup("##dep")) {
+        if (ImGui::MenuItem("選んだ課題の先行・後続をたどる（ほかを薄く）", nullptr, depTrace)) c.setUiSub("dep", "trace", !depTrace);
+        if (ImGui::MenuItem("クリティカルパスを強調（余裕 0）", nullptr, depCrit)) c.setUiSub("dep", "crit", !depCrit);
+        ImGui::EndPopup();
+      }
     }
   }
   if (v == View::Board) {
@@ -1114,6 +1222,14 @@ void handleKeys(Frame& f) {
   const bool modal = u.dlg != Dlg::None || u.paletteOpen || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
   if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !io.WantTextInput) {
     if (modal) return;  // ダイアログ・パレット・メニューはそれぞれで閉じる
+    if (u.linkDrag.active) {  // バーの端からのドラッグ（依存をつなぐ）を取り消し
+      u.linkDrag = {};
+      return;
+    }
+    if (u.arrowDrag.pending || u.arrowDrag.active) {  // 依存の矢印のドラッグ（付け替え・削除）を取り消し
+      u.arrowDrag = {};
+      return;
+    }
     if (u.linkPick.active) {  // 依存の相手を選ぶモードを中止
       cancelLinkPick(f);
       return;
@@ -1255,6 +1371,11 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
     io.InputQueueCharacters.resize(0);
   }
   c.tick();
+  if (c.currentId() != u.imageProject) {  // プロジェクトを切り替えたら、画像のテクスチャを全部捨てる
+    releaseImages(f);
+    u.imageProject = c.currentId();
+  }
+  processDrop(f);  // エクスプローラーからのドロップ（前のフレームに描いたドロップ先と照らす）
   const ImGuiViewport* vp = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(vp->WorkPos);
   ImGui::SetNextWindowSize(vp->WorkSize);
@@ -1288,6 +1409,8 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
       default: drawGanttView(f, mainSize); break;
     }
   }
+  if (u.linkDrag.active && (!s || c.view() != View::Gantt)) u.linkDrag = {};  // ガントが描かれない間にドラッグを残さない
+  if ((u.arrowDrag.pending || u.arrowDrag.active) && (!s || c.view() != View::Gantt)) u.arrowDrag = {};
   ImGui::EndChild();
   if (detailW > 0) {
     ImGui::SameLine(0, 0);
@@ -1324,6 +1447,9 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
   ImGui::PopFont();
   for (auto& fn : u.deferred) fn();  // 行・カードの途中で頼まれた操作（削除・子の追加）は、描画が終わってから
   u.deferred.clear();
+  trimImages(f);  // しばらく使っていない画像のテクスチャを解放する
+  u.dropTargets = std::move(u.dropBuild);  // 次のフレームのドロップ判定に使う
+  u.dropBuild.clear();
   u.openColFilter.clear();  // 見出しが出ていない列の要求は捨てる
   c.afterEdit();
   c.releaseFrame();

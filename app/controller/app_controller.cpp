@@ -44,14 +44,27 @@ bool AppController::dataDirLocked() const {
 std::string AppController::defaultDir() const { return defaultDataDir(exeDir_); }
 
 int AppController::countProjectsIn(const std::string& dir) {
-  auto l = fs_.list(dir);
-  if (!l) return 0;
-  int n = 0;
-  for (const auto& f : *l) {
-    const std::string low = text::toLower(f.name);
-    if (!f.isDir && low.size() > 4 && low.compare(low.size() - 4, 4, ".csv") == 0) ++n;
+  auto l = scanProjects(fs_, dir);
+  return l ? static_cast<int>(l->size()) : 0;
+}
+
+Result<Workspace::MigrateReport> AppController::migrateLegacy() {
+  afterEdit();
+  auto r = ws_->migrateLegacy();
+  lastSync_ = now();
+  if (!r) {
+    saveState_ = SaveState::Error;
+    saveError_ = r.error();
+    toast("フォルダ構成へ移せませんでした（元のファイルはそのままです）: " + r.error());
+    return r;
   }
-  return n;
+  saveState_ = SaveState::Saved;
+  saveError_.clear();
+  savedAt_ = clock_.hhmm();
+  saveDueAt_ = -1;
+  if (r->moved > 0) toast(std::to_string(r->moved) + "件をフォルダ構成に移しました（移す前の控え: 「" + std::string(kBackupDir) + "」の「移行前…」）");
+  if (!r->failed.empty()) toast("移せなかったプロジェクト（平置きのまま残してあります）: " + text::join(r->failed, ", "));
+  return r;
 }
 
 Status AppController::switchDataDir(const std::string& dirIn, bool copy) {
@@ -68,15 +81,54 @@ Status AppController::switchDataDir(const std::string& dirIn, bool copy) {
   auto r = next->sync();
   if (!r) return Error{r.error()};
   int copied = 0, skipped = 0;
+  struct ToCopy {
+    std::string id;
+    AttachmentMap attachments;
+  };
+  std::vector<ToCopy> withAttachments;
   for (auto& rec : recs) {
     if (next->find(rec.settings.id)) {
       ++skipped;  // 同じプロジェクトが新しい場所にもある → 場所の方を残す
       continue;
     }
+    if (!rec.settings.attachments.empty()) withAttachments.push_back({rec.settings.id, rec.settings.attachments});
     next->add(std::move(rec), true);
     ++copied;
   }
-  if (auto w = next->flush(); !w) return Error{"新しい場所に書き込めません: " + w.error()};
+  if (auto w = next->flush(); !w) return Error{"新しい場所に書き込めません: " + w.error()};  // ここで新しい場所のフォルダ名が決まる
+  // 添付の本体もコピーする（設定にはメタ情報しか入っていない。本体を置いていかないと、切り替え後に開けなくなる）。
+  // 1つでもコピーできなければ切り替えず、今の保存先を使い続ける（新しい場所に書いた添付は消す）
+  std::vector<std::string> writtenAttachments;
+  const auto undoAttachments = [&] {
+    for (const auto& path : writtenAttachments) (void)fs_.remove(path);  // 消せなくても元の保存先は無傷
+  };
+  for (const auto& item : withAttachments) {
+    const ProjectEntry* from = ws_->find(item.id);
+    const ProjectEntry* to = next->find(item.id);
+    if (!from || !to) continue;
+    const std::string fromDir = ws_->projectDir(*from), toDir = next->projectDir(*to);
+    if (fromDir.empty() || toDir.empty()) continue;
+    for (const auto& [issueId, list] : item.attachments)
+      for (const auto& a : list) {
+        const std::string src = attachmentPath(fromDir, issueId, a);
+        if (!fs_.stat(src)) continue;  // もともと本体がない（失われている）ものは、メタ情報だけ移る
+        const std::string dst = attachmentPath(toDir, issueId, a);
+        auto data = fs_.read(src);
+        if (!data) {
+          undoAttachments();
+          return Error{"添付のファイルを読めないため、切り替えません（今の保存先を使い続けます）"};
+        }
+        if (auto m = fs_.makeDirs(paths::attachmentDir(toDir, issueId)); !m) {
+          undoAttachments();
+          return Error{"添付のフォルダを新しい場所に作れないため、切り替えません（今の保存先を使い続けます）: " + m.error()};
+        }
+        if (auto w = fs_.writeAtomic(dst, *data); !w) {
+          undoAttachments();
+          return Error{"添付のファイルを新しい場所にコピーできないため、切り替えません（今の保存先を使い続けます）: " + w.error()};
+        }
+        writtenAttachments.push_back(dst);
+      }
+  }
 
   ws_ = std::move(next);
   lastSync_ = now();
@@ -119,6 +171,10 @@ void AppController::start() {
   } else {
     const std::string msg = r->message();
     if (!r->bad.empty() && !msg.empty()) toast(msg);
+    // 以前の平置きは自動では動かさない。移せることだけ知らせる
+    if (ws_->legacyCount() > 0)
+      toast("以前の保存形式（平置き）のプロジェクトが " + std::to_string(ws_->legacyCount()) +
+            "件あります。「アプリの設定」の保存先から、プロジェクトごとのフォルダ構成に移せます");
   }
   if (ws_->entries().empty()) {
     firstRun_ = true;
@@ -143,6 +199,111 @@ void AppController::applyAutoBaseDate() {
 void AppController::absorbNotices() {
   if (!session_) return;
   for (auto& n : session_->takeNotices()) toast(n.text, n.action);
+}
+
+// ---- 添付ファイル ----
+std::string AppController::currentProjectDir() const {
+  const ProjectEntry* e = ws_->find(currentId_);
+  return e ? ws_->projectDir(*e) : "";
+}
+bool AppController::canAttach() const {
+  if (!session_) return false;
+  const ProjectEntry* e = ws_->find(currentId_);
+  return e && e->layout == Layout::Folder;
+}
+std::string AppController::attachDisabledReason() const {
+  if (!session_) return "プロジェクトを開いてから添付してください";
+  if (!canAttach())
+    return "このプロジェクトは以前の保存形式（1つのCSVを置く形）なので、添付を置く場所がありません。"
+           "アプリの設定でフォルダ構成へ移してください";
+  return "";
+}
+const std::vector<Attachment>& AppController::attachmentsOf(const std::string& issueId) const {
+  static const std::vector<Attachment> none;
+  if (!session_) return none;
+  const auto& m = session_->attachments();
+  const auto it = m.find(issueId);
+  return it == m.end() ? none : it->second;
+}
+std::size_t AppController::attachmentCount(const std::string& issueId) const { return attachmentsOf(issueId).size(); }
+
+AttachOutcome AppController::attachFiles(const std::string& issueId, const std::vector<std::string>& files) {
+  AttachOutcome out;
+  if (!canAttach()) {
+    toast(attachDisabledReason());
+    return out;
+  }
+  if (currentProjectDir().empty() && !flushNow()) {  // まだ書いていないプロジェクトは、先にフォルダを作る
+    toast("保存できないため、添付を置けません");
+    return out;
+  }
+  const std::string dir = currentProjectDir();
+  if (dir.empty()) return out;
+  out = roadmap::attachFiles(fs_, clock_, dir, session_->attachments(), issueId, files, prefs_.me);
+  if (!out.added.empty()) {
+    session_->touchAttachments();
+    flushNow();
+  }
+  std::string msg;
+  if (!out.added.empty()) msg = std::to_string(out.added.size()) + " 件を添付しました";
+  if (!out.rejected.empty()) {
+    const AttachRejected& r = out.rejected.front();
+    if (!msg.empty()) msg += "。";
+    msg += std::to_string(out.rejected.size()) + " 件は付けられませんでした（" + (r.name.empty() ? "" : r.name + ": ") + r.reason + "）";
+  }
+  if (!msg.empty()) toast(msg);
+  return out;
+}
+
+bool AppController::attachData(const std::string& issueId, const std::string& name, const std::string& data) {
+  if (!canAttach()) {
+    toast(attachDisabledReason());
+    return false;
+  }
+  if (currentProjectDir().empty() && !flushNow()) return false;
+  auto r = roadmap::attachData(fs_, clock_, currentProjectDir(), session_->attachments(), issueId, name, data, prefs_.me);
+  if (!r) {
+    toast("添付できませんでした（" + r.error() + "）");
+    return false;
+  }
+  session_->touchAttachments();
+  flushNow();
+  toast("1 件を添付しました");
+  return true;
+}
+
+bool AppController::removeAttachment(const std::string& issueId, std::size_t index) {
+  if (!session_) return false;
+  auto s = roadmap::removeAttachment(fs_, currentProjectDir(), session_->attachments(), issueId, index);
+  if (!s) {
+    toast("添付を外せませんでした（" + s.error() + "）");
+    return false;
+  }
+  session_->touchAttachments();
+  flushNow();
+  toast("添付を外しました（ファイルは「" + std::string(kAttachDeleted) + "」フォルダに移してあります）");
+  return true;
+}
+
+std::string AppController::attachmentFile(const std::string& issueId, std::size_t index) const {
+  const auto& list = attachmentsOf(issueId);
+  const std::string dir = currentProjectDir();
+  if (dir.empty() || index >= list.size()) return "";
+  return attachmentPath(dir, issueId, list[index]);
+}
+
+bool AppController::attachmentExists(const std::string& issueId, std::size_t index) const {
+  const std::string p = attachmentFile(issueId, index);
+  return !p.empty() && fs_.stat(p).has_value();
+}
+
+Result<std::string> AppController::attachmentBytes(const std::string& issueId, std::size_t index) const {
+  const std::string p = attachmentFile(issueId, index);
+  if (p.empty()) return Error{"添付がありません"};
+  const auto st = fs_.stat(p);
+  if (!st) return Error{"ファイルが見つかりません"};
+  if (st->size > kMaxAttachFileBytes) return Error{"大きすぎて読めません"};
+  return fs_.read(p);
 }
 
 void AppController::afterEdit() {
@@ -309,6 +470,7 @@ void AppController::duplicateProject() {
   ProjectRecord rec = recordOf(session_->data());
   rec.settings.id.clear();
   rec.settings.name += " のコピー";
+  rec.settings.attachments.clear();  // 添付の本体は複製しない（メタ情報だけ残ると、無いファイルを指してしまう）
   const std::string id = ws_->add(std::move(rec), true);
   openSession(id, false);
   scheduleSave();
@@ -319,12 +481,14 @@ bool AppController::deleteCurrentProject() {
   if (!session_) return false;
   const ProjectEntry* e = ws_->find(currentId_);
   const std::string stem = e ? e->stem : "";
+  const bool folder = !e || e->layout == Layout::Folder;
   auto s = ws_->remove(currentId_);
   if (!s) {
     toast("フォルダのファイルを移せませんでした: " + s.error());
     return false;
   }
-  if (!stem.empty()) toast("フォルダの「" + stem + ".csv」を「_削除済み」に移しました");
+  if (!stem.empty())
+    toast(folder ? "フォルダ「" + stem + "」を「_削除済み」に移しました" : "フォルダの「" + stem + ".csv」を「_削除済み」に移しました");
   retiredSessions_.push_back(std::move(session_));
   currentId_.clear();
   if (ws_->entries().empty()) {

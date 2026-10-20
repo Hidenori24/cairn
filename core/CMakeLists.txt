@@ -17,12 +17,16 @@ add_library(roadmap_core STATIC
   src/templates.cpp
   src/filter.cpp
   src/link_candidates.cpp
+  src/other_links.cpp
+  src/dependency_view.cpp
+  src/pred_edit.cpp
   src/commands.cpp
   src/outline.cpp
   src/issue_name.cpp
   src/project_io.cpp
   src/filestore.cpp
   src/store.cpp
+  src/attachments.cpp
   src/jira_check.cpp
   src/stats.cpp
   src/gen.cpp

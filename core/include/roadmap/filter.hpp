@@ -40,9 +40,12 @@ struct ColumnFilter {
   void clear(const std::string& col);
 };
 
-// 列の絞り込みで使う、末端の課題の値。列のキーは type / status / asg / prio / float
+// 列の絞り込みで使う、末端の課題の値。列のキーは type / status / asg / prio / float / pred
 inline constexpr const char* kNoneValue = "（なし）";
 inline constexpr const char* kUnassignedValue = "（未割当）";
+// 「先行」列（col = "pred"）の値は先行の有無だけ。先行は他の課題の blocks にあるので、columnValue ではなく predColumnValue を使う
+inline constexpr const char* kHasPredValue = "先行あり";
+inline const char* predColumnValue(bool hasPred) { return hasPred ? kHasPredValue : kNoneValue; }
 std::string columnValue(const std::string& col, const Issue& o, const ScheduleRow& r);
 // 末端の課題に現れる値（重複なし・出現順）
 std::vector<std::string> columnValues(const std::string& col, const Tree& T, const std::vector<Issue>& issues,

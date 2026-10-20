@@ -1,5 +1,6 @@
 #include "roadmap/filter.hpp"
 
+#include "roadmap/pred_edit.hpp"
 #include "roadmap/text.hpp"
 
 namespace roadmap {
@@ -45,9 +46,10 @@ std::vector<std::string> columnValues(const std::string& col, const Tree& T, con
                                       const std::vector<ScheduleRow>& R) {
   std::vector<std::string> out;
   std::set<std::string> seen;
+  const auto dp = col == "pred" ? declaredPreds(T, issues) : std::vector<std::vector<int>>{};
   for (int id : T.dfs)
     if (T.kids[id].empty()) {
-      std::string v = columnValue(col, issues[id], R[id]);
+      std::string v = col == "pred" ? predColumnValue(!dp[id].empty()) : columnValue(col, issues[id], R[id]);
       if (seen.insert(v).second) out.push_back(std::move(v));
     }
   return out;
@@ -81,13 +83,21 @@ std::vector<char> visSet(const Tree& T, const std::vector<Issue>& issues, const 
                                           " " + o.assignee);
     return hay.find(q) != std::string::npos;
   };
+  // 「先行」列の絞り込みがあるときだけ、先行の逆引きを作る
+  std::vector<std::vector<int>> dp;
+  if (cf) {
+    const auto it = cf->hide.find("pred");
+    if (it != cf->hide.end() && !it->second.empty()) dp = declaredPreds(T, issues);
+  }
   const auto leafOk = [&](int id, bool m) {
     const Issue& o = issues[id];
     const ScheduleRow& r = R[id];
     if (!m) return false;
     if (cf)
       for (const auto& [col, vals] : cf->hide)
-        if (!vals.empty() && vals.count(columnValue(col, o, r))) return false;
+        if (!vals.empty() && vals.count(col == "pred" ? (dp.empty() ? "" : predColumnValue(!dp[id].empty()))
+                                                       : columnValue(col, o, r)))
+          return false;
     switch (f.asg) {
       case AsgFilter::Assigned:
         if (o.assignee.empty()) return false;

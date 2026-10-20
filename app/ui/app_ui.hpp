@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -31,14 +32,28 @@ class IPlatform {
   // クリップボードのテキスト（UTF-8）。テキストがない・読めないときは nullopt。
   // 貼り付けた内容は個人情報を含みうるので、ログには出さない
   virtual std::optional<std::string> clipboardText() { return std::nullopt; }
+  // 関連付けられたアプリでファイルを開く（添付の「開く」。実行ファイルの警告は UI が先に出す）。パスは UTF-8
+  virtual void openFile(const std::string& path) { (void)path; }
+  // 画像（RGBA 8bit）をテクスチャにする（サムネイル・プレビュー）。作れなければ nullptr。不要になったら releaseTexture
+  virtual ImTextureID createTexture(const unsigned char* rgba, int w, int h) {
+    (void)rgba, (void)w, (void)h;
+    return nullptr;
+  }
+  virtual void releaseTexture(ImTextureID tex) { (void)tex; }
+  // ドロップされた CSV / JSON を読んで UTF-8 にする（文字コードを判定する。読めなければ nullopt と理由）
+  virtual std::optional<std::string> readTextFile(const std::string& path, std::string* error) {
+    (void)path;
+    if (error) *error = "このアプリでは読み込めません";
+    return std::nullopt;
+  }
 };
 
 enum class Dlg {
   None, NewProject, EditProject, ConfirmDelete, Import, Export, Folder, Settings, Workload, Warnings, Shortcuts,
-  TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete, PasteChildren
+  TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete, PasteChildren, AttachOpenWarn, AttachPreview
 };
 
-enum class EditField { None, Name, Assignee, Dur };
+enum class EditField { None, Name, Assignee, Dur, Pred };
 
 struct UiState {
   Metrics m;
@@ -56,6 +71,7 @@ struct UiState {
   std::string editBuf;
   bool editFresh = false;          // 追加直後の行
   bool editFocus = false;          // 次のフレームでフォーカスを入れる
+  bool editCursorEnd = false;      // 次に入力欄がアクティブになったとき、カーソルを末尾に置く（先行列）
   std::string editStartValue;
   // 編集を始めてから入力欄がアクティブになるまでに打った文字（落とさずに入れる。B13）
   bool editActive = false;
@@ -78,7 +94,37 @@ struct UiState {
 
   // 詳細パネル
   bool detailOpen = false;
-  int detailTab = 0;  // 0=詳細 1=依存関係 2=コメント
+  int detailTab = 0;  // 0=詳細 1=依存関係 2=コメント 3=添付
+
+  // ファイルのドロップ（エクスプローラーから）。プラットフォームが入れ、次のフレームの先頭で処理する。
+  // ドロップ先が課題（行・カード・詳細パネル）なら添付、何もないところなら CSV / JSON の取り込み
+  struct PendingDrop {
+    bool active = false;
+    std::vector<std::string> paths;  // UTF-8。ファイルまたはフォルダ
+    ImVec2 pos{0, 0};                // ウィンドウの中の位置（ImGui の座標）
+  } pendingDrop;
+  // ドロップを受ける課題の範囲。前のフレームに描いたもの（dropTargets）で判定し、いまのフレームのものは dropBuild にためる
+  struct DropTarget {
+    ImVec2 a, b;
+    std::string id;
+  };
+  std::vector<DropTarget> dropTargets, dropBuild;
+  std::string attachWarnPath;  // 開く前に警告している添付の本体（Dlg::AttachOpenWarn）
+  // 添付の画像（サムネイル・プレビュー）のテクスチャ。キー = パス・大きさ・日時・縮小の上限。
+  // 使わなくなったものは解放し、プロジェクトを切り替えたら全部解放する（releaseImages / trimImages）
+  struct ImageTex {
+    ImTextureID tex = nullptr;
+    int w = 0, h = 0;        // テクスチャの大きさ
+    int origW = 0, origH = 0;  // 元の画像の大きさ
+    bool failed = false;     // 壊れている・読めない・対応していない
+    int lastFrame = 0;       // 最後に使ったフレーム
+  };
+  std::map<std::string, ImageTex> images;
+  std::string imageProject;       // images を作ったプロジェクト
+  int imageDecodedFrame = -1;     // 画像のデコードは1フレームに1枚まで
+  std::string previewIssue;       // プレビュー中の添付（Dlg::AttachPreview）
+  std::size_t previewIndex = 0;
+  float previewZoom = 0;          // 0 = 全体に合わせる
 
   // 依存の相手を画面（一覧・ガント・ボード）のクリックで選ぶモード（Esc で中止）
   struct LinkPick {
@@ -112,6 +158,47 @@ struct UiState {
     Day origStart = 0, origFinish = 0;
     bool active = false;
   } barDrag;
+  // 依存をつなぐドラッグ（バーの端のハンドルから別のバーへ。Esc・元の場所で離すと取り消し）
+  struct LinkDrag {
+    bool active = false;
+    std::string id;           // つかんだバーの課題
+    bool fromRight = true;    // 右のハンドル = つかんだバーが先行（相手が後続）。左なら逆
+    std::string project;      // 始めたプロジェクト
+    ImVec2 start{0, 0};       // 押した位置（つかんだバーが画面にないときの線の始点）
+    // つなぐ前の日程の影響（相手が変わったときだけ計算し直す）
+    std::string previewKey;
+    std::uint64_t previewVer = 0;
+    LinkPreview preview;
+  } linkDrag;
+  // 依存の矢印をつかんで付け替え・削除するドラッグ（矢印の上で押して動かす。Esc・元の場所で離す・タイムライン外で離すと取り消し）
+  struct ArrowDrag {
+    bool pending = false;     // 矢印の上で押した（まだ動いていない。付け替えできない矢印のときはそのまま）
+    bool editable = false;    // つかんで付け替え・削除できる矢印か
+    bool active = false;
+    std::string from, to;     // つかんだ矢印の元のつなぎ（先行 → 後続の課題 id）
+    bool grabHead = true;     // true = 矢じり側（後続）の端をつかんだ。false = 根元（先行）の端
+    std::string project;
+    ImVec2 start{0, 0};
+    // つなぎ替えの日程の影響（相手が変わったときだけ計算し直す）
+    std::string previewKey;
+    std::uint64_t previewVer = 0;
+    LinkPreview preview;
+  } arrowDrag;
+  // 前のフレームのガントの依存の矢印（画面の座標の折れ線）と、マウスの下の矢印。煙テストが当たり位置を知るために使う
+  struct ArrowGeom {
+    std::string from, to;     // 矢印の両端の行の課題 id
+    std::vector<ImVec2> pts;
+    bool conflict = false;    // 後続が先行より前の日付
+    bool critical = false;    // 余裕 0 以下の連鎖
+  };
+  std::vector<ArrowGeom> arrowGeom;
+  std::string arrowHoverFrom, arrowHoverTo;
+  // 前のフレームのガントのバーの位置（画面の座標。見えている行だけ）。煙テストが当たり位置を知るために使う
+  struct BarGeom {
+    std::string id;
+    float xl = 0, xr = 0, cy = 0;
+  };
+  std::vector<BarGeom> barGeom;
   struct RowDrag {
     std::string id;
     bool active = false;

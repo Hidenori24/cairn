@@ -1,4 +1,5 @@
 #include "roadmap/commands.hpp"
+#include "roadmap/other_links.hpp"
 
 #include <algorithm>
 #include <unordered_map>
@@ -88,6 +89,7 @@ std::optional<std::string> Session::rebuild() {
   c->T = std::move(t).value();
   c->R = computeSchedule(c->T, P_.issues, cal_, o);
   c->issues = P_.issues;
+  c->declPreds = declaredPreds(c->T, c->issues);
   comp_ = std::move(c);
   return std::nullopt;
 }
@@ -167,7 +169,7 @@ std::string Session::nowDT() const { return clock_->nowDT(); }
 Issue Session::newIssue(const std::string& parentId, const std::string& name) const {
   const Issue* p = parentId.empty() ? nullptr : issue(parentId);
   Issue o;
-  o.id = nextIssueId(P_.issues);
+  o.id = nextIssueId(P_.issues, P_.settings.attachments);
   o.key = P_.settings.key.empty() ? "" : P_.settings.key + "-" + o.id;
   o.type = !p ? "Epic" : (isEpic(*p) ? "Task" : "Sub-task");
   o.summary = name.empty() ? kDefaultIssueName : name;
@@ -497,11 +499,100 @@ bool Session::addLink(std::string from, std::string to) {
   return mutate([&](ProjectData& P) { P.issues[indexOf(P.issues, from)].blocks.push_back(to); });
 }
 
+LinkPreview Session::previewLink(const std::string& from, const std::string& to, const std::string& dropFrom,
+                                 const std::string& dropTo) const {
+  LinkPreview out;
+  if (!comp_) return out;
+  const Tree& T = comp_->T;
+  const int a = T.find(from), b = T.find(to);
+  // 課題の写しで計算する（本物の課題・取り消しの履歴は触らない）
+  std::vector<Issue> issues;
+  if (dropFrom.empty()) {
+    out.block = checkLink(T, comp_->issues, a, b);
+    if (out.block != LinkBlock::None) return out;
+    issues = comp_->issues;
+  } else {
+    // 付け替え: 元のつなぎを外した状態で、つなげるかを判定する
+    const int d = T.find(dropFrom);
+    if (d < 0) return out;
+    issues = comp_->issues;
+    auto& bl = issues[static_cast<std::size_t>(d)].blocks;
+    bl.erase(std::remove(bl.begin(), bl.end(), dropTo), bl.end());
+    auto t0 = buildTree(issues, P_.meta);
+    if (!t0 || t0->n != T.n) return out;
+    out.block = checkLink(*t0, issues, a, b);
+    if (out.block != LinkBlock::None) return out;
+  }
+  issues[static_cast<std::size_t>(a)].blocks.push_back(to);
+  auto t = buildTree(issues, P_.meta);
+  if (!t || t->n != T.n) return out;
+  ScheduleOptions o;
+  o.base = baseDay();
+  o.scenario = P_.settings.scenario;
+  o.resource = P_.settings.resource;
+  const auto R2 = computeSchedule(*t, issues, cal_, o);
+  const auto& R = comp_->R;
+  if (R2.size() != R.size()) return out;
+  out.ok = true;
+  const auto& targetLeaves = T.leaves[static_cast<std::size_t>(b)];
+  for (int i = 0; i < T.n; ++i) {
+    if (!T.isLeaf(i)) continue;
+    const auto& r0 = R[static_cast<std::size_t>(i)];
+    const auto& r1 = R2[static_cast<std::size_t>(i)];
+    if (r0.asapStart == r1.asapStart && r0.asapFinish == r1.asapFinish) continue;
+    out.shifts.push_back({i, r0.asapStart, r0.asapFinish, r1.asapStart, r1.asapFinish});
+    if (r1.asapStart > r0.asapStart && std::find(targetLeaves.begin(), targetLeaves.end(), i) != targetLeaves.end())
+      out.delayDays = std::max(out.delayDays, cal_.floatDays(r0.asapStart, r1.asapStart));
+  }
+  return out;
+}
+
+bool Session::relinkIssue(std::string oldFrom, std::string oldTo, std::string newFrom, std::string newTo) {
+  const Issue* of = issue(oldFrom);
+  if (!of || !issue(oldTo) || !issue(newFrom) || !issue(newTo)) return false;
+  if (std::find(of->blocks.begin(), of->blocks.end(), oldTo) == of->blocks.end()) return false;  // 元のつなぎがない
+  if (oldFrom == newFrom && oldTo == newTo) return false;
+  // 元のつなぎを外した状態でつなげるか（循環・重複・親子・自分自身）
+  const LinkPreview pv = previewLink(newFrom, newTo, oldFrom, oldTo);
+  if (pv.block != LinkBlock::None) {
+    notify(std::string("つなぎ替えできません: ") + linkBlockReason(pv.block));
+    return false;
+  }
+  return mutate([&](ProjectData& P) {
+    auto& ob = P.issues[static_cast<std::size_t>(indexOf(P.issues, oldFrom))].blocks;
+    const auto pos = static_cast<std::size_t>(std::find(ob.begin(), ob.end(), oldTo) - ob.begin());
+    ob.erase(std::remove(ob.begin(), ob.end(), oldTo), ob.end());
+    if (oldFrom == newFrom) ob.insert(ob.begin() + static_cast<std::ptrdiff_t>(std::min(pos, ob.size())), newTo);  // 並びを保つ
+    else P.issues[static_cast<std::size_t>(indexOf(P.issues, newFrom))].blocks.push_back(newTo);
+  });
+}
+
 bool Session::removeLink(std::string from, std::string to) {
   if (!issue(from)) return false;
   return mutate([&](ProjectData& P) {
     auto& b = P.issues[indexOf(P.issues, from)].blocks;
     b.erase(std::remove(b.begin(), b.end(), to), b.end());
+  });
+}
+
+bool Session::addOtherLink(std::string id, std::string kind, bool outward, std::string ref) {
+  const auto ix = indexOf(P_.issues, id);
+  if (ix < 0) return false;
+  if (const std::string why = roadmap::checkAddOtherLink(P_.meta, P_.issues, static_cast<std::size_t>(ix), kind, outward, ref);
+      !why.empty()) {
+    notify(why);
+    return false;
+  }
+  return mutate([&](ProjectData& P) {
+    roadmap::addOtherLink(P.meta, P.issues, static_cast<std::size_t>(indexOf(P.issues, id)), kind, outward, ref);
+  });
+}
+
+bool Session::removeOtherLink(std::string id, std::size_t col) {
+  const auto ix = indexOf(P_.issues, id);
+  if (ix < 0) return false;
+  return mutate([&](ProjectData& P) {
+    roadmap::removeOtherLink(P.meta, P.issues, static_cast<std::size_t>(indexOf(P.issues, id)), col);
   });
 }
 
@@ -555,6 +646,39 @@ ChainResult Session::chainIssues(std::vector<std::string> ids, const std::vector
              (res.existing > 0 ? "（" + std::to_string(res.existing) + "件は設定済み）" : ""),
          NoticeAction::Undo);
   return res;
+}
+
+PredPlan Session::setPredecessors(const std::string& id, std::string_view text) {
+  PredPlan plan;
+  const int self = comp_ ? comp_->T.find(id) : -1;
+  if (self < 0) {
+    plan.ok = false;
+    plan.problems.push_back({"", "課題が見つかりません"});
+    return plan;
+  }
+  plan = planPredEdit(comp_->T, comp_->issues, self, text);
+  if (!plan.ok || !plan.changed()) return plan;
+  // 1回の mutate で足す・外す。循環になれば mutate が巻き戻して理由を通知する
+  if (!mutate([&](ProjectData& P) {
+        for (const auto& pid : plan.add) {
+          auto& b = P.issues[static_cast<std::size_t>(indexOf(P.issues, pid))].blocks;
+          if (std::find(b.begin(), b.end(), id) == b.end()) b.push_back(id);
+        }
+        for (const auto& pid : plan.remove) {
+          auto& b = P.issues[static_cast<std::size_t>(indexOf(P.issues, pid))].blocks;
+          b.erase(std::remove(b.begin(), b.end(), id), b.end());
+        }
+      })) {
+    plan.ok = false;
+    plan.problems.push_back({"", "先行を変更できませんでした"});
+    return plan;
+  }
+  std::string msg = "先行を更新しました（";
+  if (!plan.add.empty()) msg += "追加 " + std::to_string(plan.add.size()) + "件";
+  if (!plan.add.empty() && !plan.remove.empty()) msg += "・";
+  if (!plan.remove.empty()) msg += "削除 " + std::to_string(plan.remove.size()) + "件";
+  notify(msg + "）", NoticeAction::Undo);
+  return plan;
 }
 
 int Session::unchainIssues(const std::vector<std::string>& ids) {
@@ -633,7 +757,7 @@ int Session::applyTemplate(std::vector<std::string> parentIds, const Template& t
         if (lv == 0) upObj = &par;
         Issue o;
         // newIssue（採番は配列の現在の状態から）
-        o.id = nextIssueId(P.issues);
+        o.id = nextIssueId(P.issues, P.settings.attachments);
         o.key = P.settings.key.empty() ? "" : P.settings.key + "-" + o.id;
         o.parent = up;
         o.prio = "Medium";
@@ -692,7 +816,7 @@ int Session::addOutline(const std::string& parentId, const std::vector<OutlineIt
       const int lv = std::max(0, std::min(it.lv, static_cast<int>(lastAt.size())));
       const std::string up = lv == 0 ? parentId : lastAt[static_cast<std::size_t>(lv) - 1];
       Issue o;
-      o.id = nextIssueId(P.issues);
+      o.id = nextIssueId(P.issues, P.settings.attachments);
       o.key = P.settings.key.empty() ? "" : P.settings.key + "-" + o.id;
       o.parent = up;
       o.prio = "Medium";

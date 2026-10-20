@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "roadmap/attachments.hpp"
 #include "roadmap/commands.hpp"
 #include "roadmap/store.hpp"
 
@@ -132,6 +133,26 @@ class AppController {
   void undo();
   void redo();
 
+  // ---- 添付ファイル（SPEC 8.9。取り消しの対象外。本体は <プロジェクト>/添付/<Issue Id>/）----
+  // 添付できるか（プロジェクトを開いていて、フォルダ構成であること。平置きのプロジェクトには置き場がない）
+  bool canAttach() const;
+  std::string attachDisabledReason() const;  // canAttach() が false のときの理由（画面に出す）
+  const std::vector<Attachment>& attachmentsOf(const std::string& issueId) const;
+  std::size_t attachmentCount(const std::string& issueId) const;
+  // ファイルまたはフォルダのパス（UTF-8）を課題に付ける。結果は通知にも出す。すぐ保存する
+  AttachOutcome attachFiles(const std::string& issueId, const std::vector<std::string>& files);
+  // 中身を直接付ける（クリップボードの画像など）
+  bool attachData(const std::string& issueId, const std::string& name, const std::string& data);
+  // _削除済み へ移して外す。移せなければ false（通知を出す）
+  bool removeAttachment(const std::string& issueId, std::size_t index);
+  // 本体のパス（開く・サムネイル用）。なければ空
+  std::string attachmentFile(const std::string& issueId, std::size_t index) const;
+  bool attachmentExists(const std::string& issueId, std::size_t index) const;  // 本体がフォルダにあるか
+  // 本体の中身（画像のサムネイル・プレビュー用）。読めなければエラー。1ファイルの上限を超えるものは読まない
+  Result<std::string> attachmentBytes(const std::string& issueId, std::size_t index) const;
+  // プロジェクトのフォルダ（平置き・まだ書いていないときは空）
+  std::string currentProjectDir() const;
+
   // ---- テンプレート ----
   std::vector<Template> templates() const;
   std::string saveTemplate(const std::string& name, const std::string& desc, std::vector<TemplateItem> items);
@@ -168,7 +189,11 @@ class AppController {
   const DataDirChoice& dataDirInfo() const { return dirInfo_; }
   bool dataDirLocked() const;  // 起動引数・環境変数で決まっている（画面からは変えない）
   std::string defaultDir() const;
-  int countProjectsIn(const std::string& dir);  // その場所にあるプロジェクト（CSV）の数
+  int countProjectsIn(const std::string& dir);  // その場所にあるプロジェクトの数（フォルダ構成も平置きも）
+  // 平置き（以前の保存形式）のまま読んでいるプロジェクトの数。自動では動かさず、利用者の操作で移す
+  int legacyCount() const { return ws_->legacyCount(); }
+  // 平置きをフォルダ構成へ移す（移す前に _バックアップ/移行前.<日時>/ へ控える）。結果は通知にも出す
+  Result<Workspace::MigrateReport> migrateLegacy();
   // 保存先を切り替える。copy = 手元のプロジェクトを新しい場所にも書く（同じものがあれば場所の方を残す）。
   // 今の場所に書けないとき・新しい場所に書けないときは切り替えない
   Status switchDataDir(const std::string& dir, bool copy);

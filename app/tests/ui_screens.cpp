@@ -3,6 +3,7 @@
 // 使い方: roadmap_ui_screens <出力フォルダ> [日本語フォント.ttc] [フォント番号]
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -16,6 +17,7 @@
 #include "roadmap/gen.hpp"
 #include "roadmap/schedule.hpp"
 #include "ui/app_ui.hpp"
+#include "ui/internal.hpp"
 
 using namespace roadmap;
 
@@ -76,12 +78,22 @@ void raster(Canvas& cv, const Tex& tex, const ImDrawVert& v0, const ImDrawVert& 
     }
 }
 
-void render(const ImDrawData* dd, const Tex& tex, const std::string& path, ImVec4 bg) {
+// 画像のテクスチャ（NullPlatform が預かる。ImTextureID は 1 からの番号）
+struct ImgTex {
+  int w = 0, h = 0;
+  std::vector<unsigned char> rgba;
+};
+std::vector<ImgTex> gImages;
+
+void render(const ImDrawData* dd, const Tex& fontTex, const std::string& path, ImVec4 bg) {
   Canvas cv(static_cast<int>(dd->DisplaySize.x), static_cast<int>(dd->DisplaySize.y), bg);
   for (int n = 0; n < dd->CmdListsCount; ++n) {
     const ImDrawList* l = dd->CmdLists[n];
     for (const ImDrawCmd& cmd : l->CmdBuffer) {
       if (cmd.UserCallback) continue;
+      Tex tex = fontTex;
+      const auto id = reinterpret_cast<std::uintptr_t>(cmd.GetTexID());
+      if (id >= 1 && id <= gImages.size()) tex = {gImages[id - 1].w, gImages[id - 1].h, gImages[id - 1].rgba.data()};
       for (unsigned i = 0; i + 2 < cmd.ElemCount; i += 3) {
         const ImDrawIdx* idx = l->IdxBuffer.Data + cmd.IdxOffset + i;
         const ImDrawVert* vb = l->VtxBuffer.Data + cmd.VtxOffset;
@@ -101,7 +113,33 @@ struct NullPlatform : ui::IPlatform {
   std::optional<std::string> picked;
   bool systemDark() override { return false; }
   void requestQuit() override {}
+  ImTextureID createTexture(const unsigned char* rgba, int w, int h) override {
+    gImages.push_back({w, h, std::vector<unsigned char>(rgba, rgba + static_cast<std::size_t>(w) * h * 4)});
+    return reinterpret_cast<ImTextureID>(static_cast<std::uintptr_t>(gImages.size()));
+  }
 };
+
+// 24bit の BMP（画面の確認用の絵。グラデーションと図形）
+std::string makeBmp(int w, int h, int variant) {
+  const int rowBytes = (w * 3 + 3) / 4 * 4;
+  std::string s;
+  const auto put32 = [&](std::uint32_t v) { for (int i = 0; i < 4; ++i) s.push_back(static_cast<char>((v >> (8 * i)) & 0xff)); };
+  const auto put16 = [&](std::uint16_t v) { s.push_back(static_cast<char>(v & 0xff)); s.push_back(static_cast<char>(v >> 8)); };
+  s += "BM";
+  put32(static_cast<std::uint32_t>(54 + rowBytes * h)); put32(0); put32(54);
+  put32(40); put32(static_cast<std::uint32_t>(w)); put32(static_cast<std::uint32_t>(h)); put16(1); put16(24);
+  put32(0); put32(static_cast<std::uint32_t>(rowBytes * h)); put32(2835); put32(2835); put32(0); put32(0);
+  for (int y = h - 1; y >= 0; --y) {
+    for (int x = 0; x < w; ++x) {
+      const bool box = x > w / 4 && x < w * 3 / 4 && y > h / 3 && y < h * 2 / 3;
+      int r = x * 255 / w, g = y * 255 / h, b = variant ? 200 - x * 120 / w : 120 + y * 100 / h;
+      if (box) r = 250, g = 250, b = 250;
+      s.push_back(static_cast<char>(b)); s.push_back(static_cast<char>(g)); s.push_back(static_cast<char>(r));
+    }
+    for (int k = w * 3; k < rowBytes; ++k) s.push_back('\0');
+  }
+  return s;
+}
 
 }  // namespace
 
@@ -206,6 +244,30 @@ int main(int argc, char** argv) {
   c.setView(app::View::Gantt);
   c.setSelection({"12", "13", "14"}, "14");
   shot("09_bulk");
+  // 先行の列（Issue #9）: 表に出した状態・入力中の誤り（赤）・入力中の候補
+  {
+    c.setUiSub("cols", "pred", true);
+    c.clearSelection();
+    c.setView(app::View::Gantt);
+    shot("24_pred_gantt");
+    c.setView(app::View::List);
+    shot("25_pred_list");
+    ui::Frame fr{c, u, p};
+    ui::beginEdit(fr, "14", ui::EditField::Pred);
+    u.editBuf += ", DEV-999, 14";
+    shot("26_pred_edit_error");
+    u.editField = ui::EditField::None;
+    u.editId.clear();
+    frames(2);  // 入力欄の状態を捨てる
+    ui::beginEdit(fr, "14", ui::EditField::Pred);
+    u.editBuf = "DEV-1";
+    shot("27_pred_edit_suggest");
+    u.editField = ui::EditField::None;
+    u.editId.clear();
+    c.setUiSub("cols", "pred", false);
+    c.setView(app::View::Gantt);
+    c.setSelection({"12", "13", "14"}, "14");
+  }
   u.paletteOpen = true;
   u.paletteFocus = true;
   shot("10_palette");
@@ -254,7 +316,7 @@ int main(int argc, char** argv) {
     frames(3);
     ImGuiIO& io2 = ImGui::GetIO();
     for (float y = 150; y < 700 && !io2.WantTextInput; y += 4) {
-      io2.AddMousePosEvent(1250, y);
+      io2.AddMousePosEvent(1150, y);
       io2.AddMouseButtonEvent(0, true);
       frames(1);
       io2.AddMouseButtonEvent(0, false);
@@ -269,7 +331,223 @@ int main(int argc, char** argv) {
     u.linkPick = {true, "22", true, c.currentId()};
     shot("23_link_pick_mode");
     u.linkPick = {};
+    // Blocks 以外の関連リンク（日程には使わない）
+    if (roadmap::Session* ss = c.session()) {
+      ss->addOtherLink("22", "Relates", true, "9");
+      ss->addOtherLink("22", "Relates", false, "10");
+      ss->addOtherLink("22", "Duplicate", true, "PRJ-999");
+      c.afterEdit();
+      shot("24_other_links");
+      for (int k = 0; k < 3; ++k) ss->undo();
+      c.afterEdit();
+    }
     u.detailOpen = false;
+    frames(2);
+  }
+  // 依存のドラッグ（Issue #8）: バーに載せるとハンドル → ドラッグ中のゴムひも・日程の影響 → つなげない相手は赤
+  {
+    c.setView(app::View::Gantt);
+    c.setUi("zoom", "week");
+    c.clearSelection();
+    u.customPx = 0;
+    u.scrollToBase = true;
+    frames(3);
+    ImGuiIO& io2 = ImGui::GetIO();
+    const Session* s = c.session();
+    const Tree& T = *s->tree();
+    const auto onScreen = [&](const ui::UiState::BarGeom& g) {
+      return g.xl > u.ganttLeft + 40 && g.xr < 1300 && g.cy > 170 && g.cy < 700 && g.xr - g.xl > 12;
+    };
+    // 先行 A（上の行）→ 後続 B（下の行）で、つなぐと B が遅れる組と、すでにつながっている組（逆向きは循環）を探す
+    using Geom = ui::UiState::BarGeom;
+    std::optional<Geom> ga, gb, ca, cb;
+    for (const auto& a : u.barGeom)
+      for (const auto& b : u.barGeom) {
+        const int ia = T.find(a.id), ib = T.find(b.id);
+        if (ia < 0 || ib < 0 || !T.isLeaf(ia) || !T.isLeaf(ib) || !onScreen(a) || !onScreen(b) || b.cy <= a.cy) continue;
+        if (!ga && checkLink(T, s->viewIssues(), ia, ib) == LinkBlock::None && s->previewLink(a.id, b.id).delayDays > 0) ga = a, gb = b;
+        if (!ca && std::find(T.succs[ia].begin(), T.succs[ia].end(), ib) != T.succs[ia].end()) ca = a, cb = b;
+      }
+    const float hd = u.m.s(10.f);
+    const auto key = [&](ImGuiKey k) {
+      io2.AddKeyEvent(k, true);
+      frames(1);
+      io2.AddKeyEvent(k, false);
+      frames(1);
+    };
+    if (ga && gb) {
+      io2.AddMousePosEvent((ga->xl + ga->xr) / 2, ga->cy);
+      shot("24_link_hover");
+      io2.AddMousePosEvent(ga->xr + hd, ga->cy);
+      frames(2);
+      io2.AddMouseButtonEvent(0, true);
+      frames(2);
+      io2.AddMousePosEvent((gb->xl + gb->xr) / 2, gb->cy);
+      shot("25_link_drag_ok");
+      io2.AddMousePosEvent(900, 840);  // 相手のいない場所
+      shot("25b_link_drag_free");
+      key(ImGuiKey_Escape);  // 取り消し
+      io2.AddMouseButtonEvent(0, false);
+      frames(3);
+    }
+    if (ca && cb) {
+      // ca（先行）→ cb（後続）はすでにある。後続の右のハンドルから先行へドラッグすると循環で赤
+      io2.AddMousePosEvent(cb->xr + hd, cb->cy);
+      frames(2);
+      io2.AddMouseButtonEvent(0, true);
+      frames(2);
+      io2.AddMousePosEvent((ca->xl + ca->xr) / 2, ca->cy);
+      shot("26_link_drag_bad");
+      key(ImGuiKey_Escape);
+      io2.AddMouseButtonEvent(0, false);
+      frames(3);
+    }
+    io2.AddMousePosEvent(-1, -1);
+    frames(2);
+  }
+  // 依存の矢印（Issue #10）: ホバー・つなぎ替え・外す・たどる・クリティカル・日付の衝突を、ライト・ダークで
+  {
+    using Geom = ui::UiState::BarGeom;
+    using AGeom = ui::UiState::ArrowGeom;
+    ImGuiIO& io3 = ImGui::GetIO();
+    const auto arrowShots = [&](const std::string& tag) {
+      c.setView(app::View::Gantt);
+      c.setUi("zoom", "week");
+      c.clearSelection();
+      u.customPx = 0;
+      u.scrollToBase = true;
+      u.detailOpen = false;
+      frames(3);
+      Session* s = c.session();
+      const auto linked = [&](const std::string& from, const std::string& to) {
+        const Issue* o = c.session()->issue(from);
+        return o && std::find(o->blocks.begin(), o->blocks.end(), to) != o->blocks.end();
+      };
+      const auto onScreen = [&](ImVec2 pt) { return pt.x > u.ganttLeft + 24 && pt.x < 1300 && pt.y > 170 && pt.y < 700; };
+      const auto at = [&](const AGeom& a, float frac) {
+        float total = 0;
+        for (std::size_t i = 0; i + 1 < a.pts.size(); ++i) total += std::hypot(a.pts[i + 1].x - a.pts[i].x, a.pts[i + 1].y - a.pts[i].y);
+        float run = 0;
+        for (std::size_t i = 0; i + 1 < a.pts.size(); ++i) {
+          const float len = std::hypot(a.pts[i + 1].x - a.pts[i].x, a.pts[i + 1].y - a.pts[i].y);
+          if (len > 0 && run + len >= total * frac) {
+            const float t = (total * frac - run) / len;
+            return ImVec2(a.pts[i].x + (a.pts[i + 1].x - a.pts[i].x) * t, a.pts[i].y + (a.pts[i + 1].y - a.pts[i].y) * t);
+          }
+          run += len;
+        }
+        return a.pts.back();
+      };
+      int nConflict = 0, nCritical = 0;
+      for (const auto& a : u.arrowGeom) nConflict += a.conflict, nCritical += a.critical;
+      std::printf("arrows=%zu conflict=%d critical=%d\n", u.arrowGeom.size(), nConflict, nCritical);
+      // つなぎ替えできる矢印（先行・後続とも画面の葉）
+      std::optional<AGeom> pick;
+      for (const auto& a : u.arrowGeom) {
+        bool ok = a.pts.size() >= 4 && linked(a.from, a.to);
+        for (const auto& pt : a.pts) ok = ok && onScreen(pt);
+        const Tree& T = *s->tree();
+        ok = ok && T.find(a.from) >= 0 && T.find(a.to) >= 0 && T.isLeaf(T.find(a.from)) && T.isLeaf(T.find(a.to));
+        if (!ok) continue;
+        for (float fr : {0.75f, 0.7f, 0.8f, 0.65f, 0.85f}) {
+          const ImVec2 pt = at(a, fr);
+          io3.AddMousePosEvent(pt.x, pt.y);
+          frames(2);
+          if (u.arrowHoverFrom == a.from && u.arrowHoverTo == a.to) {
+            pick = a;
+            break;
+          }
+        }
+        if (pick) break;
+      }
+      if (pick) {
+        shot("40_arrow_hover_" + tag);
+        io3.AddMouseButtonEvent(0, true);
+        frames(2);
+        std::optional<Geom> tg;
+        for (const auto& g : u.barGeom) {
+          const Tree& T = *s->tree();
+          const int i = T.find(g.id);
+          if (i < 0 || !T.isLeaf(i) || g.id == pick->from || g.id == pick->to || g.xl < u.ganttLeft + 30 || g.xr > 1300 || g.cy < 175 ||
+              g.cy > 700 || g.xr - g.xl < 12)
+            continue;
+          if (s->previewLink(pick->from, g.id, pick->from, pick->to).block == LinkBlock::None) {
+            tg = g;
+            break;
+          }
+        }
+        if (tg) {
+          io3.AddMousePosEvent((tg->xl + tg->xr) / 2, tg->cy);
+          shot("41_arrow_reattach_" + tag);
+        }
+        io3.AddMousePosEvent(u.ganttLeft + 6, 520);  // バーのない場所（外す）
+        shot("42_arrow_remove_" + tag);
+        io3.AddKeyEvent(ImGuiKey_Escape, true);
+        frames(1);
+        io3.AddKeyEvent(ImGuiKey_Escape, false);
+        frames(1);
+        io3.AddMouseButtonEvent(0, false);
+        frames(2);
+      }
+      io3.AddMousePosEvent(-1, -1);
+      frames(2);
+      // 依存をたどる + クリティカルの強調
+      std::string withLinks;
+      {
+        const Tree& T = *s->tree();
+        for (int i : T.leafOrder)
+          if (!T.preds[i].empty() && !T.succs[i].empty()) {
+            withLinks = T.ids[i];
+            break;
+          }
+      }
+      if (!withLinks.empty()) c.select(withLinks);
+      c.setUiSub("dep", "trace", true);
+      shot("43_trace_" + tag);
+      c.setUiSub("dep", "trace", false);
+      c.clearSelection();
+      c.setUiSub("dep", "crit", true);
+      shot("44_critical_" + tag);
+      c.setUiSub("dep", "crit", false);
+      frames(2);
+    };
+    c.setView(app::View::Gantt);
+    arrowShots("light");
+    // 日付の衝突（進行中の後続が先行より前から始まっている）と、余裕 0 の連鎖（期限ちょうど）を作って見る
+    Session* s3 = c.session();
+    const std::size_t undo3 = s3->undoSize();
+    {
+      std::string dev7;
+      for (int i = 0; i < s3->tree()->n; ++i)
+        if (s3->tree()->did[i] == "DEV-7") dev7 = s3->tree()->ids[i];
+      s3->setField(dev7, [&](Issue& o) {
+        o.status = "In Progress";
+        o.start = s3->baseDay() - 7;
+      });
+      c.afterEdit();
+      frames(2);
+      std::vector<std::pair<std::string, Day>> ends;  // 末端の課題（後続なし）を、いまの完了日を期限にする
+      for (int i : s3->tree()->leafOrder)
+        if (s3->tree()->succs[i].empty() && !(*s3->rows())[i].done) ends.emplace_back(s3->tree()->ids[i], (*s3->rows())[i].asapFinish);
+      for (const auto& [id, d] : ends) s3->setDeadline(id, d);
+      c.afterEdit();
+      frames(2);
+    }
+    c.setUiSub("dep", "crit", true);
+    shot("45_conflict_critical_light");
+    c.setUiSub("dep", "crit", false);
+    u.t = &ui::darkTokens();
+    ui::applyStyle(*u.t, u.m);
+    arrowShots("dark");
+    c.setUiSub("dep", "crit", true);
+    shot("45_conflict_critical_dark");
+    c.setUiSub("dep", "crit", false);
+    while (s3->undoSize() > undo3 && s3->undo()) {
+    }
+    c.afterEdit();
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    io3.AddMousePosEvent(-1, -1);
     frames(2);
   }
   // アプリの設定（保存先の切り替えの確認中）・削除の確認
@@ -302,6 +580,47 @@ int main(int argc, char** argv) {
   shot("22_paste_children");
   u.dlg = ui::Dlg::None;
   frames(2);
+  // 添付: 詳細パネルの一覧・行とカードのバッジ・実行ファイルの警告
+  {
+    const std::pair<const char*, std::size_t> files[] = {
+        {"仕様書_v3.pdf", 2300000}, {"画面キャプチャ.bmp", 48000}, {"議事録 2026-10-19.docx", 18500}, {"setup.exe", 2},
+        {"写真.bmp", 0}, {"壊れた画像.png", 30}};
+    std::vector<std::string> paths;
+    for (const auto& [name, size] : files) {
+      const std::string n = name;
+      fs.put("ext/" + n, n == "画面キャプチャ.bmp" ? makeBmp(320, 200, 0) : n == "写真.bmp" ? makeBmp(640, 360, 1) : std::string(size, 'x'));
+      paths.push_back(std::string("ext/") + name);
+    }
+    c.attachFiles("11", paths);
+    c.attachFiles("12", {paths[1]});
+    c.setView(app::View::List);
+    c.select("11");
+    u.detailOpen = true;
+    u.detailTab = 3;
+    shot("40_attach_tab");
+    c.setView(app::View::Board);
+    shot("41_attach_board");
+    c.setView(app::View::Gantt);
+    c.select("13");  // 添付のない課題
+    shot("42_attach_empty");
+    c.select("11");
+    frames(2);
+    ui::Frame fr{c, u, p};
+    ui::openAttachment(fr, "11", 3);
+    shot("43_attach_warn");
+    u.dlg = ui::Dlg::None;
+    u.attachWarnPath.clear();
+    frames(2);
+    ui::openImagePreview(fr, "11", 4);  // 写真.bmp
+    shot("44_attach_preview");
+    u.dlg = ui::Dlg::None;
+    frames(2);
+    ui::openImagePreview(fr, "11", 5);  // 壊れた画像.png
+    shot("45_attach_preview_broken");
+    u.dlg = ui::Dlg::None;
+    u.detailOpen = false;
+    frames(2);
+  }
   u.t = &ui::darkTokens();
   ui::applyStyle(*u.t, u.m);
   c.session()->setResource({true, 1});

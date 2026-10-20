@@ -34,6 +34,8 @@ const char* titleOf(Dlg d) {
     case Dlg::AppSettings: return "アプリの設定";
     case Dlg::ConfirmIssueDelete: return "課題を削除";
     case Dlg::PasteChildren: return "貼り付けた内容を子課題として追加";
+    case Dlg::AttachOpenWarn: return "実行できるファイルです";
+    case Dlg::AttachPreview: return "画像のプレビュー";
     default: return "";
   }
 }
@@ -42,6 +44,7 @@ float widthOf(const UiState& u, Dlg d) {
   switch (d) {
     case Dlg::ConfirmDelete:
     case Dlg::ConfirmIssueDelete:
+    case Dlg::AttachOpenWarn:
     case Dlg::Conflict:
     case Dlg::ConfirmQuit: return u.m.s(460);
     case Dlg::Import:
@@ -50,6 +53,7 @@ float widthOf(const UiState& u, Dlg d) {
     case Dlg::Settings: return u.m.s(620);
     case Dlg::AppSettings: return u.m.s(640);
     case Dlg::Workload: return u.m.s(720);
+    case Dlg::AttachPreview: return u.m.s(780);
     case Dlg::Warnings: return u.m.s(560);
     case Dlg::Shortcuts: return u.m.s(620);
     default: return u.m.s(520);
@@ -162,7 +166,7 @@ void dlgConfirmDelete(Frame& f) {
   if (!s) return close(f);
   ImGui::PushTextWrapPos(0);
   ImGui::Text("「%s」を削除します。", s->settings().name.c_str());
-  ImGui::TextDisabled("データフォルダの CSV と設定は「_削除済み」フォルダへ移します（そこから戻せます）。");
+  ImGui::TextDisabled("プロジェクトのフォルダ（CSV・設定・添付・バックアップ）ごと、データフォルダの「_削除済み」へ移します（そこから戻せます）。");
   ImGui::PopTextWrapPos();
   const int b = buttons(f, {"削除", "キャンセル"}, true);
   if (b == 0) {
@@ -269,6 +273,20 @@ void dlgExport(Frame& f) {
   }
 }
 
+// 以前の平置きのプロジェクトがあるときだけ出す。自動では動かさず、ここで押したときに移す
+void legacyMigrationBlock(Frame& f) {
+  app::AppController& c = f.c;
+  const int n = c.legacyCount();
+  if (n == 0) return;
+  ImGui::Separator();
+  ImGui::TextColored(v4(f.u.t->tight), "以前の保存形式（平置き）のプロジェクトが %d 件あります。", n);
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextDisabled("プロジェクトごとのフォルダ（CSV・設定・添付・バックアップ）に移せます。移す前に、データフォルダの「_バックアップ/移行前…」へ"
+                      "全部の控えを作ります。移さなくても、そのまま読み書きできます。");
+  ImGui::PopTextWrapPos();
+  if (ImGui::Button("フォルダ構成に移す")) (void)c.migrateLegacy();
+}
+
 void dlgFolder(Frame& f) {
   UiState& u = f.u;
   app::AppController& c = f.c;
@@ -295,9 +313,11 @@ void dlgFolder(Frame& f) {
     return;
   }
   ImGui::PushTextWrapPos(0);
-  ImGui::TextDisabled("編集のたびに自動で保存します（CSV + 設定JSON）。上書きする前のCSVは、起動してから最初の1回だけ「_バックアップ」に残します（30個まで）。"
-                      "削除したプロジェクトのファイルは「_削除済み」に移します。保存先は「アプリの設定」で変えられます（起動引数 --data・環境変数 ROADMAP_DATA が優先）。");
+  ImGui::TextDisabled("編集のたびに自動で保存します。プロジェクトごとのフォルダに CSV（project.csv）と設定（project.settings.json）を置き、添付は「添付」に入れます。"
+                      "上書きする前の CSV は、起動してから最初の1回だけ、そのフォルダの「バックアップ」に残します（30個まで）。"
+                      "削除したプロジェクトはフォルダごと「_削除済み」に移します。保存先は「アプリの設定」で変えられます（起動引数 --data・環境変数 ROADMAP_DATA が優先）。");
   ImGui::PopTextWrapPos();
+  legacyMigrationBlock(f);
   if (buttons(f, {"閉じる"}) == 0) close(f);
 }
 
@@ -353,6 +373,7 @@ void dlgAppSettings(Frame& f) {
     ImGui::EndDisabled();
   }
   if (ImGui::Button("フォルダを開く")) f.p.openFolder(c.dataDir());
+  legacyMigrationBlock(f);
   if (!u.pendingDir.empty()) {
     // 切り替えの確認
     ImGui::PushStyleColor(ImGuiCol_ChildBg, v4(u.t->surface2));
@@ -561,6 +582,92 @@ void dlgConfirmIssueDelete(Frame& f) {
   }
 }
 
+void dlgAttachOpenWarn(Frame& f) {
+  UiState& u = f.u;
+  if (u.attachWarnPath.empty()) return close(f);
+  ImGui::PushTextWrapPos(0);
+  const std::string name = u.attachWarnPath.substr(u.attachWarnPath.find_last_of("/\\") == std::string::npos
+                                                       ? 0
+                                                       : u.attachWarnPath.find_last_of("/\\") + 1);
+  ImGui::Text("「%s」を開こうとしています。", name.c_str());
+  ImGui::TextColored(v4(u.t->tight), "実行ファイルやスクリプトは、開くとこのパソコンで実行されることがあります。");
+  ImGui::TextDisabled("送り主や入手元が確かなときだけ開いてください。");
+  ImGui::PopTextWrapPos();
+  const int b = buttons(f, {"それでも開く", "やめる"}, true);
+  if (b == 0) {
+    f.p.openFile(u.attachWarnPath);
+    u.attachWarnPath.clear();
+    close(f);
+  } else if (b == 1) {
+    u.attachWarnPath.clear();
+    close(f);
+  }
+}
+
+void dlgAttachPreview(Frame& f) {
+  UiState& u = f.u;
+  app::AppController& c = f.c;
+  const auto& list = c.attachmentsOf(u.previewIssue);
+  if (u.previewIndex >= list.size()) return close(f);
+  const Attachment& a = list[u.previewIndex];
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  const float maxW = std::min(u.m.s(740), vp->WorkSize.x - u.m.s(80));
+  const float maxH = std::max(u.m.s(200), vp->WorkSize.y - u.m.s(280));
+  const UiState::ImageTex* img = attachmentImage(f, u.previewIssue, u.previewIndex, kPreviewMaxPx);
+  ImGui::TextUnformatted(a.name.c_str());
+  if (img && img->tex) {
+    const float fit = std::min(1.f, std::min(maxW / static_cast<float>(img->w), maxH / static_cast<float>(img->h)));
+    float zoom = u.previewZoom > 0 ? u.previewZoom : fit;
+    ImGui::SameLine();
+    ImGui::TextDisabled("%d × %d px（%s）／ 表示 %d%%", img->origW, img->origH, formatBytes(a.size).c_str(),
+                        static_cast<int>(zoom * 100.f * static_cast<float>(img->w) / static_cast<float>(std::max(1, img->origW)) + 0.5f));
+    // 画像の領域（拡大したらスクロール。Ctrl+ホイールで拡大縮小）
+    ImGui::BeginChild("##preview", ImVec2(maxW, std::min(maxH, std::max(u.m.s(120), static_cast<float>(img->h) * std::max(zoom, fit) + u.m.s(24)))),
+                      ImGuiChildFlags_Border, ImGuiWindowFlags_HorizontalScrollbar);
+    if (ImGui::IsWindowHovered() && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0) {
+      zoom = std::clamp(zoom * (ImGui::GetIO().MouseWheel > 0 ? 1.15f : 1.f / 1.15f), 0.1f, 8.f);
+      u.previewZoom = zoom;
+    }
+    const ImVec2 sz(static_cast<float>(img->w) * zoom, static_cast<float>(img->h) * zoom);
+    const float padX = std::max(0.f, (ImGui::GetContentRegionAvail().x - sz.x) / 2);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + padX);
+    ImGui::Image(img->tex, sz);
+    ImGui::EndChild();
+    if (ImGui::Button("全体に合わせる")) u.previewZoom = 0;
+    ImGui::SameLine();
+    // 表示の倍率は縮小したテクスチャが基準なので、元の画像の100%は「元の幅 ÷ テクスチャの幅」
+    if (ImGui::Button("等倍")) u.previewZoom = static_cast<float>(std::max(1, img->origW)) / static_cast<float>(std::max(1, img->w));
+    ImGui::SameLine();
+    if (ImGui::Button("拡大")) u.previewZoom = std::clamp(zoom * 1.25f, 0.1f, 8.f);
+    ImGui::SameLine();
+    if (ImGui::Button("縮小")) u.previewZoom = std::clamp(zoom / 1.25f, 0.1f, 8.f);
+    ImGui::SameLine();
+    ImGui::TextDisabled("Ctrl+ホイールでも拡大縮小");
+    if (img->origW > img->w || img->origH > img->h) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("（大きな画像は縮小して表示しています）");
+    }
+  } else if (img && img->failed) {
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextColored(v4(u.t->late), "この画像は表示できません。");
+    ImGui::TextDisabled("ファイルが壊れているか、対応していない形式です（PNG・JPEG・GIF・BMP に対応）。「アプリで開く」で、関連付けられたアプリで開けることがあります。");
+    ImGui::PopTextWrapPos();
+  } else {
+    ImGui::Spacing();
+    ImGui::TextDisabled("読み込み中…");
+  }
+  const int b = buttons(f, {"閉じる", "アプリで開く"});
+  if (b == 1) {
+    const std::string issue = u.previewIssue;
+    const std::size_t idx = u.previewIndex;
+    close(f);
+    openAttachment(f, issue, idx);
+  } else if (b == 0) {
+    close(f);
+  }
+}
+
 void dlgSettings(Frame& f) {
   UiState& u = f.u;
   app::AppController& c = f.c;
@@ -630,6 +737,10 @@ void dlgSettings(Frame& f) {
     ImGui::SameLine();
   }
   ImGui::NewLine();
+  {
+    bool v = c.uiBool("cols", "pred", false);  // 既定はオフ
+    if (ImGui::Checkbox("先行の列（リストとガントの表に出す）", &v)) c.setUiSub("cols", "pred", v);
+  }
   if (ImGui::Button("テーマ・密度・文字の大きさ・保存先（アプリの設定）…")) {
     close(f);
     openDialog(f, Dlg::AppSettings);
@@ -899,7 +1010,7 @@ void drawDialogs(Frame& f) {
   }
   // Esc と外側クリックで閉じる（確認ダイアログは外側クリックでは閉じない）
   const bool confirm = u.dlg == Dlg::ConfirmDelete || u.dlg == Dlg::ConfirmQuit || u.dlg == Dlg::Conflict ||
-                       u.dlg == Dlg::ConfirmIssueDelete || (u.dlg == Dlg::AppSettings && !u.pendingDir.empty());
+                       u.dlg == Dlg::ConfirmIssueDelete || u.dlg == Dlg::AttachOpenWarn || (u.dlg == Dlg::AppSettings && !u.pendingDir.empty());
   const bool outside = ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                        !ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup |
                                                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
@@ -927,6 +1038,8 @@ void drawDialogs(Frame& f) {
     case Dlg::AppSettings: dlgAppSettings(f); break;
     case Dlg::ConfirmIssueDelete: dlgConfirmIssueDelete(f); break;
     case Dlg::PasteChildren: dlgPasteChildren(f); break;
+    case Dlg::AttachOpenWarn: dlgAttachOpenWarn(f); break;
+    case Dlg::AttachPreview: dlgAttachPreview(f); break;
     default: close(f); break;
   }
   if (!open) close(f);
