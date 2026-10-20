@@ -423,7 +423,7 @@ int main(int argc, char** argv) {
         const Issue* o = c.session()->issue(from);
         return o && std::find(o->blocks.begin(), o->blocks.end(), to) != o->blocks.end();
       };
-      const auto onScreen = [&](ImVec2 p) { return p.x > u.ganttLeft + 24 && p.x < 1300 && p.y > 170 && p.y < 700; };
+      const auto onScreen = [&](ImVec2 pt) { return pt.x > u.ganttLeft + 24 && pt.x < 1300 && pt.y > 170 && pt.y < 700; };
       const auto at = [&](const AGeom& a, float frac) {
         float total = 0;
         for (std::size_t i = 0; i + 1 < a.pts.size(); ++i) total += std::hypot(a.pts[i + 1].x - a.pts[i].x, a.pts[i + 1].y - a.pts[i].y);

@@ -194,7 +194,7 @@ void drawStatsView(Frame& f, ImVec2 size) {
               {"完了の見込み", fin, u.t->ink},
               {"担当なし", std::to_string(st.unassigned), st.unassigned ? u.t->tight : u.t->ink}};
     for (int i = 0; i < nt; ++i) {
-      ImGui::SetCursorScreenPos(ImVec2(p.x + i * (tw + gap), p.y));
+      ImGui::SetCursorScreenPos(ImVec2(p.x + static_cast<float>(i) * (tw + gap), p.y));
       tile(f, tl[i].l, tl[i].v, tl[i].col, tw);
     }
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + u.m.s(64) + u.m.s(10)));

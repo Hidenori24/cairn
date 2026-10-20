@@ -696,22 +696,22 @@ void drawGanttView(Frame& f, ImVec2 size) {
         if (layerOf(ar, hov) != layer) continue;
         const int ia = rows[ar.a].id, ib = rows[ar.b].id;
         const ScheduleRow& sr = R[ar.succLeaf];
-        const ImU32 base = sr.floatDays < 0 ? u.t->late : sr.floatDays == 0 ? u.t->tightEdge : u.t->arrow;
+        const ImU32 arrowCol = sr.floatDays < 0 ? u.t->late : sr.floatDays == 0 ? u.t->tightEdge : u.t->arrow;
         const bool strong = ar.hot || ar.traced;
-        ImU32 col = base;
+        ImU32 col = arrowCol;
         float th = 1.3f;
         if (strong) {
           col = u.t->accent;
           th = 2.f;
         } else if (curIdx >= 0) {
-          col = withAlpha(base, traceOn ? std::min(0.35f, dimAlpha(c)) : 0.35f);
+          col = withAlpha(arrowCol, traceOn ? std::min(0.35f, dimAlpha(c)) : 0.35f);
         }
         if (critOn) {
           if (ar.critical) {  // 余裕 0 以下の連鎖: 太く（遅れなら赤、ちょうどなら橙）
             th = std::max(th, 2.8f);
             if (!strong) col = sr.floatDays < 0 ? u.t->late : u.t->tightEdge;
           } else if (!strong) {
-            col = withAlpha(base, 0.3f);
+            col = withAlpha(arrowCol, 0.3f);
           }
         }
         if (!strong && !ar.conflict && isDimmed(u, dim, ia, T.ids[ia]) && isDimmed(u, dim, ib, T.ids[ib])) col = withAlpha(col, dimAlpha(c));

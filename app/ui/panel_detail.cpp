@@ -412,7 +412,7 @@ void linkAdder(Frame& f, int i, LinkDir dir, std::string& buf) {
   const float lh = ImGui::GetTextLineHeightWithSpacing();
   const int rows = std::max(1, std::min<int>(static_cast<int>(cands.size()), 8));
   ImGui::PushStyleColor(ImGuiCol_ChildBg, v4(u.t->surface));
-  ImGui::BeginChild("##cand", ImVec2(-1, rows * lh + u.m.s(12)), ImGuiChildFlags_Border);
+  ImGui::BeginChild("##cand", ImVec2(-1, static_cast<float>(rows) * lh + u.m.s(12)), ImGuiChildFlags_Border);
   ImGui::PopStyleColor();
   const float availW = ImGui::GetContentRegionAvail().x;
   int clicked = -1;
