@@ -101,7 +101,7 @@ struct InheritSpec {
   bool operator==(const InheritSpec&) const = default;
 };
 
-// 課題に付けたファイルのメタ情報（本体は <プロジェクト>/添付/<Issue Id>/<name>。SPEC 8.7）
+// 課題に付けたファイルのメタ情報（本体は <プロジェクト>/添付/<Issue Id>/<name>。SPEC 8.9）
 struct Attachment {
   std::string name;         // フォルダ内のファイル名（そのまま表示にも使う）
   std::uint64_t size = 0;   // バイト

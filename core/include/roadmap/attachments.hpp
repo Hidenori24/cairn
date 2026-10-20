@@ -1,4 +1,4 @@
-// 課題への添付ファイル（SPEC 8.7）。ファイルシステムは IFileStore 経由で、GUI・Win32 には触れない。
+// 課題への添付ファイル（SPEC 8.9）。ファイルシステムは IFileStore 経由で、GUI・Win32 には触れない。
 //   本体: <プロジェクトのフォルダ>/添付/<Issue Id>/<ファイル名>（同名は -2、-3 …）
 //   削除: <プロジェクトのフォルダ>/_削除済み/<Issue Id>/<ファイル名>へ移す（消さない）
 //   メタ情報（名前・サイズ・日時・作成者）: settings.json の "attachments"（ProjectSettings::attachments）
@@ -62,6 +62,14 @@ Status removeAttachment(IFileStore& fs, const std::string& projectDir, Attachmen
 
 std::size_t attachmentCount(const AttachmentMap& m, const std::string& issueId);
 std::uint64_t attachmentsTotalBytes(const AttachmentMap& m);
+
+// JIRA の CSV の Attachment 列（`日時;作成者;ファイル名;URL`。同じ見出しが複数）をメタ情報として読む。本体はない。
+// 読み取り専用の表示用で、CSV の中身（Issue::extra）は変えないので、取り込み・書き出しで壊れない。
+// 形に合わないセルは、全体をファイル名として返す
+struct JiraAttachment {
+  std::string at, who, name, url;
+};
+std::vector<JiraAttachment> jiraAttachmentsOf(const Issue& o, const ProjectMeta& meta);
 
 // 開く前に警告する種類（実行ファイル・スクリプト・ショートカットなど。拡張子で判断する）
 bool isRiskyFile(const std::string& name);

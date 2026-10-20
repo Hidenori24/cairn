@@ -3,6 +3,7 @@
 // 使い方: roadmap_ui_screens <出力フォルダ> [日本語フォント.ttc] [フォント番号]
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -16,6 +17,7 @@
 #include "roadmap/gen.hpp"
 #include "roadmap/schedule.hpp"
 #include "ui/app_ui.hpp"
+#include "ui/internal.hpp"
 
 using namespace roadmap;
 
@@ -76,12 +78,22 @@ void raster(Canvas& cv, const Tex& tex, const ImDrawVert& v0, const ImDrawVert& 
     }
 }
 
-void render(const ImDrawData* dd, const Tex& tex, const std::string& path, ImVec4 bg) {
+// 画像のテクスチャ（NullPlatform が預かる。ImTextureID は 1 からの番号）
+struct ImgTex {
+  int w = 0, h = 0;
+  std::vector<unsigned char> rgba;
+};
+std::vector<ImgTex> gImages;
+
+void render(const ImDrawData* dd, const Tex& fontTex, const std::string& path, ImVec4 bg) {
   Canvas cv(static_cast<int>(dd->DisplaySize.x), static_cast<int>(dd->DisplaySize.y), bg);
   for (int n = 0; n < dd->CmdListsCount; ++n) {
     const ImDrawList* l = dd->CmdLists[n];
     for (const ImDrawCmd& cmd : l->CmdBuffer) {
       if (cmd.UserCallback) continue;
+      Tex tex = fontTex;
+      const auto id = reinterpret_cast<std::uintptr_t>(cmd.GetTexID());
+      if (id >= 1 && id <= gImages.size()) tex = {gImages[id - 1].w, gImages[id - 1].h, gImages[id - 1].rgba.data()};
       for (unsigned i = 0; i + 2 < cmd.ElemCount; i += 3) {
         const ImDrawIdx* idx = l->IdxBuffer.Data + cmd.IdxOffset + i;
         const ImDrawVert* vb = l->VtxBuffer.Data + cmd.VtxOffset;
@@ -101,7 +113,33 @@ struct NullPlatform : ui::IPlatform {
   std::optional<std::string> picked;
   bool systemDark() override { return false; }
   void requestQuit() override {}
+  ImTextureID createTexture(const unsigned char* rgba, int w, int h) override {
+    gImages.push_back({w, h, std::vector<unsigned char>(rgba, rgba + static_cast<std::size_t>(w) * h * 4)});
+    return reinterpret_cast<ImTextureID>(static_cast<std::uintptr_t>(gImages.size()));
+  }
 };
+
+// 24bit の BMP（画面の確認用の絵。グラデーションと図形）
+std::string makeBmp(int w, int h, int variant) {
+  const int rowBytes = (w * 3 + 3) / 4 * 4;
+  std::string s;
+  const auto put32 = [&](std::uint32_t v) { for (int i = 0; i < 4; ++i) s.push_back(static_cast<char>((v >> (8 * i)) & 0xff)); };
+  const auto put16 = [&](std::uint16_t v) { s.push_back(static_cast<char>(v & 0xff)); s.push_back(static_cast<char>(v >> 8)); };
+  s += "BM";
+  put32(static_cast<std::uint32_t>(54 + rowBytes * h)); put32(0); put32(54);
+  put32(40); put32(static_cast<std::uint32_t>(w)); put32(static_cast<std::uint32_t>(h)); put16(1); put16(24);
+  put32(0); put32(static_cast<std::uint32_t>(rowBytes * h)); put32(2835); put32(2835); put32(0); put32(0);
+  for (int y = h - 1; y >= 0; --y) {
+    for (int x = 0; x < w; ++x) {
+      const bool box = x > w / 4 && x < w * 3 / 4 && y > h / 3 && y < h * 2 / 3;
+      int r = x * 255 / w, g = y * 255 / h, b = variant ? 200 - x * 120 / w : 120 + y * 100 / h;
+      if (box) r = 250, g = 250, b = 250;
+      s.push_back(static_cast<char>(b)); s.push_back(static_cast<char>(g)); s.push_back(static_cast<char>(r));
+    }
+    for (int k = w * 3; k < rowBytes; ++k) s.push_back('\0');
+  }
+  return s;
+}
 
 }  // namespace
 
@@ -254,7 +292,7 @@ int main(int argc, char** argv) {
     frames(3);
     ImGuiIO& io2 = ImGui::GetIO();
     for (float y = 150; y < 700 && !io2.WantTextInput; y += 4) {
-      io2.AddMousePosEvent(1250, y);
+      io2.AddMousePosEvent(1150, y);
       io2.AddMouseButtonEvent(0, true);
       frames(1);
       io2.AddMouseButtonEvent(0, false);
@@ -302,6 +340,47 @@ int main(int argc, char** argv) {
   shot("22_paste_children");
   u.dlg = ui::Dlg::None;
   frames(2);
+  // 添付: 詳細パネルの一覧・行とカードのバッジ・実行ファイルの警告
+  {
+    const std::pair<const char*, std::size_t> files[] = {
+        {"仕様書_v3.pdf", 2300000}, {"画面キャプチャ.bmp", 48000}, {"議事録 2026-10-19.docx", 18500}, {"setup.exe", 2},
+        {"写真.bmp", 0}, {"壊れた画像.png", 30}};
+    std::vector<std::string> paths;
+    for (const auto& [name, size] : files) {
+      const std::string n = name;
+      fs.put("ext/" + n, n == "画面キャプチャ.bmp" ? makeBmp(320, 200, 0) : n == "写真.bmp" ? makeBmp(640, 360, 1) : std::string(size, 'x'));
+      paths.push_back(std::string("ext/") + name);
+    }
+    c.attachFiles("11", paths);
+    c.attachFiles("12", {paths[1]});
+    c.setView(app::View::List);
+    c.select("11");
+    u.detailOpen = true;
+    u.detailTab = 3;
+    shot("40_attach_tab");
+    c.setView(app::View::Board);
+    shot("41_attach_board");
+    c.setView(app::View::Gantt);
+    c.select("13");  // 添付のない課題
+    shot("42_attach_empty");
+    c.select("11");
+    frames(2);
+    ui::Frame fr{c, u, p};
+    ui::openAttachment(fr, "11", 3);
+    shot("43_attach_warn");
+    u.dlg = ui::Dlg::None;
+    u.attachWarnPath.clear();
+    frames(2);
+    ui::openImagePreview(fr, "11", 4);  // 写真.bmp
+    shot("44_attach_preview");
+    u.dlg = ui::Dlg::None;
+    frames(2);
+    ui::openImagePreview(fr, "11", 5);  // 壊れた画像.png
+    shot("45_attach_preview_broken");
+    u.dlg = ui::Dlg::None;
+    u.detailOpen = false;
+    frames(2);
+  }
   u.t = &ui::darkTokens();
   ui::applyStyle(*u.t, u.m);
   c.session()->setResource({true, 1});

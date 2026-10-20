@@ -159,6 +159,29 @@ std::uint64_t attachmentsTotalBytes(const AttachmentMap& m) {
   return n;
 }
 
+std::vector<JiraAttachment> jiraAttachmentsOf(const Issue& o, const ProjectMeta& meta) {
+  std::vector<JiraAttachment> out;
+  for (std::size_t k = 0; k < meta.extraHeaders.size() && k < o.extra.size(); ++k) {
+    if (text::toLower(text::trim(meta.extraHeaders[k])) != "attachment") continue;
+    const std::string cell = text::trim(o.extra[k]);
+    if (cell.empty()) continue;
+    JiraAttachment a;
+    const auto s1 = cell.find(';');
+    const auto s2 = s1 == std::string::npos ? std::string::npos : cell.find(';', s1 + 1);
+    const auto sl = cell.rfind(';');
+    if (s2 == std::string::npos || sl == std::string::npos || sl <= s2) {
+      a.name = cell;
+    } else {
+      a.at = text::trim(cell.substr(0, s1));
+      a.who = text::trim(cell.substr(s1 + 1, s2 - s1 - 1));
+      a.name = cell.substr(s2 + 1, sl - s2 - 1);
+      a.url = text::trim(cell.substr(sl + 1));
+    }
+    out.push_back(std::move(a));
+  }
+  return out;
+}
+
 bool isRiskyFile(const std::string& name) {
   static const char* const kExt[] = {"exe", "bat", "cmd", "com", "msi", "msp", "ps1", "psm1", "vbs", "vbe", "js", "jse",
                                      "wsf", "wsh", "scr", "lnk", "jar", "hta", "reg", "dll", "cpl", "msc", "pif", "url",

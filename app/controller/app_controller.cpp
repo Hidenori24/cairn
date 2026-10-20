@@ -253,6 +253,20 @@ std::string AppController::attachmentFile(const std::string& issueId, std::size_
   return attachmentPath(dir, issueId, list[index]);
 }
 
+bool AppController::attachmentExists(const std::string& issueId, std::size_t index) const {
+  const std::string p = attachmentFile(issueId, index);
+  return !p.empty() && fs_.stat(p).has_value();
+}
+
+Result<std::string> AppController::attachmentBytes(const std::string& issueId, std::size_t index) const {
+  const std::string p = attachmentFile(issueId, index);
+  if (p.empty()) return Error{"添付がありません"};
+  const auto st = fs_.stat(p);
+  if (!st) return Error{"ファイルが見つかりません"};
+  if (st->size > kMaxAttachFileBytes) return Error{"大きすぎて読めません"};
+  return fs_.read(p);
+}
+
 void AppController::afterEdit() {
   if (!session_) return;
   absorbNotices();

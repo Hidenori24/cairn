@@ -133,7 +133,7 @@ class AppController {
   void undo();
   void redo();
 
-  // ---- 添付ファイル（SPEC 8.7。取り消しの対象外。本体は <プロジェクト>/添付/<Issue Id>/）----
+  // ---- 添付ファイル（SPEC 8.9。取り消しの対象外。本体は <プロジェクト>/添付/<Issue Id>/）----
   // 添付できるか（プロジェクトを開いていて、フォルダ構成であること。平置きのプロジェクトには置き場がない）
   bool canAttach() const;
   std::string attachDisabledReason() const;  // canAttach() が false のときの理由（画面に出す）
@@ -147,6 +147,9 @@ class AppController {
   bool removeAttachment(const std::string& issueId, std::size_t index);
   // 本体のパス（開く・サムネイル用）。なければ空
   std::string attachmentFile(const std::string& issueId, std::size_t index) const;
+  bool attachmentExists(const std::string& issueId, std::size_t index) const;  // 本体がフォルダにあるか
+  // 本体の中身（画像のサムネイル・プレビュー用）。読めなければエラー。1ファイルの上限を超えるものは読まない
+  Result<std::string> attachmentBytes(const std::string& issueId, std::size_t index) const;
   // プロジェクトのフォルダ（平置き・まだ書いていないときは空）
   std::string currentProjectDir() const;
 

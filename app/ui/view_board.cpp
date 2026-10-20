@@ -30,6 +30,7 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, std::s
   const ImVec2 q(p.x + w, p.y + h);
   const bool sel = c.isSelected(sid);
   ImGui::PushID(sid.c_str());
+  registerDropTarget(f, sid, p, q);  // カードへファイルをドロップすると添付
   ImGui::SetNextItemAllowOverlap();
   ImGui::InvisibleButton("##card", ImVec2(w, h));
   const bool hov = ImGui::IsItemHovered();
@@ -85,6 +86,11 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, std::s
       drawIcon(dl, "message", ImVec2(x, y + u.m.s(1)), u.m.s(12), u.t->muted);
       dl->AddText(ImVec2(x + u.m.s(14), y), u.t->muted, std::to_string(o.comments.size()).c_str());
       x += u.m.s(30);
+    }
+    if (const int na = static_cast<int>(c.attachmentCount(sid)); na > 0) {
+      bool clicked = false;
+      x += drawAttachBadge(f, ImVec2(x, y + u.m.s(1)), y + lh / 2 + u.m.s(1), na, &clicked) + u.m.s(8);
+      if (clicked) openDetail(f, sid, 3);
     }
     ImGui::PushFont(u.fontMono);
     const std::string dates = fmtShort(r.asapStart) + "〜" + fmtShort(r.asapFinish);

@@ -260,6 +260,29 @@ TEST_CASE("attachments: JIRA の Attachment 列（同じ見出しが複数）は
   CHECK(jout.find(att2) != std::string::npos);
 }
 
+TEST_CASE("attachments: JIRA の Attachment 列を、メタ情報として読む（本体はない）") {
+  auto r = csv::importCsv("Issue Id,Summary,Attachment,Attachment,attachment \n"
+                          "1,a,\"20/Oct/26 9:30 AM;山田;図,1.png;https://example.invalid/a.png\",x;u;a;b.png;https://e/b,memo.txt\n"
+                          "2,b,,,\n");
+  REQUIRE(r.ok());
+  const auto a = jiraAttachmentsOf(r->issues[0], r->meta);
+  REQUIRE(a.size() == 3);
+  CHECK(a[0].at == "20/Oct/26 9:30 AM");
+  CHECK(a[0].who == "山田");
+  CHECK(a[0].name == "図,1.png");
+  CHECK(a[0].url == "https://example.invalid/a.png");
+  CHECK(a[1].name == "a;b.png");  // ファイル名の中の ; は名前に含める（最初の2つと最後で区切る）
+  CHECK(a[1].url == "https://e/b");
+  CHECK(a[2].name == "memo.txt");  // 区切りがなければ全体を名前にする
+  CHECK(a[2].at.empty());
+  CHECK(a[2].url.empty());
+  CHECK(jiraAttachmentsOf(r->issues[1], r->meta).empty());
+  // Attachment 列がなければ空
+  auto r2 = csv::importCsv("Issue Id,Summary,Sprint\n1,a,S1\n");
+  REQUIRE(r2.ok());
+  CHECK(jiraAttachmentsOf(r2->issues[0], r2->meta).empty());
+}
+
 // ---- コントローラ ----
 namespace {
 struct CEnv {
