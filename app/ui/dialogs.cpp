@@ -445,6 +445,25 @@ void dlgAppSettings(Frame& f) {
   if (ImGui::Checkbox("課題を削除する前に確かめる", &pr.confirmDelete)) c.savePrefs();
   ImGui::SameLine();
   ImGui::TextDisabled("（確かめなくても、通知の「元に戻す」か Ctrl+Z で戻せます）");
+  if (ImGui::Checkbox("課題を追加したとき、親や直前の兄弟の値を引き継ぐ", &pr.inherit.on)) c.savePrefs();
+  ImGui::TextDisabled("「子を追加」は親から、「同じ階層に追加」は直前の兄弟から引き継ぎます。追加直後の通知から元に戻せます");
+  ImGui::BeginDisabled(!pr.inherit.on);
+  ImGui::Indent();
+  if (ImGui::Checkbox("担当者", &pr.inherit.assignee)) c.savePrefs();
+  ImGui::SameLine();
+  if (ImGui::Checkbox("優先度", &pr.inherit.prio)) c.savePrefs();
+  ImGui::SameLine();
+  if (ImGui::Checkbox("ラベル", &pr.inherit.labels)) c.savePrefs();
+  ImGui::SameLine();
+  if (ImGui::Checkbox("期限", &pr.inherit.deadline)) c.savePrefs();
+  ImGui::SameLine();
+  if (ImGui::Checkbox("種別（兄弟から）", &pr.inherit.type)) c.savePrefs();
+  ImGui::SameLine();
+  if (ImGui::Checkbox("期間（兄弟から）", &pr.inherit.duration)) c.savePrefs();
+  ImGui::TextDisabled("種別は、オフでも階層で決まります（Epic の子は Task、それ以外は Sub-task）");
+  ImGui::TextWrapped("注意: 担当者を引き継ぐと、同じ人に作業が集まります。同時に進める作業の制限（担当者ごと）や日程が変わるので、追加したあとに担当者を確かめてください");
+  ImGui::Unindent();
+  ImGui::EndDisabled();
 
   // ---- その他 ----
   ImGui::SeparatorText("その他");

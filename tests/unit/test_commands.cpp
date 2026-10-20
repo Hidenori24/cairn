@@ -59,6 +59,146 @@ TEST_CASE("commands: 追加（種別・位置・採番・キー）") {
   CHECK_FALSE(s.isCollapsed("3"));
 }
 
+namespace {
+const char* kInherit =
+    "Issue Id,Issue Type,Summary,Parent,Assignee,Priority,Labels,Deadline,Duration (weeks)\n"
+    "1,Epic,E,,山田,High,a b,2026-12-01,\n"
+    "2,Task,T,1,佐藤,Low,x,2026-11-20,3\n"
+    "3,Story,S,1,鈴木,Highest,,,2\n";
+}
+
+TEST_CASE("commands: 引き継ぎ（既定はオフ。今までどおり）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kInherit), &clk);
+  const auto c = s.addIssue("1", "");
+  CHECK(s.issue(c)->assignee.empty());
+  CHECK(s.issue(c)->prio == "Medium");
+  CHECK(s.issue(c)->labels.empty());
+  CHECK_FALSE(s.issue(c)->deadline);
+  CHECK(s.issue(c)->durW == 1.0);
+  CHECK(s.takeNotices().empty());
+}
+
+TEST_CASE("commands: 引き継ぎ（子を追加は親の値。種別は階層で決まる）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kInherit), &clk);
+  InheritSpec sp;
+  sp.on = true;
+  s.setInherit(sp);
+  const auto c = s.addIssue("1", "");
+  const Issue* o = s.issue(c);
+  CHECK(o->type == "Task");
+  CHECK(o->assignee == "山田");
+  CHECK(o->prio == "High");
+  CHECK_FALSE(o->labels.empty());
+  CHECK(o->labels == s.issue("1")->labels);
+  CHECK(o->deadline == D("2026-12-01"));
+  CHECK(o->durW == 1.0);  // 期間は親からは引き継がない
+  const auto n = s.takeNotices();
+  REQUIRE(n.size() == 1);
+  CHECK(n[0].text.find("親から引き継ぎました") == 0);
+  CHECK(n[0].action == NoticeAction::Undo);
+  // 孫は Sub-task
+  const auto g = s.addIssue("2", "");
+  CHECK(s.issue(g)->type == "Sub-task");
+  CHECK(s.issue(g)->assignee == "佐藤");
+}
+
+TEST_CASE("commands: 引き継ぎ（同じ階層に追加は直前の兄弟のコピー）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kInherit), &clk);
+  InheritSpec sp;
+  sp.on = true;
+  s.setInherit(sp);
+  const auto c = s.addIssue("1", "3");
+  const Issue* o = s.issue(c);
+  CHECK(o->type == "Story");
+  CHECK(o->assignee == "鈴木");
+  CHECK(o->prio == "Highest");
+  CHECK(o->durW == 2.0);
+  CHECK_FALSE(o->deadline);
+  const auto n = s.takeNotices();
+  REQUIRE(n.size() == 1);
+  CHECK(n[0].text.find("直前の兄弟から引き継ぎました") == 0);
+  // 最上位の兄弟
+  const auto r = s.addIssue("", "1");
+  CHECK(s.issue(r)->type == "Epic");
+  CHECK(s.issue(r)->assignee == "山田");
+  CHECK(s.issue(r)->labels == s.issue("1")->labels);
+}
+
+TEST_CASE("commands: 引き継ぎの期限（Deadline 列の無い CSV では Due date を写す）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom("Issue Id,Summary,Parent,Due date\n1,P,,\n2,a,1,2026-11-20\n"), &clk);
+  InheritSpec sp;
+  sp.on = true;
+  s.setInherit(sp);
+  const auto c = s.addIssue("1", "2");
+  CHECK(s.issue(c)->due == D("2026-11-20"));
+  CHECK(s.rows()->size() == 3);
+}
+
+TEST_CASE("commands: 引き継ぐ項目を選べる") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kInherit), &clk);
+  InheritSpec sp;
+  sp.on = true;
+  sp.assignee = false;
+  sp.labels = false;
+  sp.deadline = false;
+  sp.type = false;
+  sp.duration = false;
+  s.setInherit(sp);
+  const auto c = s.addIssue("1", "2");
+  const Issue* o = s.issue(c);
+  CHECK(o->assignee.empty());
+  CHECK(o->labels.empty());
+  CHECK_FALSE(o->deadline);
+  CHECK(o->durW == 1.0);
+  CHECK(o->prio == "Low");
+  // 何も引き継げない（全部外した）ときは通知を出さない
+  sp.prio = false;
+  s.setInherit(sp);
+  s.takeNotices();
+  s.addIssue("1", "2");
+  CHECK(s.takeNotices().empty());
+}
+
+TEST_CASE("commands: 引き継ぎの追加は Undo 1回で戻り、CSV の往復で値が変わらない") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kInherit), &clk);
+  InheritSpec sp;
+  sp.on = true;
+  s.setInherit(sp);
+  const auto before = s.issues();
+  const auto c1 = s.addIssue("1", "2");
+  const auto c2 = s.addIssue("2", "");
+  CHECK(s.undo());
+  CHECK(s.undo());
+  CHECK(s.issues() == before);
+  CHECK(s.redo());
+  CHECK(s.redo());
+  REQUIRE(s.issue(c1));
+  REQUIRE(s.issue(c2));
+  auto imp = csv::importCsv(s.exportText(ExportKind::App));
+  REQUIRE(imp);
+  REQUIRE(imp->issues.size() == s.issues().size());
+  for (const auto& id : {c1, c2}) {
+    const Issue* a = s.issue(id);
+    const Issue* b = nullptr;
+    for (const auto& o : imp->issues)
+      if (o.id == id) b = &o;
+    REQUIRE(b);
+    CHECK(b->type == a->type);
+    CHECK(b->assignee == a->assignee);
+    CHECK(b->prio == a->prio);
+    CHECK(b->labels == a->labels);
+    CHECK(b->deadline == a->deadline);
+    CHECK(b->durW == a->durW);
+    CHECK(b->parent == a->parent);
+  }
+}
+
 TEST_CASE("commands: 削除（子孫も・blocks から外す）と通知") {
   auto clk = clockAt(2026, 10, 19);
   auto d = dataFrom("Issue Id,Summary,Parent,Outward issue link (Blocks)\n1,P,,\n2,a,1,\n3,b,,1\n");
