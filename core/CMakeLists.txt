@@ -16,6 +16,7 @@ add_library(roadmap_core STATIC
   src/clock.cpp
   src/templates.cpp
   src/filter.cpp
+  src/link_candidates.cpp
   src/commands.cpp
   src/project_io.cpp
   src/filestore.cpp

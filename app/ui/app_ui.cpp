@@ -7,6 +7,7 @@
 
 #include <imgui_internal.h>  // ActivateItemByID
 
+#include "roadmap/link_candidates.hpp"
 #include "roadmap/text.hpp"
 #include "ui/icons.hpp"
 #include "ui/internal.hpp"
@@ -69,7 +70,54 @@ void openDetail(Frame& f, const std::string& id, int tab) {
   f.u.detailTab = tab;
 }
 
+void beginLinkPick(Frame& f, const std::string& anchor, bool anchorIsPred) {
+  if (!f.c.session() || !f.c.session()->issue(anchor)) return;
+  f.u.linkPick = {true, anchor, anchorIsPred, f.c.currentId()};
+}
+
+void cancelLinkPick(Frame& f) { f.u.linkPick = {}; }
+
+const std::vector<std::string>& recentLinks(const Frame& f) {
+  static const std::vector<std::string> none;
+  return f.u.recentLinkProject == f.c.currentId() ? f.u.recentLinks : none;
+}
+
+bool linkIssues(Frame& f, const std::string& anchor, bool anchorIsPred, const std::string& other, bool announce) {
+  Session* s = f.c.session();
+  if (!s || !s->tree()) return false;
+  const Tree& T = *s->tree();
+  const int a = T.find(anchor), b = T.find(other);
+  if (a < 0 || b < 0) return false;
+  const int pred = anchorIsPred ? a : b, succ = anchorIsPred ? b : a;
+  const LinkBlock blk = checkLink(T, s->viewIssues(), pred, succ);
+  if (blk != LinkBlock::None) {
+    f.c.toast(std::string(T.did[b]) + " は選べません: " + linkBlockReason(blk));
+    return false;
+  }
+  const std::string pd = T.did[pred], sd = T.did[succ];
+  if (!s->addLink(T.ids[pred], T.ids[succ])) {
+    f.c.afterEdit();
+    return false;
+  }
+  f.c.afterEdit();
+  // 最近つないだ相手として覚える
+  if (f.u.recentLinkProject != f.c.currentId()) {
+    f.u.recentLinkProject = f.c.currentId();
+    f.u.recentLinks.clear();
+  }
+  auto& rl = f.u.recentLinks;
+  rl.erase(std::remove(rl.begin(), rl.end(), other), rl.end());
+  rl.insert(rl.begin(), other);
+  if (rl.size() > 10) rl.resize(10);
+  if (announce) f.c.toast(pd + " → " + sd + " をつなぎました", NoticeAction::Undo);
+  return true;
+}
+
 void rowClick(Frame& f, const std::string& id) {
+  if (f.u.linkPick.active) {  // 相手を選ぶモード: つなげたら抜ける。つなげないときは理由を出して続ける
+    if (linkIssues(f, f.u.linkPick.anchor, f.u.linkPick.anchorIsPred, id, true)) cancelLinkPick(f);
+    return;
+  }
   const ImGuiIO& io = ImGui::GetIO();
   if (io.KeyShift) f.c.rangeSelect(id, f.u.order);
   else if (io.KeyCtrl) f.c.toggleSelect(id);
@@ -717,6 +765,28 @@ void drawBanners(Frame& f) {
     banner("保存できません: " + c.saveError(), u.t->late, u.t->lateBg, "再試行", [&] { c.retrySave(); });
   if (s && !s->error().empty())
     banner(s->error(), u.t->late, u.t->lateBg, "元に戻す", [&] { c.undo(); });
+  // 依存の相手を画面で選ぶモード
+  if (u.linkPick.active) {
+    const Tree* T = s ? s->tree() : nullptr;
+    const int ai = T ? T->find(u.linkPick.anchor) : -1;
+    if (ai < 0 || c.currentId() != u.linkPick.project) {
+      cancelLinkPick(f);
+    } else {
+      const ImVec2 p0 = ImGui::GetCursorScreenPos();
+      const float W = ImGui::GetContentRegionAvail().x, H = u.m.s(34);
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      dl->AddRectFilled(p0, ImVec2(p0.x + W, p0.y + H), u.t->accentBg);
+      const std::string who = "「" + ellipsize(T->did[ai] + " " + T->name[ai], u.m.s(260)) + "」";
+      const std::string msg = u.linkPick.anchorIsPred ? who + " を先行にします。後続にする課題をクリックしてください（Esc で中止）"
+                                                      : who + " を後続にします。先行にする課題をクリックしてください（Esc で中止）";
+      dl->AddText(ImVec2(p0.x + u.m.s(12), p0.y + (H - ImGui::GetTextLineHeight()) / 2), u.t->accent,
+                  ellipsize(msg, W - u.m.s(120)).c_str());
+      ImGui::SetCursorScreenPos(ImVec2(p0.x + W - u.m.s(90), p0.y + u.m.s(3)));
+      if (iconTextButton(u, "linkpick_cancel", nullptr, "中止")) cancelLinkPick(f);
+      ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + H));
+      ImGui::Dummy(ImVec2(0, 0));
+    }
+  }
 }
 
 void drawToasts(Frame& f) {
@@ -794,6 +864,11 @@ void drawContextMenu(Frame& f) {
   }
   if (ImGui::MenuItem("テンプレから子タスクを追加…")) openTplApply(f);
   if (!multi && ImGui::MenuItem("この子タスクをテンプレとして保存…", nullptr, false, !T->kids[idx].empty())) openTplSave(f, id);
+  if (!multi) {
+    ImGui::Separator();
+    if (ImGui::MenuItem("先行にする…", "後続を選ぶ")) beginLinkPick(f, id, true);
+    if (ImGui::MenuItem("後続にする…", "先行を選ぶ")) beginLinkPick(f, id, false);
+  }
   ImGui::Separator();
   ImGui::TextDisabled("状況");
   for (const char* st : {S::kStatusTodo, S::kStatusProg, S::kStatusDone}) {
@@ -979,6 +1054,10 @@ void handleKeys(Frame& f) {
   const bool modal = u.dlg != Dlg::None || u.paletteOpen || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
   if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !io.WantTextInput) {
     if (modal) return;  // ダイアログ・パレット・メニューはそれぞれで閉じる
+    if (u.linkPick.active) {  // 依存の相手を選ぶモードを中止
+      cancelLinkPick(f);
+      return;
+    }
     if (!c.selection().empty()) c.clearSelection();
     else if (u.detailOpen) u.detailOpen = false;
     return;

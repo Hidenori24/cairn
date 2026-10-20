@@ -1,5 +1,6 @@
 // UI の煙テスト: ImGui をヘッドレスで動かし、各ビュー・ダイアログ・パレットを描いて落ちないこと・assert しないことを確かめる。
 // Win32・DX11 は使わない（フォントのテクスチャを作るだけ）。
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -12,6 +13,7 @@
 
 #include "app_controller.hpp"
 #include "roadmap/gen.hpp"
+#include "roadmap/link_candidates.hpp"
 #include "roadmap/schedule.hpp"
 #include "roadmap/text.hpp"
 #include "ui/app_ui.hpp"
@@ -365,6 +367,90 @@ int main() {
       ImGui::GetIO().AddMousePosEvent(200, y);
       h.frame(2);
     }
+  }
+  // 依存の相手の選択（Issue #6）: 画面でクリックして選ぶ・候補から選ぶ・循環は選べない・Undo 1回
+  {
+    h.c.setView(app::View::Gantt);
+    h.frame(2);
+    ui::Frame fr{h.c, h.u, h.p};
+    Session* s = h.c.session();
+    const Tree& T = *s->tree();
+    // つなげる組（A→B）と、つなぐと循環する組を探す
+    std::string idA, idB, idCycA, idCycB;
+    for (int a : T.leafOrder) {
+      for (int b : T.leafOrder) {
+        if (idA.empty() && a != b && checkLink(T, s->viewIssues(), a, b) == LinkBlock::None) idA = T.ids[a], idB = T.ids[b];
+      }
+      for (int b : T.succs[a])
+        if (idCycA.empty()) idCycA = T.ids[a], idCycB = T.ids[b];
+    }
+    check(!idA.empty() && !idCycA.empty(), "依存のテスト用の課題がある");
+    const auto linked = [&](const std::string& from, const std::string& to) {
+      const Issue* o = h.c.session()->issue(from);
+      return o && std::find(o->blocks.begin(), o->blocks.end(), to) != o->blocks.end();
+    };
+    // 循環になる相手は選べない（理由を通知。課題は変わらない）
+    const std::size_t undo0 = s->undoSize();
+    const std::size_t toasts0 = h.c.toasts().size();
+    check(!ui::linkIssues(fr, idCycB, true, idCycA, true), "循環になる相手はつなげない");
+    check(h.c.toasts().size() == toasts0 + 1, "つなげない理由を通知する");
+    check(s->undoSize() == undo0 && !linked(idCycB, idCycA), "つなげないときは何も変わらない");
+    // 選択モード: 自分は選べず続く → Esc で中止
+    ui::beginLinkPick(fr, idA, true);
+    h.frame(2);  // バナー
+    ui::rowClick(fr, idA);
+    check(h.u.linkPick.active, "自分を選んでも選択モードは続く");
+    h.key(ImGuiKey_Escape);
+    check(!h.u.linkPick.active, "Esc で選択モードを中止");
+    // 選択モード: 相手の行をクリックして確定 → Undo 1回で戻る
+    ui::beginLinkPick(fr, idA, true);
+    h.frame(2);
+    ui::rowClick(fr, idB);
+    h.frame(2);
+    check(!h.u.linkPick.active && linked(idA, idB), "行をクリックしてつながる");
+    check(h.c.session()->undoSize() == undo0 + 1, "つなぐのは Undo 1回分");
+    check(!h.u.recentLinks.empty() && h.u.recentLinks.front() == idB, "最近つないだ相手を覚える");
+    h.c.undo();
+    h.frame(2);
+    check(!linked(idA, idB), "Undo 1回で戻る");
+    // 実際のマウスクリック（ガントの行）でも確定または理由が出る
+    ui::beginLinkPick(fr, h.c.session()->issues().back().id, false);
+    h.frame(2);
+    const std::size_t undo1 = h.c.session()->undoSize();
+    const int toast1 = h.c.toasts().empty() ? 0 : h.c.toasts().back().id;
+    // 行の位置はバナーの分だけずれるので、上から順にクリックして、確定するか理由が出るまで探す
+    for (float y = 130; y < 330 && h.u.linkPick.active && (h.c.toasts().empty() ? 0 : h.c.toasts().back().id) == toast1; y += 6)
+      h.click(200, y);
+    check(h.c.session()->undoSize() == undo1 + 1 || (h.c.toasts().size() && h.c.toasts().back().id != toast1),
+          "ガントの行のクリックで確定するか、理由を出して続ける");
+    ui::cancelLinkPick(fr);
+    // 右クリックメニュー
+    ui::openContext(fr, idA);
+    h.frame(3);
+    h.key(ImGuiKey_Escape);
+    // 詳細パネルの入力欄: 入力すると候補が出て、↑↓ と Enter で選べる
+    h.c.select(idB);
+    h.u.detailOpen = true;
+    h.u.detailTab = 1;
+    h.frame(3);
+    ImGuiIO& io = ImGui::GetIO();
+    bool focused = false;
+    for (float y = 120; y < 700 && !focused; y += 6) {
+      h.click(1250, y);
+      focused = io.WantTextInput;
+    }
+    check(focused, "依存関係タブの入力欄に入れる");
+    if (focused) {
+      io.AddInputCharactersUTF8("T");
+      h.frame(3);  // 候補の一覧を描く
+      h.key(ImGuiKey_DownArrow);
+      const std::size_t u2 = h.c.session()->undoSize();
+      h.key(ImGuiKey_Enter);
+      check(h.c.session()->undoSize() == u2 + 1, "↑↓ と Enter で候補から選ぶと Undo 1回分");
+      h.c.undo();
+    }
+    h.u.detailOpen = false;
+    h.frame(2);
   }
   // スイムレーン
   h.c.setView(app::View::Board);
