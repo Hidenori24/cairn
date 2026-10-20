@@ -92,7 +92,10 @@ Status AppController::switchDataDir(const std::string& dirIn, bool copy) {
   saveError_.clear();
   saveDueAt_ = -1;
   firstRun_ = ws_->entries().empty();
-  if (!firstRun_) openSession(ws_->find(prefs_.currentProject) ? prefs_.currentProject : ws_->entries().front().id(), false);
+  if (!firstRun_) {
+    openSession(ws_->find(prefs_.currentProject) ? prefs_.currentProject : ws_->entries().front().id(), false);
+    applyAutoBaseDate();
+  }
   std::string msg = "保存先を切り替えました";
   if (copied) msg += "（" + std::to_string(copied) + "件をコピー";
   if (skipped) msg += std::string(copied ? "・" : "（") + std::to_string(skipped) + "件は新しい場所の方を残しました";
@@ -119,6 +122,18 @@ void AppController::start() {
   }
   const std::string want = ws_->find(prefs_.currentProject) ? prefs_.currentProject : ws_->entries().front().id();
   openSession(want, false);
+  applyAutoBaseDate();
+}
+
+void AppController::applyAutoBaseDate() {
+  if (!prefs_.autoBaseToday || !session_ || currentId_.empty()) return;
+  if (!baseAdjusted_.insert(currentId_).second) return;  // 起動中に1回だけ（手で戻した日付は変えない）
+  const std::string today = clock_.todayIso();
+  const std::string prev = session_->settings().baseDate;
+  if (prev == today) return;
+  session_->setBaseDate(today);
+  afterEdit();
+  toast("基準日を今日（" + today + "）にしました。前の日付は " + prev + "（アプリの設定で切り替えられます）");
 }
 
 void AppController::absorbNotices() {
@@ -256,6 +271,7 @@ bool AppController::openProject(const std::string& id) {
   if (!ws_->find(id)) return false;
   afterEdit();
   openSession(id, false);
+  applyAutoBaseDate();
   return session_ && currentId_ == id;
 }
 

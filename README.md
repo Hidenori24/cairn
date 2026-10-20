@@ -5,7 +5,7 @@ JIRA 互換の CSV を原本に、課題の階層・依存関係・期間から 
 ブラウザ版（JS版）を C++ で作り直したもので、計算・CSV入出力・保存の挙動は JS版と同じです（仕様: [docs/SPEC.md](docs/SPEC.md)）。
 
 - 単一の `.exe`（ポータブル・インストール不要・レジストリに書かない・ネットワーク通信なし）
-- データは実行ファイルの横の `data/projects/` に CSV + 設定JSON で自動保存（Excel で編集しても戻ると反映）
+- データは実行ファイルの横の `data/projects/` に CSV + 設定JSON で自動保存（Excel などで CSV を編集して保存すると、フォルダの監視ですぐ反映）
 - 日本語UI（IME入力対応）、ライト/ダーク、標準/コンパクト、高DPI
 
 ## 構成
@@ -26,7 +26,7 @@ JIRA 互換の CSV を原本に、課題の階層・依存関係・期間から 
 ## ビルド
 
 必要なもの: CMake 3.24+、Ninja、C++20 コンパイラ（MSVC 2022 17.8+ / GCC 12+ / Clang 16+）。
-依存（Dear ImGui 1.90.1・nlohmann/json 3.11.3・doctest 2.4.11）は CMake の FetchContent で版を固定して取得します
+依存（Dear ImGui 1.90.1・nlohmann/json 3.11.3・doctest 2.5.3）は CMake の FetchContent で版を固定して取得します
 （vcpkg などでインストール済みならそちらを使います）。
 
 ```sh

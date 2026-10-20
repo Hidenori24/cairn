@@ -430,6 +430,9 @@ void dlgAppSettings(Frame& f) {
     u.dName = pr.me;
     c.savePrefs();
   }
+  if (ImGui::Checkbox("プロジェクトを開いたら基準日を今日に合わせる", &pr.autoBaseToday)) c.savePrefs();
+  ImGui::SameLine();
+  ImGui::TextDisabled("（起動中、プロジェクトごとに1回。前の日付は通知に出します）");
   if (ImGui::Checkbox("課題を削除する前に確かめる", &pr.confirmDelete)) c.savePrefs();
   ImGui::SameLine();
   ImGui::TextDisabled("（確かめなくても、通知の「元に戻す」か Ctrl+Z で戻せます）");

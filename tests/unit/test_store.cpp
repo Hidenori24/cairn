@@ -286,6 +286,7 @@ TEST_CASE("store: データフォルダの決定・prefs") {
   p.uiScale = 125;
   p.dimPercent = 45;
   p.confirmDelete = true;
+  p.autoBaseToday = true;
   REQUIRE(savePrefs(fs, "roadmap_prefs.json", p));
   Prefs q = loadPrefs(fs, "roadmap_prefs.json");
   CHECK(q.me == "田中");
@@ -293,6 +294,7 @@ TEST_CASE("store: データフォルダの決定・prefs") {
   CHECK(q.uiScale == 125);
   CHECK(q.dimPercent == 45);
   CHECK(q.confirmDelete);
+  CHECK(q.autoBaseToday);
   CHECK(q.unknown.size() == 1);
   CHECK(q.unknown["future"] == true);
   CHECK(loadPrefs(fs, "ない.json").theme == "auto");

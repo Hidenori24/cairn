@@ -51,6 +51,36 @@ void vlog(const char* s) {
   if (gVerbose) std::fprintf(stderr, "[roadmap] %s\n", s);
 }
 
+// ---------------------------------------------------------------- データフォルダの監視（8.5 の任意項目）
+// 変更の通知を受けたら少し待ってから同期する（Excel の保存などで続けて届く通知をまとめる）。
+// 自分の保存でも通知は来るが、同期は更新時刻が覚えているものと同じなら何もしない
+class FolderWatch {
+ public:
+  ~FolderWatch() { close(); }
+  void watch(const std::string& dir) {
+    if (dir == dir_ && h_ != INVALID_HANDLE_VALUE) return;
+    close();
+    dir_ = dir;
+    h_ = FindFirstChangeNotificationW(win::widen(dir).c_str(), FALSE,
+                                      FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE);
+    vlog(h_ == INVALID_HANDLE_VALUE ? "フォルダを監視できません" : "フォルダの監視を始めました");
+  }
+  HANDLE handle() const { return h_; }
+  bool fired() {
+    if (h_ == INVALID_HANDLE_VALUE || WaitForSingleObject(h_, 0) != WAIT_OBJECT_0) return false;
+    FindNextChangeNotification(h_);
+    return true;
+  }
+
+ private:
+  void close() {
+    if (h_ != INVALID_HANDLE_VALUE) FindCloseChangeNotification(h_);
+    h_ = INVALID_HANDLE_VALUE;
+  }
+  std::string dir_;
+  HANDLE h_ = INVALID_HANDLE_VALUE;
+};
+
 // ---------------------------------------------------------------- DirectX 11
 void createRenderTarget() {
   ID3D11Texture2D* back = nullptr;
@@ -379,9 +409,23 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
   bool done = false;
   int idleFrames = 0;
+  FolderWatch watch;
+  ULONGLONG syncDueAt = 0;  // 0 = 予定なし
   while (!done) {
-    // 入力がなければ少し待つ（保存のタイマーは 50ms ごとに回る）
-    if (idleFrames > 4) MsgWaitForMultipleObjects(0, nullptr, FALSE, 50, QS_ALLINPUT);
+    watch.watch(ctl.dataDir());  // 保存先を切り替えたら監視し直す
+    // 入力がなければ少し待つ（保存のタイマーは 50ms ごとに回る。フォルダの変更でも起きる）
+    if (idleFrames > 4) {
+      HANDLE h = watch.handle();
+      MsgWaitForMultipleObjects(h != INVALID_HANDLE_VALUE ? 1 : 0, &h, FALSE, 50, QS_ALLINPUT);
+    }
+    if (watch.fired()) syncDueAt = GetTickCount64() + 500;
+    // 編集中・ダイアログ中は待つ（入力の途中でプロジェクトを開き直さない）
+    if (syncDueAt != 0 && GetTickCount64() >= syncDueAt && uiState.editField == ui::EditField::None &&
+        uiState.dlg == ui::Dlg::None && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      syncDueAt = 0;
+      vlog("フォルダの変更を読み込みます");
+      ctl.syncFolder(false);
+    }
     MSG msg;
     bool any = false;
     while (PeekMessageW(&msg, nullptr, 0U, 0U, PM_REMOVE)) {

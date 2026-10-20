@@ -233,3 +233,36 @@ TEST_CASE("controller: 保存先の切り替え（コピーする・しない・
   CHECK(e.c.dataDirLocked());
   CHECK_FALSE(e.c.switchDataDir("app/other", false));
 }
+
+TEST_CASE("controller: 開いたら基準日を今日に合わせる（アプリの設定。プロジェクトごとに起動中1回）") {
+  Env e;
+  e.c.start();
+  const std::string a = e.c.createProject(SampleKind::Empty, "A", "");
+  e.c.session()->setBaseDate("2026-09-01");
+  e.c.afterEdit();
+  const std::string b = e.c.createProject(SampleKind::Empty, "B", "");
+  REQUIRE(e.c.flushNow());
+  // 設定がオフなら変えない
+  e.c.openProject(a);
+  CHECK(e.c.session()->settings().baseDate == "2026-09-01");
+  e.c.prefs().autoBaseToday = true;
+  e.c.openProject(b);
+  e.c.openProject(a);
+  CHECK(e.c.session()->settings().baseDate == "2026-10-19");
+  CHECK(e.c.toasts().back().text.find("2026-09-01") != std::string::npos);  // 前の日付を知らせる
+  // 同じ起動中は1回だけ（手で戻した日付をまた変えない）
+  e.c.session()->setBaseDate("2026-09-01");
+  e.c.afterEdit();
+  e.c.openProject(b);
+  e.c.openProject(a);
+  CHECK(e.c.session()->settings().baseDate == "2026-09-01");
+  // 新しい起動（作り直し）では、前回の日付から今日へ
+  REQUIRE(e.c.flushNow());
+  e.c.prefs().currentProject = a;
+  e.c.savePrefs();
+  AppController c2{e.fs, e.clk, "data", "roadmap_prefs.json"};
+  c2.start();
+  REQUIRE(c2.session());
+  CHECK(c2.prefs().autoBaseToday);
+  CHECK(c2.session()->settings().baseDate == "2026-10-19");
+}

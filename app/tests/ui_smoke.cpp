@@ -163,11 +163,17 @@ int main() {
     check(h.c.session()->issue("7")->summary.find("取り消す") == std::string::npos, "Esc では変更しない");
     // N で追加して編集 → Enter（追加直後の行は次の行を追加して続ける）
     h.c.select("7");
-    h.key(ImGuiKey_N);
+    // N を押した直後（入力欄がまだアクティブになる前）に打った文字も落とさない（B13）。
+    // N 自身の文字は入れない
+    io.AddKeyEvent(ImGuiKey_N, true);
+    io.AddInputCharacter('n');
+    h.frame();
+    io.AddKeyEvent(ImGuiKey_N, false);
     check(h.u.editField == ui::EditField::Name && h.u.editFresh, "N で追加して編集");
     const std::string first = h.u.editId;
-    h.frame();  // 入力欄がアクティブになってから打つ（人の入力の速さ）
-    io.AddInputCharactersUTF8("追加1");
+    io.AddInputCharactersUTF8("追");
+    h.frame();
+    io.AddInputCharactersUTF8("加1");
     h.frame();
     h.key(ImGuiKey_Enter);
     check(h.u.editField == ui::EditField::Name && h.u.editId != first, "追加直後の Enter で次の行");

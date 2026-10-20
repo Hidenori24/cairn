@@ -54,6 +54,10 @@ struct UiState {
   bool editFresh = false;          // 追加直後の行
   bool editFocus = false;          // 次のフレームでフォーカスを入れる
   std::string editStartValue;
+  // 編集を始めてから入力欄がアクティブになるまでに打った文字（落とさずに入れる。B13）
+  bool editActive = false;
+  int editArmFrame = 0;  // 編集を始めたフレーム
+  std::vector<ImWchar> editPendingChars;
 
   // メニュー・ダイアログ
   Dlg dlg = Dlg::None;

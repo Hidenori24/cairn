@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -171,6 +172,7 @@ class AppController {
 
  private:
   void openSession(const std::string& id, bool keepHistory);
+  void applyAutoBaseDate();  // アプリの設定「開いたら基準日を今日に」（利用者が開いたときだけ）
   void scheduleSave();
   void absorbNotices();
   std::int64_t now() const { return clock_.monotonicMs(); }
@@ -178,6 +180,7 @@ class AppController {
   IFileStore& fs_;
   const IClock& clock_;
   std::unique_ptr<Workspace> ws_;
+  std::set<std::string> baseAdjusted_;  // この起動中に基準日を今日に合わせたプロジェクト
   DataDirChoice dirInfo_;
   std::string exeDir_;
   std::string prefsPath_;

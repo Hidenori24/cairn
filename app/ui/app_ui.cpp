@@ -109,6 +109,9 @@ void beginEdit(Frame& f, const std::string& id, EditField field, bool fresh) {
     f.u.editBuf = s->rows() ? csv::fmtNum(s->rows()->at(i).weeks) : "1";
   }
   f.u.editStartValue = f.u.editBuf;
+  f.u.editActive = false;
+  f.u.editArmFrame = ImGui::GetFrameCount();
+  f.u.editPendingChars.clear();
   f.c.select(id);
 }
 
@@ -144,6 +147,8 @@ void endEdit(UiState& u) {
   u.editField = EditField::None;
   u.editId.clear();
   u.editFresh = false;
+  u.editActive = false;
+  u.editPendingChars.clear();
 }
 }  // namespace
 
@@ -160,8 +165,18 @@ bool drawInlineEdit(Frame& f, float w) {
   int tab = 0;
   ImGuiInputTextFlags fl = ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_CallbackCompletion;
   if (u.editField == EditField::Dur) fl |= ImGuiInputTextFlags_CharsDecimal;
+  if (ImGui::GetActiveID() == ImGui::GetID("##e") && !u.editPendingChars.empty()) {
+    // アクティブになる前に打った文字を、このフレームの入力の前に入れる
+    ImGuiIO& io = ImGui::GetIO();
+    ImVector<ImWchar> q;
+    for (ImWchar ch : u.editPendingChars) q.push_back(ch);
+    for (ImWchar ch : io.InputQueueCharacters) q.push_back(ch);
+    io.InputQueueCharacters.swap(q);
+    u.editPendingChars.clear();
+  }
   ImGui::InputText("##e", &u.editBuf, fl, tabCallback, &tab);
   const bool active = ImGui::IsItemActive();
+  u.editActive = active;
   const bool deactivated = ImGui::IsItemDeactivated();
   ImGui::PopID();
   const ImGuiIO& io = ImGui::GetIO();
@@ -1037,6 +1052,14 @@ void collectGlyphs(const AppController& c, std::set<ImWchar>& out) {
 void drawApp(AppController& c, UiState& u, IPlatform& p) {
   Frame f{c, u, p};
   if (u.imeCooldown > 0) --u.imeCooldown;
+  // その場編集を始めたが入力欄がまだアクティブでない間に打った文字は、取っておいてアクティブになったら入れる（B13）。
+  // 編集を始めたフレームの文字（N など、始めるのに押したキー）は前のフレームで捨てられているので入らない
+  // 入力欄が出ないまま（行が見えないなど）なら 30 フレームでやめる（ほかの入力を塞がないように）
+  if (u.editField != EditField::None && !u.editActive && ImGui::GetFrameCount() - u.editArmFrame <= 30) {
+    ImGuiIO& io = ImGui::GetIO();
+    for (ImWchar ch : io.InputQueueCharacters) u.editPendingChars.push_back(ch);
+    io.InputQueueCharacters.resize(0);
+  }
   c.tick();
   const ImGuiViewport* vp = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(vp->WorkPos);

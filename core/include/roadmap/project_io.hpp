@@ -81,6 +81,7 @@ struct Prefs {
   int uiScale = 100;         // 文字の大きさ（%、80〜200）
   int dimPercent = 30;       // 上の絞り込みで薄くするときの不透明度（%、10〜80）
   bool confirmDelete = false;  // 課題を削除する前に確かめる
+  bool autoBaseToday = false;  // プロジェクトを開いたら基準日を今日に合わせる（起動中、プロジェクトごとに1回）
   Json unknown = Json::object();
 };
 Prefs prefsFromJson(const Json& j);
