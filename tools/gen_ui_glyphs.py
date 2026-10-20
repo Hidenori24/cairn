@@ -25,8 +25,9 @@ def collect():
 def main():
     cps = collect()
     lines = ["// 自動生成（tools/gen_ui_glyphs.py）。画面の文言に使っている文字。編集しない"]
-    for i in range(0, len(cps), 12):
-        lines.append(", ".join("0x%04X" % c for c in cps[i:i + 12]) + ",")
+    # 1行に1文字（別々のブランチで文言を足してもマージで衝突しにくい）
+    for c in cps:
+        lines.append("0x%04X," % c)
     out = os.path.join(ROOT, "app", "ui", "ui_glyphs.inc")
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")

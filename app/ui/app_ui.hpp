@@ -28,11 +28,14 @@ class IPlatform {
   virtual std::optional<std::string> pickFolder(const std::string& start) = 0;
   virtual bool systemDark() = 0;
   virtual void requestQuit() = 0;
+  // クリップボードのテキスト（UTF-8）。テキストがない・読めないときは nullopt。
+  // 貼り付けた内容は個人情報を含みうるので、ログには出さない
+  virtual std::optional<std::string> clipboardText() { return std::nullopt; }
 };
 
 enum class Dlg {
   None, NewProject, EditProject, ConfirmDelete, Import, Export, Folder, Settings, Workload, Warnings, Shortcuts,
-  TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete
+  TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete, PasteChildren
 };
 
 enum class EditField { None, Name, Assignee, Dur };
@@ -76,6 +79,17 @@ struct UiState {
   // 詳細パネル
   bool detailOpen = false;
   int detailTab = 0;  // 0=詳細 1=依存関係 2=コメント
+
+  // 依存の相手を画面（一覧・ガント・ボード）のクリックで選ぶモード（Esc で中止）
+  struct LinkPick {
+    bool active = false;
+    std::string anchor;          // 起点の課題
+    bool anchorIsPred = false;   // true = 起点が先行（相手を後続に選ぶ）
+    std::string project;         // 始めたプロジェクト（切り替わったら中止）
+  } linkPick;
+  // 最近つないだ課題（新しい順。プロジェクトごとに覚え、アプリを閉じると忘れる）
+  std::string recentLinkProject;
+  std::vector<std::string> recentLinks;
 
   // ダイアログの入力
   std::string dName, dKey, dText, dText2, dSearch;
@@ -133,6 +147,9 @@ struct UiState {
   bool pendingCopy = true;
   int pendingCount = 0;
   std::vector<std::string> pendingDelete;  // 削除の確認ダイアログで消す課題
+  // 貼り付けで子課題をまとめて作る（確認ダイアログ）
+  std::string pasteParent;  // 追加先の親
+  Outline paste;            // 貼り付けた内容を解析したもの（ダイアログを閉じたら捨てる）
   int sortDir = 0;  // 0=解除 1=昇順 -1=降順
 
   // 画面に並んでいる順（Shift 選択・矢印用）

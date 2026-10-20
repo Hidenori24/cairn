@@ -342,3 +342,98 @@ TEST_CASE("controller: 画面の拡大縮小（段階・上下限・100%に戻�
   CHECK(e.c.setUiScale(999));
   CHECK(e.c.prefs().uiScale == 200);
 }
+
+TEST_CASE("controller: 選択を順につなぐ・外す（表示順・重複なし・循環は理由を出す・Undo 1回・保存）") {
+  Env e;
+  e.c.start();
+  e.c.createProject(SampleKind::Empty, "P", "");
+  Session* s = e.c.session();
+  const auto a = s->addIssue("", "", "A");
+  const auto b = s->addIssue("", a, "B");
+  const auto c = s->addIssue("", b, "C");
+  e.c.afterEdit();
+  s->clearHistory();
+  // 何も選んでいなければ何もしない
+  CHECK_FALSE(e.c.chainSelection({a, b, c}).ok);
+  // 3件を選ぶ（選んだ順は C,A,B）。画面の順（A,B,C）でつなぐ
+  e.c.setSelection({c, a, b}, b);
+  const auto r = e.c.chainSelection({a, b, c});
+  CHECK(r.ok);
+  CHECK(r.added == 2);
+  CHECK(s->issue(a)->blocks == std::vector<std::string>{b});
+  CHECK(s->issue(b)->blocks == std::vector<std::string>{c});
+  // 通知（元に戻すつき）
+  REQUIRE_FALSE(e.c.toasts().empty());
+  CHECK(e.c.toasts().back().action == NoticeAction::Undo);
+  // もう一度は何もしない（重複なし）。Undo も増えない
+  const auto undoSize = s->undoSize();
+  CHECK(e.c.chainSelection({a, b, c}).added == 0);
+  CHECK(s->undoSize() == undoSize);
+  // 保存される
+  e.step(500);
+  CHECK(e.c.saveState() == SaveState::Saved);
+  // 1回の Undo で戻る
+  e.c.undo();
+  CHECK(s->issue(a)->blocks.empty());
+  CHECK(s->issue(b)->blocks.empty());
+  // 画面の順が C,B,A なら C→B→A
+  CHECK(e.c.chainSelection({c, b, a}).ok);
+  CHECK(s->issue(c)->blocks == std::vector<std::string>{b});
+  // 逆向き（A→B）は循環になる。何も変えず、理由を出す
+  e.c.setSelection({a, b}, b);
+  const auto bad = e.c.chainSelection({a, b});
+  CHECK_FALSE(bad.ok);
+  CHECK(s->issue(a)->blocks.empty());
+  CHECK(e.c.toasts().back().text.find("ループ") != std::string::npos);
+  // 外す: 選んだ課題どうしのつなぎ
+  e.c.setSelection({a, b, c}, b);
+  CHECK(e.c.unchainSelection() == 2);
+  CHECK(s->issue(c)->blocks.empty());
+  CHECK(s->issue(b)->blocks.empty());
+  e.c.undo();
+  CHECK(s->issue(c)->blocks == std::vector<std::string>{b});
+}
+
+TEST_CASE("controller: 新しい課題の名前（アプリの設定。既定は今のまま）") {
+  Env e;
+  e.c.start();
+  e.c.createProject(SampleKind::Empty, "P", "dev");
+  // 既定: 今のまま
+  CHECK(e.c.prefs().newNameFormat == "keep");
+  const auto a = e.c.createIssue("", "");
+  REQUIRE_FALSE(a.empty());
+  CHECK(e.c.session()->issue(a)->summary == "新しい課題");
+  const auto a2 = e.c.createIssue(a, "");
+  CHECK(e.c.session()->issue(a2)->summary == "新しい課題");
+
+  // 親の名前＋連番（追加を続けても、消したあとでも重ならない）
+  e.c.session()->setName(a, "要件定義");
+  e.c.afterEdit();
+  e.c.prefs().newNameFormat = "parentSeq";
+  const auto b1 = e.c.createIssue(a, "");
+  const auto b2 = e.c.createIssue(a, b1);
+  CHECK(e.c.session()->issue(b1)->summary == "要件定義の子 2");  // 先に「新しい課題」の子が1件ある
+  CHECK(e.c.session()->issue(b2)->summary == "要件定義の子 3");
+  e.c.session()->deleteIssues({a2});
+  e.c.afterEdit();
+  const auto b3 = e.c.createIssue(a, "");
+  CHECK(e.c.session()->issue(b3)->summary == "要件定義の子 4");
+
+  // 最上位は「新しい課題 n」
+  const auto t = e.c.createIssue("", "");
+  CHECK(e.c.session()->issue(t)->summary == "新しい課題 2");  // 最上位に「要件定義」が1件ある
+
+  // 自由入力: 親の表示ID・日付（時計から）
+  e.c.prefs().newNameFormat = "custom";
+  e.c.prefs().newNameCustom = "{親ID}/{n} {日付}";
+  const auto c1 = e.c.createIssue(a, "");
+  CHECK(e.c.session()->issue(c1)->summary == "DEV-" + a + "/4 2026-10-19");
+
+  // 追加（addSibling / addChild）も同じ名前になる
+  e.c.prefs().newNameFormat = "parentDefault";
+  e.c.select(b1);
+  const auto s1 = e.c.addSibling();
+  CHECK(e.c.session()->issue(s1)->summary == "要件定義／新しい課題");
+  const auto s2 = e.c.addChild();
+  CHECK(e.c.session()->issue(s2)->summary == "要件定義／新しい課題／新しい課題");  // s1 の子（addSibling が選択を移した）
+}

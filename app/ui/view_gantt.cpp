@@ -351,7 +351,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
       ImGui::InvisibleButton("##ms", ImVec2(u.m.s(16), u.m.s(16)));
       if (ImGui::IsItemHovered()) hoverTipId = T.ids[id];
     } else {
-      const bool movable = !r.done && !r.pinned;
+      const bool movable = !r.done && !r.pinned && !u.linkPick.active;
       Day s0 = r.asapStart, f0 = r.asapFinish;
       if (dragIdx == id) {
         if (u.barDrag.resize) f0 = std::max(s0, u.barDrag.origFinish + dragDelta);
@@ -620,8 +620,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
       ImGui::BeginGroup();
       ImGui::TextDisabled("%s", S::kEmptyProject);
       if (iconTextButton(u, "first", "plus", S::kFirstIssue, true)) {
-        const std::string nid = s->addIssue("", "");
-        c.afterEdit();
+        const std::string nid = c.createIssue("", "");
         if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
       }
       ImGui::SameLine();

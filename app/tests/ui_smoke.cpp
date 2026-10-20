@@ -1,5 +1,6 @@
 // UI の煙テスト: ImGui をヘッドレスで動かし、各ビュー・ダイアログ・パレットを描いて落ちないこと・assert しないことを確かめる。
 // Win32・DX11 は使わない（フォントのテクスチャを作るだけ）。
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -9,9 +10,11 @@
 #include <string>
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include "app_controller.hpp"
 #include "roadmap/gen.hpp"
+#include "roadmap/link_candidates.hpp"
 #include "roadmap/schedule.hpp"
 #include "roadmap/text.hpp"
 #include "ui/app_ui.hpp"
@@ -28,6 +31,8 @@ struct NullPlatform : ui::IPlatform {
   std::optional<std::string> picked;
   bool systemDark() override { return false; }
   void requestQuit() override {}
+  std::optional<std::string> clip;  // クリップボードの代わり（テストが差し替える）
+  std::optional<std::string> clipboardText() override { return clip; }
 };
 
 int failures = 0;
@@ -186,6 +191,38 @@ int main() {
     check(h.u.editField == ui::EditField::Name && h.u.editId != first, "追加直後の Enter で次の行");
     h.key(ImGuiKey_Escape);
     check(h.c.session()->issue(first) && h.c.session()->issue(first)->summary == "追加1", "追加した行の件名");
+    // 新しい課題の名前（アプリの設定）: 既定の名前が入力欄に入り、そのまま Enter で確定して次の行も同じ流儀で付く
+    h.c.prefs().newNameFormat = "parentSeq";
+    h.c.select("7");
+    io.AddKeyEvent(ImGuiKey_N, true);
+    h.frame();
+    io.AddKeyEvent(ImGuiKey_N, false);
+    h.frame();
+    const std::string n1 = h.u.editId;
+    check(h.u.editField == ui::EditField::Name && h.u.editFresh && n1 != "7", "設定ありでも N で追加して編集");
+    const std::string name1 = h.c.session()->issue(n1) ? h.c.session()->issue(n1)->summary : "";
+    check(!name1.empty() && name1 != "新しい課題", "追加した行に設定どおりの名前が付く");
+    check(h.u.editBuf == h.c.session()->tree()->name[h.c.session()->find(n1)], "入力欄に既定の名前が入る");
+    h.key(ImGuiKey_Enter);  // 何も打たずに確定 → 次の行を追加
+    const std::string n2 = h.u.editId;
+    check(h.u.editField == ui::EditField::Name && n2 != n1, "追加直後の Enter で次の行（設定あり）");
+    const std::string name2 = h.c.session()->issue(n2) ? h.c.session()->issue(n2)->summary : "";
+    check(h.c.session()->issue(n1) && h.c.session()->issue(n1)->summary == name1, "そのまま確定した行の名前が残る");
+    check(!name2.empty() && name2 != "新しい課題" && name2 != name1, "次の行にも名前が付き、兄弟と重ならない");
+    h.key(ImGuiKey_Escape);
+    // 後のガントの拡大の検査（頂点数が16ビットに収まる行数）に影響しないよう、増やした行は消す
+    h.c.session()->deleteIssues({n1, n2});
+    h.c.afterEdit();
+    // 自由入力でアプリの設定を描く
+    h.c.prefs().newNameFormat = "custom";
+    h.c.prefs().newNameCustom = "{親}の子 {n}（{日付}）";
+    h.c.select("7");
+    h.u.dlg = ui::Dlg::AppSettings;
+    h.u.dlgOpening = true;
+    h.frame(3);
+    h.u.dlg = ui::Dlg::None;
+    h.frame(1);
+    h.c.prefs().newNameFormat = "keep";
   }
   // ガントでも同じ（編集の確定で計算し直しても、同じフレームの描画が古い参照で壊れないこと）
   {
@@ -207,6 +244,42 @@ int main() {
   // 複数選択（まとめ編集バー）
   h.c.setSelection({"6", "7", "8"}, "8");
   h.frame(3);
+  // 選んだ課題を順につなぐ・外す（一覧・ガント・ボードのどこから選んでも。右クリックのメニューと選択バーを描く）
+  {
+    Session* ss = h.c.session();
+    const auto na = ss->addIssue("", "", "鎖A");
+    const auto nb = ss->addIssue("", na, "鎖B");
+    const auto nc = ss->addIssue("", nb, "鎖C");
+    h.c.afterEdit();
+    for (auto v : {app::View::List, app::View::Gantt, app::View::Board}) {
+      h.c.setView(v);
+      h.c.setSelection({nc, na, nb}, nb);
+      h.frame(2);
+      ui::Frame fr{h.c, h.u, h.p};
+      ui::openContext(fr, nb);
+      h.frame(3);  // メニューとバーを描く
+      h.click(1430, 880);  // メニューの外を押して閉じる
+      check(!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), "メニューが閉じる");
+      h.c.setSelection({nc, na, nb}, nb);
+      const auto before = ss->undoSize();
+      const auto r = h.c.chainSelection(h.u.order);
+      check(r.ok && r.added == 2, "順につなぐ（画面の表示順）");
+      check(ss->issue(na)->blocks == std::vector<std::string>{nb} && ss->issue(nb)->blocks == std::vector<std::string>{nc},
+            "A→B→C のつなぎができる");
+      h.frame(2);  // つないだ後の描画
+      check(!h.c.chainSelection(h.u.order).added, "もう一度は重複しない");
+      check(ss->undoSize() == before + 1, "Undo は1回分");
+      h.key(ImGuiKey_Z, true);
+      check(ss->issue(na)->blocks.empty() && ss->issue(nb)->blocks.empty(), "Undo 1回でつなぎが戻る");
+      h.c.chainSelection(h.u.order);
+      check(h.c.unchainSelection() == 2, "つなぎを外す");
+      h.frame(2);
+      h.c.undo();
+      h.c.undo();
+    }
+    h.c.clearSelection();
+    h.frame(1);
+  }
   // すべてのダイアログ
   for (int d = 1; d <= static_cast<int>(ui::Dlg::ConfirmIssueDelete); ++d) {
     h.u.dTargets = {"1"};
@@ -215,6 +288,57 @@ int main() {
     h.frame(3);
     h.u.dlg = ui::Dlg::None;
     h.frame(1);
+  }
+  // 貼り付け: Ctrl+V → プレビュー → 追加 → 元に戻す（クリップボードはスタブ）
+  {
+    h.c.setView(app::View::List);
+    h.u.editField = ui::EditField::None;
+    h.frame(2);
+    const std::size_t n0 = h.c.session()->issues().size();
+    // 親が選ばれていない・クリップボードが空のときはダイアログを開かない
+    h.c.clearSelection();
+    h.p.clip = "a\nb";
+    h.key(ImGuiKey_V, true);
+    check(h.u.dlg == ui::Dlg::None, "親が選ばれていなければ貼り付けのダイアログを開かない");
+    h.c.select("6");
+    h.p.clip = std::nullopt;
+    h.key(ImGuiKey_V, true);
+    check(h.u.dlg == ui::Dlg::None, "クリップボードが空ならダイアログを開かない");
+    h.p.clip = " \n\u3000\n";
+    h.key(ImGuiKey_V, true);
+    check(h.u.dlg == ui::Dlg::None, "空行だけなら開かない");
+    // 解析 → プレビュー（階層が飛ぶ行は丸めて警告）
+    h.p.clip = "子A\n\t孫A1\n\t\t\t飛んだ孫\n- 子B\r\n\n";
+    h.key(ImGuiKey_V, true);
+    check(h.u.dlg == ui::Dlg::PasteChildren, "Ctrl+V で貼り付けのプレビューを開く");
+    check(h.u.paste.items.size() == 4 && !h.u.paste.warns.empty(), "プレビューの件数と警告");
+    h.frame(3);
+    // Esc で取り消し（何も作らず、貼り付けた内容も捨てる）
+    h.key(ImGuiKey_Escape);
+    check(h.u.dlg == ui::Dlg::None && h.u.paste.items.empty(), "Esc で取り消せる");
+    check(h.c.session()->issues().size() == n0, "取り消したら作らない");
+    // 「追加」ボタン（Esc は選択も外すので、選び直す）
+    h.c.select("6");
+    h.key(ImGuiKey_V, true);
+    check(h.u.dlg == ui::Dlg::PasteChildren, "もう一度開く");
+    h.frame(3);
+    ImGuiWindow* w = ImGui::FindWindowByName("###dlg");
+    check(w != nullptr, "ダイアログの窓");
+    if (w) {
+      // 右下の主ボタン。位置は字の幅に左右されるので、窓の中を縦に探す
+      for (float dy = 8; dy < 50 && h.u.dlg == ui::Dlg::PasteChildren; dy += 4) h.click(w->Pos.x + w->Size.x - 45, w->Pos.y + w->Size.y - dy);
+      h.frame(2);
+    }
+    check(h.u.dlg == ui::Dlg::None, "追加でダイアログが閉じる");
+    check(h.c.session()->issues().size() == n0 + 4, "貼り付けた行が子課題になる");
+    const Issue* a = nullptr;
+    for (const auto& o : h.c.session()->issues())
+      if (o.summary.find("子A") != std::string::npos) a = &o;
+    check(a && a->parent == "6", "子Aは選んだ課題の子");
+    h.c.undo();
+    h.frame(2);
+    check(h.c.session()->issues().size() == n0, "Undo 1回でまとめて戻る");
+    h.p.clip = std::nullopt;
   }
   // 絞り込み・並べ替え
   h.c.filter().q = "CRA";
@@ -372,6 +496,90 @@ int main() {
       h.frame(2);
     }
   }
+  // 依存の相手の選択（Issue #6）: 画面でクリックして選ぶ・候補から選ぶ・循環は選べない・Undo 1回
+  {
+    h.c.setView(app::View::Gantt);
+    h.frame(2);
+    ui::Frame fr{h.c, h.u, h.p};
+    Session* s = h.c.session();
+    const Tree& T = *s->tree();
+    // つなげる組（A→B）と、つなぐと循環する組を探す
+    std::string idA, idB, idCycA, idCycB;
+    for (int a : T.leafOrder) {
+      for (int b : T.leafOrder) {
+        if (idA.empty() && a != b && checkLink(T, s->viewIssues(), a, b) == LinkBlock::None) idA = T.ids[a], idB = T.ids[b];
+      }
+      for (int b : T.succs[a])
+        if (idCycA.empty()) idCycA = T.ids[a], idCycB = T.ids[b];
+    }
+    check(!idA.empty() && !idCycA.empty(), "依存のテスト用の課題がある");
+    const auto linked = [&](const std::string& from, const std::string& to) {
+      const Issue* o = h.c.session()->issue(from);
+      return o && std::find(o->blocks.begin(), o->blocks.end(), to) != o->blocks.end();
+    };
+    // 循環になる相手は選べない（理由を通知。課題は変わらない）
+    const std::size_t undo0 = s->undoSize();
+    const std::size_t toasts0 = h.c.toasts().size();
+    check(!ui::linkIssues(fr, idCycB, true, idCycA, true), "循環になる相手はつなげない");
+    check(h.c.toasts().size() == toasts0 + 1, "つなげない理由を通知する");
+    check(s->undoSize() == undo0 && !linked(idCycB, idCycA), "つなげないときは何も変わらない");
+    // 選択モード: 自分は選べず続く → Esc で中止
+    ui::beginLinkPick(fr, idA, true);
+    h.frame(2);  // バナー
+    ui::rowClick(fr, idA);
+    h.frame(2);
+    check(h.u.linkPick.active, "自分を選んでも選択モードは続く");
+    h.key(ImGuiKey_Escape);
+    check(!h.u.linkPick.active, "Esc で選択モードを中止");
+    // 選択モード: 相手の行をクリックして確定 → Undo 1回で戻る
+    ui::beginLinkPick(fr, idA, true);
+    h.frame(2);
+    ui::rowClick(fr, idB);
+    h.frame(2);
+    check(!h.u.linkPick.active && linked(idA, idB), "行をクリックしてつながる");
+    check(h.c.session()->undoSize() == undo0 + 1, "つなぐのは Undo 1回分");
+    check(!h.u.recentLinks.empty() && h.u.recentLinks.front() == idB, "最近つないだ相手を覚える");
+    h.c.undo();
+    h.frame(2);
+    check(!linked(idA, idB), "Undo 1回で戻る");
+    // 実際のマウスクリック（ガントの行）でも確定または理由が出る
+    ui::beginLinkPick(fr, h.c.session()->issues().back().id, false);
+    h.frame(2);
+    const std::size_t undo1 = h.c.session()->undoSize();
+    const int toast1 = h.c.toasts().empty() ? 0 : h.c.toasts().back().id;
+    // 行の位置はバナーの分だけずれるので、上から順にクリックして、確定するか理由が出るまで探す
+    for (float y = 130; y < 330 && h.u.linkPick.active && (h.c.toasts().empty() ? 0 : h.c.toasts().back().id) == toast1; y += 6)
+      h.click(200, y);
+    check(h.c.session()->undoSize() == undo1 + 1 || (h.c.toasts().size() && h.c.toasts().back().id != toast1),
+          "ガントの行のクリックで確定するか、理由を出して続ける");
+    ui::cancelLinkPick(fr);
+    // 右クリックメニュー
+    ui::openContext(fr, idA);
+    h.frame(3);
+    h.key(ImGuiKey_Escape);
+    // 詳細パネルの入力欄: 入力すると候補が出て、↑↓ と Enter で選べる
+    h.c.select(idB);
+    h.u.detailOpen = true;
+    h.u.detailTab = 1;
+    h.frame(3);
+    ImGuiIO& io = ImGui::GetIO();
+    bool focused = false;
+    for (float y = 120; y < 700 && !focused; y += 6) {
+      h.click(1250, y);
+      focused = io.WantTextInput;
+    }
+    check(focused, "依存関係タブの入力欄に入れる");
+    if (focused) {
+      h.frame(3);  // 候補の一覧を描く（入力が空でも、同じ階層・最近の課題が出る）
+      h.key(ImGuiKey_DownArrow);
+      const std::size_t u2 = h.c.session()->undoSize();
+      h.key(ImGuiKey_Enter);
+      check(h.c.session()->undoSize() == u2 + 1, "↑↓ と Enter で候補から選ぶと Undo 1回分");
+      h.c.undo();
+    }
+    h.u.detailOpen = false;
+    h.frame(2);
+  }
   // スイムレーン
   h.c.setView(app::View::Board);
   for (const char* l : {"none", "asg", "root"}) {
@@ -420,7 +628,7 @@ int main() {
     const char* files[] = {"app/ui/app_ui.cpp", "app/ui/view_list.cpp", "app/ui/view_gantt.cpp", "app/ui/view_board.cpp",
                            "app/ui/view_goals.cpp", "app/ui/panel_detail.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
                            "app/ui/widgets.cpp", "app/ui/strings.hpp", "app/controller/app_controller.cpp",
-                           "core/src/commands.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp"};
+                           "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp"};
     for (const char* rel : files) {
       std::ifstream in(std::string(ROADMAP_SOURCE_DIR) + "/" + rel, std::ios::binary);
       std::stringstream ss;

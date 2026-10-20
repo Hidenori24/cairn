@@ -7,6 +7,7 @@
 
 #include <imgui_internal.h>  // ActivateItemByID
 
+#include "roadmap/link_candidates.hpp"
 #include "roadmap/text.hpp"
 #include "ui/icons.hpp"
 #include "ui/internal.hpp"
@@ -69,7 +70,60 @@ void openDetail(Frame& f, const std::string& id, int tab) {
   f.u.detailTab = tab;
 }
 
+void beginLinkPick(Frame& f, const std::string& anchor, bool anchorIsPred) {
+  if (!f.c.session() || !f.c.session()->issue(anchor)) return;
+  f.u.linkPick = {true, anchor, anchorIsPred, f.c.currentId()};
+}
+
+void cancelLinkPick(Frame& f) { f.u.linkPick = {}; }
+
+const std::vector<std::string>& recentLinks(const Frame& f) {
+  static const std::vector<std::string> none;
+  return f.u.recentLinkProject == f.c.currentId() ? f.u.recentLinks : none;
+}
+
+bool linkIssues(Frame& f, const std::string& anchor, bool anchorIsPred, const std::string& other, bool announce) {
+  Session* s = f.c.session();
+  if (!s || !s->tree()) return false;
+  const Tree& T = *s->tree();
+  const int a = T.find(anchor), b = T.find(other);
+  if (a < 0 || b < 0) return false;
+  const int pred = anchorIsPred ? a : b, succ = anchorIsPred ? b : a;
+  const LinkBlock blk = checkLink(T, s->viewIssues(), pred, succ);
+  if (blk != LinkBlock::None) {
+    f.c.toast(std::string(T.did[b]) + " は選べません: " + linkBlockReason(blk));
+    return false;
+  }
+  const std::string pd = T.did[pred], sd = T.did[succ];
+  if (!s->addLink(T.ids[pred], T.ids[succ])) {
+    f.c.afterEdit();
+    return false;
+  }
+  f.c.afterEdit();
+  // 最近つないだ相手として覚える
+  if (f.u.recentLinkProject != f.c.currentId()) {
+    f.u.recentLinkProject = f.c.currentId();
+    f.u.recentLinks.clear();
+  }
+  auto& rl = f.u.recentLinks;
+  rl.erase(std::remove(rl.begin(), rl.end(), other), rl.end());
+  rl.insert(rl.begin(), other);
+  if (rl.size() > 10) rl.resize(10);
+  if (announce) f.c.toast(pd + " → " + sd + " をつなぎました", NoticeAction::Undo);
+  return true;
+}
+
 void rowClick(Frame& f, const std::string& id) {
+  if (f.u.linkPick.active) {  // 相手を選ぶモード: つなげたら抜ける。つなげないときは理由を出して続ける
+    // 行・カードを描いている途中で課題を変えない（描画が終わってから）
+    const std::string anchor = f.u.linkPick.anchor, target = id;
+    const bool anchorIsPred = f.u.linkPick.anchorIsPred;
+    deferAfterFrame(f, [&f, anchor, target, anchorIsPred] {
+      if (!f.u.linkPick.active || f.u.linkPick.anchor != anchor) return;
+      if (linkIssues(f, anchor, anchorIsPred, target, true)) cancelLinkPick(f);
+    });
+    return;
+  }
   const ImGuiIO& io = ImGui::GetIO();
   if (io.KeyShift) f.c.rangeSelect(id, f.u.order);
   else if (io.KeyCtrl) f.c.toggleSelect(id);
@@ -198,9 +252,8 @@ bool drawInlineEdit(Frame& f, float w) {
     if (field == EditField::Name && (io.KeyShift || io.KeyCtrl || fresh)) {
       const Issue* o = s->issue(id);
       std::string nid;
-      if (io.KeyShift) nid = s->addIssue(id, "");
-      else if (o) nid = s->addIssue(o->parent, id);
-      f.c.afterEdit();
+      if (io.KeyShift) nid = f.c.createIssue(id, "");
+      else if (o) nid = f.c.createIssue(o->parent, id);
       if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
     }
     return false;
@@ -248,6 +301,34 @@ void openTplSave(Frame& f, const std::string& id) {
   openDialog(f, Dlg::TplSave);
 }
 
+namespace {
+// その場編集中の入力欄の上に、親の名前（`要件定義 › 認証 ›`）を薄く出す。行の高さは変えない。
+// 上に置けない（表の先頭で見出しに隠れる）ときは行の下に置く
+void drawEditParentHint(const UiState& u, const Tree& T, int idx, ImVec2 inputPos, float rowH) {
+  const std::string tail = " ›";
+  const ImVec2 clipMin = ImGui::GetWindowDrawList()->GetClipRectMin();
+  const ImVec2 clipMax = ImGui::GetWindowDrawList()->GetClipRectMax();
+  const float pad = u.m.s(6);
+  const float maxW = std::max(u.m.s(80), std::min(u.m.s(420), clipMax.x - inputPos.x - u.m.s(8)) - 2 * pad);
+  const float tailW = ImGui::CalcTextSize(tail.c_str()).x;
+  const std::string path = ancestorLabel(T, idx, maxW - tailW);
+  if (path.empty()) return;
+  const std::string label = path + tail;
+  const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+  const ImVec2 sz(ts.x + 2 * pad, ts.y + u.m.s(4));
+  float y = inputPos.y - sz.y;
+  if (y < clipMin.y) y = inputPos.y + rowH;
+  const ImVec2 a(std::max(clipMin.x, inputPos.x - u.m.s(2)), y);
+  const ImVec2 b(a.x + sz.x, a.y + sz.y);
+  ImDrawList* fg = ImGui::GetForegroundDrawList();
+  fg->PushClipRect(clipMin, clipMax, false);
+  fg->AddRectFilled(a, b, u.t->surface, u.m.s(4));
+  fg->AddRect(a, b, u.t->line2, u.m.s(4));
+  fg->AddText(ImVec2(a.x + pad, a.y + u.m.s(2)), u.t->muted, label.c_str());
+  fg->PopClipRect();
+}
+}  // namespace
+
 void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const NameCellOpts& o) {
   UiState& u = f.u;
   Session* s = f.c.session();
@@ -280,6 +361,7 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
   if (editing(u, id, EditField::Name)) {
     ImGui::SetCursorScreenPos(ImVec2(x, cy - ImGui::GetFrameHeight() / 2));
     drawInlineEdit(f, std::max(u.m.s(60), right - x));
+    drawEditParentHint(u, T, r.id, ImVec2(x, pos.y), size.y);
     return;
   }
   const int nc = static_cast<int>(is.comments.size());
@@ -295,6 +377,20 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
     drawIcon(dl, "message", ImVec2(x, cy - u.m.s(6)), u.m.s(12), u.t->muted);
     const std::string n = std::to_string(nc);
     dl->AddText(ImVec2(x + u.m.s(14), cy - ImGui::GetTextLineHeight() / 2), u.t->muted, n.c_str());
+    x += u.m.s(30);
+  }
+  if (o.showPath && r.depth > 0) {
+    // 平らな一覧: 件名の右に、親の名前を薄く。残りの幅に収まらなければ真ん中を省略
+    const float room = right - x - (hov ? u.m.s(72) : 0);
+    if (room >= u.m.s(60)) {
+      const std::string path = ancestorLabel(T, r.id, room);
+      if (!path.empty()) {
+        const ImVec2 psz = ImGui::CalcTextSize(path.c_str());
+        dl->AddText(ImVec2(x, cy - psz.y / 2), withAlpha(u.t->muted, 0.85f), path.c_str());
+        if (ImGui::IsMouseHoveringRect(ImVec2(x, pos.y), ImVec2(x + psz.x, pos.y + size.y)) && ImGui::IsWindowHovered())
+          ImGui::SetTooltip("親: %s", text::join(ancestorNames(T, r.id), " › ").c_str());
+      }
+    }
   }
   if (hov) {
     ImGui::PushID(id.c_str());
@@ -310,10 +406,8 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
     const ImVec2 b = ImGui::GetCursorScreenPos();
     if (ImGui::InvisibleButton("##add", ImVec2(u.m.s(22), u.m.s(22)))) {
       deferAfterFrame(f, [&f, id] {
-        Session* ss = f.c.session();
-        if (!ss) return;
-        const std::string nid = ss->addIssue(id, "");
-        f.c.afterEdit();
+        if (!f.c.session()) return;
+        const std::string nid = f.c.createIssue(id, "");
         if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
       });
     }
@@ -475,8 +569,7 @@ void drawTopBar(Frame& f) {
   if (iconButton(u, "redo", "redo", "やり直す (Ctrl+Shift+Z)", s && s->canRedo())) c.redo();
   ImGui::SameLine(0, u.m.s(6));
   if (iconTextButton(u, "add", nullptr, S::kAddIssue, true, false, s != nullptr)) {
-    const std::string id = s->addIssue("", "");
-    c.afterEdit();
+    const std::string id = c.createIssue("", "");
     if (!id.empty()) beginEdit(f, id, EditField::Name, true);
   }
   ImGui::SameLine(0, u.m.s(4));
@@ -721,6 +814,28 @@ void drawBanners(Frame& f) {
     banner("保存できません: " + c.saveError(), u.t->late, u.t->lateBg, "再試行", [&] { c.retrySave(); });
   if (s && !s->error().empty())
     banner(s->error(), u.t->late, u.t->lateBg, "元に戻す", [&] { c.undo(); });
+  // 依存の相手を画面で選ぶモード
+  if (u.linkPick.active) {
+    const Tree* T = s ? s->tree() : nullptr;
+    const int ai = T ? T->find(u.linkPick.anchor) : -1;
+    if (ai < 0 || c.currentId() != u.linkPick.project) {
+      cancelLinkPick(f);
+    } else {
+      const ImVec2 p0 = ImGui::GetCursorScreenPos();
+      const float W = ImGui::GetContentRegionAvail().x, H = u.m.s(34);
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      dl->AddRectFilled(p0, ImVec2(p0.x + W, p0.y + H), u.t->accentBg);
+      const std::string who = "「" + ellipsize(T->did[ai] + " " + T->name[ai], u.m.s(260)) + "」";
+      const std::string msg = u.linkPick.anchorIsPred ? who + " を先行にします。後続にする課題をクリックしてください（Esc で中止）"
+                                                      : who + " を後続にします。先行にする課題をクリックしてください（Esc で中止）";
+      dl->AddText(ImVec2(p0.x + u.m.s(12), p0.y + (H - ImGui::GetTextLineHeight()) / 2), u.t->accent,
+                  ellipsize(msg, W - u.m.s(120)).c_str());
+      ImGui::SetCursorScreenPos(ImVec2(p0.x + W - u.m.s(90), p0.y + u.m.s(3)));
+      if (iconTextButton(u, "linkpick_cancel", nullptr, "中止")) cancelLinkPick(f);
+      ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + H));
+      ImGui::Dummy(ImVec2(0, 0));
+    }
+  }
 }
 
 void drawToasts(Frame& f) {
@@ -786,18 +901,21 @@ void drawContextMenu(Frame& f) {
     if (ImGui::MenuItem("名前を変更", "F2")) beginEdit(f, id, EditField::Name);
     ImGui::Separator();
     if (ImGui::MenuItem("子を追加", "Shift+N")) {
-      const auto nid = s->addIssue(id, "");
-      c.afterEdit();
+      const auto nid = c.createIssue(id, "");
       if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
     }
     if (ImGui::MenuItem("同じ階層に追加", "N")) {
-      const auto nid = s->addIssue(s->issue(id)->parent, id);
-      c.afterEdit();
+      const auto nid = c.createIssue(s->issue(id)->parent, id);
       if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
     }
   }
   if (ImGui::MenuItem("テンプレから子タスクを追加…")) openTplApply(f);
   if (!multi && ImGui::MenuItem("この子タスクをテンプレとして保存…", nullptr, false, !T->kids[idx].empty())) openTplSave(f, id);
+  if (!multi) {
+    ImGui::Separator();
+    if (ImGui::MenuItem("先行にする…", "後続を選ぶ")) beginLinkPick(f, id, true);
+    if (ImGui::MenuItem("後続にする…", "先行を選ぶ")) beginLinkPick(f, id, false);
+  }
   ImGui::Separator();
   ImGui::TextDisabled("状況");
   for (const char* st : {S::kStatusTodo, S::kStatusProg, S::kStatusDone}) {
@@ -805,6 +923,13 @@ void drawContextMenu(Frame& f) {
     if (ImGui::MenuItem(st, nullptr, curSt)) c.setStatusFor(sel, st);
   }
   ImGui::Separator();
+  if (multi) {
+    // 画面の表示順に A→B→C と、終了→開始でつなぐ（循環・重複は core が見る）
+    ImGui::TextDisabled("先行・後続");
+    if (ImGui::MenuItem("順につなぐ（表示順・終了→開始）")) c.chainSelection(u.order);
+    if (ImGui::MenuItem("つなぎを外す（選んだ課題どうし）")) c.unchainSelection();
+    ImGui::Separator();
+  }
   const auto sb = s->siblings(id);
   const auto pos = std::find(sb.begin(), sb.end(), id) - sb.begin();
   if (ImGui::MenuItem("階層を下げる", "Tab", false, multi || pos > 0)) c.indentSelection();
@@ -848,7 +973,7 @@ void drawBulkBar(Frame& f, ImVec2 origin, float w) {
   if (sel.size() < 2) return;
   const float h = u.m.s(44);
   ImGui::SetNextWindowPos(ImVec2(origin.x + u.m.s(16), origin.y - h - u.m.s(12)));
-  ImGui::SetNextWindowSize(ImVec2(std::min(w - u.m.s(32), u.m.s(980)), h));
+  ImGui::SetNextWindowSize(ImVec2(std::min(w - u.m.s(32), u.m.s(1160)), h));
   ImGui::PushStyleColor(ImGuiCol_WindowBg, v4(u.t->surface));
   ImGui::Begin("##bulk", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
   ImGui::AlignTextToFramePadding();
@@ -874,6 +999,12 @@ void drawBulkBar(Frame& f, ImVec2 origin, float w) {
   }
   ImGui::SameLine();
   if (ImGui::SmallButton("テンプレ")) openTplApply(f);
+  ImGui::SameLine();
+  if (ImGui::SmallButton("順につなぐ")) c.chainSelection(u.order);
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("表示順に A→B→C と、終了→開始でつなぎます");
+  ImGui::SameLine();
+  if (ImGui::SmallButton("つなぎを外す")) c.unchainSelection();
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("選んだ課題どうしのつなぎを外します");
   ImGui::SameLine();
   if (ImGui::SmallButton("階層を下げる")) c.indentSelection();
   ImGui::SameLine();
@@ -983,6 +1114,10 @@ void handleKeys(Frame& f) {
   const bool modal = u.dlg != Dlg::None || u.paletteOpen || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
   if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !io.WantTextInput) {
     if (modal) return;  // ダイアログ・パレット・メニューはそれぞれで閉じる
+    if (u.linkPick.active) {  // 依存の相手を選ぶモードを中止
+      cancelLinkPick(f);
+      return;
+    }
     if (!c.selection().empty()) c.clearSelection();
     else if (u.detailOpen) u.detailOpen = false;
     return;
@@ -996,6 +1131,11 @@ void handleKeys(Frame& f) {
   }
   if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
     c.redo();
+    return;
+  }
+  // 入力欄の外の Ctrl+V: クリップボードの複数行を、選んだ課題の子としてまとめて作る
+  if (s && io.KeyCtrl && !io.KeyShift && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+    startPasteChildren(f);
     return;
   }
   if (io.KeyCtrl || !s) return;

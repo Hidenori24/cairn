@@ -245,11 +245,42 @@ int main(int argc, char** argv) {
   u.customPx = 3.2f;
   shot("21_gantt_custom_narrow");
   u.customPx = 0;
+  // 依存の相手: 詳細パネルの候補一覧・画面でクリックして選ぶモード
+  {
+    c.setView(app::View::Gantt);
+    c.select("22");  // 依存のない課題（先行の入力欄が上のほうにある）
+    u.detailOpen = true;
+    u.detailTab = 1;
+    frames(3);
+    ImGuiIO& io2 = ImGui::GetIO();
+    for (float y = 150; y < 700 && !io2.WantTextInput; y += 4) {
+      io2.AddMousePosEvent(1250, y);
+      io2.AddMouseButtonEvent(0, true);
+      frames(1);
+      io2.AddMouseButtonEvent(0, false);
+      frames(1);
+    }
+    shot("22_link_picker");
+    io2.AddKeyEvent(ImGuiKey_Escape, true);
+    frames(1);
+    io2.AddKeyEvent(ImGuiKey_Escape, false);
+    frames(2);
+    io2.AddMousePosEvent(-1, -1);
+    u.linkPick = {true, "22", true, c.currentId()};
+    shot("23_link_pick_mode");
+    u.linkPick = {};
+    u.detailOpen = false;
+    frames(2);
+  }
   // アプリの設定（保存先の切り替えの確認中）・削除の確認
   u.dlg = ui::Dlg::AppSettings;
   u.dlgOpening = true;
   frames(2);
   shot("17_app_settings");
+  c.prefs().newNameFormat = "custom";
+  c.select("11");
+  shot("17b_app_settings_newname");
+  c.prefs().newNameFormat = "keep";
   u.pendingDir = "D:/共有/projects";
   u.pendingCount = 0;
   u.pendingCopy = true;
@@ -263,11 +294,50 @@ int main(int argc, char** argv) {
   shot("19_confirm_delete");
   u.dlg = ui::Dlg::None;
   frames(2);
+  // 貼り付けで子課題をまとめて作る（プレビュー）
+  u.pasteParent = "11";
+  u.paste = parseOutline("要件の整理\n\t画面の洗い出し\n\t\t\t飛んだ階層\n\tデータ項目\n- 設計\n  - [ ] 画面設計\n  - [ ] DB設計\n実装\nテスト\t山田\t2\nレビュー\n公開準備\n振り返り\n記録の整理\n");
+  u.dlg = ui::Dlg::PasteChildren;
+  u.dlgOpening = true;
+  shot("22_paste_children");
+  u.dlg = ui::Dlg::None;
+  frames(2);
   u.t = &ui::darkTokens();
   ui::applyStyle(*u.t, u.m);
   c.session()->setResource({true, 1});
   c.afterEdit();
   shot("12_dark_leveling");
+  // 親の名前の見え方（並べ替え中の平らな一覧・その場編集・詳細パネル）を、ライト・ダーク・コンパクトで
+  const auto parentShots = [&](const std::string& tag) {
+    c.setView(app::View::List);
+    c.select("6");
+    u.sortKey = "asg";
+    u.sortDir = 1;
+    shot("30_flat_list_" + tag);
+    u.sortKey.clear();
+    u.sortDir = 0;
+    u.editField = ui::EditField::Name;
+    u.editId = "6";
+    u.editBuf = "候補の洗い出し";
+    u.editStartValue = u.editBuf;
+    u.editFocus = true;
+    shot("31_edit_parent_" + tag);
+    u.editField = ui::EditField::None;
+    u.editId.clear();
+    u.detailOpen = true;
+    shot("32_detail_path_" + tag);
+    u.detailOpen = false;
+  };
+  parentShots("dark");
+  u.t = &ui::lightTokens();
+  ui::applyStyle(*u.t, u.m);
+  parentShots("light");
+  c.setDensity("compact");
+  u.m.compact = true;  // Windows 版は毎フレーム prefs から入れている
+  ui::applyStyle(*u.t, u.m);
+  parentShots("compact");
+  u.m.compact = false;
+  c.setDensity("normal");
   c.createProject(app::SampleKind::EmbeddedSw, "組込みソフトウェア開発", "DEV");
   c.setView(app::View::Gantt);
   c.setUi("zoom", "all");
