@@ -15,9 +15,9 @@ BEGIN
     BLOCK "041104B0"
     BEGIN
       VALUE "FileDescription", "Project Roadmap"
-      VALUE "FileVersion", "0.3.1"
+      VALUE "FileVersion", "0.4.0"
       VALUE "ProductName", "Project Roadmap"
-      VALUE "ProductVersion", "0.3.1"
+      VALUE "ProductVersion", "0.4.0"
       VALUE "OriginalFilename", "ProjectRoadmap.exe"
     END
   END
