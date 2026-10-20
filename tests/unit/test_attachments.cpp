@@ -1,5 +1,8 @@
 #include <doctest/doctest.h>
 
+#include <filesystem>
+#include <random>
+
 #include "../test_util.hpp"
 #include "app_controller.hpp"
 #include "roadmap/attachments.hpp"
@@ -258,6 +261,36 @@ TEST_CASE("attachments: JIRA の Attachment 列（同じ見出しが複数）は
   const std::string jout = csv::exportCsv(r->issues, r->meta, jira);
   CHECK(jout.find("Attachment,Attachment,Sprint") != std::string::npos);
   CHECK(jout.find(att2) != std::string::npos);
+}
+
+TEST_CASE("attachments: 実際のファイルシステム（StdFileStore）でも、フォルダのドロップ・同名・削除ができる") {
+  namespace fsys = std::filesystem;
+  const fsys::path root = fsys::temp_directory_path() / ("roadmap_attach_" + std::to_string(std::random_device{}()));
+  fsys::remove_all(root);
+  StdFileStore st;
+  const std::string base = root.generic_string();
+  REQUIRE(st.makeDirs(base + "/ドロップ元/サブ").ok());
+  REQUIRE(st.writeAtomic(base + "/ドロップ元/日本語.txt", "one").ok());
+  REQUIRE(st.writeAtomic(base + "/ドロップ元/サブ/b.bin", std::string(1000, 'b')).ok());
+  const std::string proj = base + "/data/案件";
+  AttachmentMap meta;
+  const auto r = attachFiles(st, clk, proj, meta, "7", {base + "/ドロップ元"}, "山田");
+  REQUIRE(r.rejected.empty());
+  CHECK(r.added.size() == 2);
+  CHECK(st.stat(proj + "/添付/7/日本語.txt").has_value());
+  CHECK(st.stat(proj + "/添付/7/b.bin").has_value());
+  // 同じものをもう一度 → 連番
+  const auto r2 = attachFiles(st, clk, proj, meta, "7", {base + "/ドロップ元/日本語.txt"}, "山田");
+  REQUIRE(r2.added.size() == 1);
+  CHECK(r2.added[0].name == "日本語-2.txt");
+  // 削除 → _削除済み
+  std::size_t idx = 0;
+  while (idx < meta["7"].size() && meta["7"][idx].name != "日本語.txt") ++idx;
+  REQUIRE(idx < meta["7"].size());
+  REQUIRE(removeAttachment(st, proj, meta, "7", idx).ok());
+  CHECK_FALSE(st.stat(proj + "/添付/7/日本語.txt").has_value());
+  CHECK(st.stat(proj + "/_削除済み/7/日本語.txt").has_value());
+  fsys::remove_all(root);
 }
 
 TEST_CASE("attachments: JIRA の Attachment 列を、メタ情報として読む（本体はない）") {
