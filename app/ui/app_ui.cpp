@@ -805,6 +805,13 @@ void drawContextMenu(Frame& f) {
     if (ImGui::MenuItem(st, nullptr, curSt)) c.setStatusFor(sel, st);
   }
   ImGui::Separator();
+  if (multi) {
+    // 画面の表示順に A→B→C と、終了→開始でつなぐ（循環・重複は core が見る）
+    ImGui::TextDisabled("先行・後続");
+    if (ImGui::MenuItem("順につなぐ（表示順・終了→開始）")) c.chainSelection(u.order);
+    if (ImGui::MenuItem("つなぎを外す（選んだ課題どうし）")) c.unchainSelection();
+    ImGui::Separator();
+  }
   const auto sb = s->siblings(id);
   const auto pos = std::find(sb.begin(), sb.end(), id) - sb.begin();
   if (ImGui::MenuItem("階層を下げる", "Tab", false, multi || pos > 0)) c.indentSelection();
@@ -848,7 +855,7 @@ void drawBulkBar(Frame& f, ImVec2 origin, float w) {
   if (sel.size() < 2) return;
   const float h = u.m.s(44);
   ImGui::SetNextWindowPos(ImVec2(origin.x + u.m.s(16), origin.y - h - u.m.s(12)));
-  ImGui::SetNextWindowSize(ImVec2(std::min(w - u.m.s(32), u.m.s(980)), h));
+  ImGui::SetNextWindowSize(ImVec2(std::min(w - u.m.s(32), u.m.s(1160)), h));
   ImGui::PushStyleColor(ImGuiCol_WindowBg, v4(u.t->surface));
   ImGui::Begin("##bulk", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
   ImGui::AlignTextToFramePadding();
@@ -874,6 +881,12 @@ void drawBulkBar(Frame& f, ImVec2 origin, float w) {
   }
   ImGui::SameLine();
   if (ImGui::SmallButton("テンプレ")) openTplApply(f);
+  ImGui::SameLine();
+  if (ImGui::SmallButton("順につなぐ")) c.chainSelection(u.order);
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("表示順に A→B→C と、終了→開始でつなぎます");
+  ImGui::SameLine();
+  if (ImGui::SmallButton("つなぎを外す")) c.unchainSelection();
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("選んだ課題どうしのつなぎを外します");
   ImGui::SameLine();
   if (ImGui::SmallButton("階層を下げる")) c.indentSelection();
   ImGui::SameLine();

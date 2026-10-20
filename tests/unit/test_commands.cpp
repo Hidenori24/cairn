@@ -123,6 +123,97 @@ TEST_CASE("commands: mutate の失敗時の巻き戻し") {
   CHECK(s.issue("2")->blocks.empty());
 }
 
+TEST_CASE("commands: 選んだ課題を順につなぐ（木の順・表示順・Undo 1回）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kTree), &clk);
+  // 選んだ順（5,3,2）ではなく木の順（2,3,5）で 2→3→5
+  const auto r = s.chainIssues({"5", "3", "2"});
+  CHECK(r.ok);
+  CHECK(r.added == 2);
+  CHECK(r.existing == 0);
+  CHECK(s.issue("2")->blocks == std::vector<std::string>{"3"});
+  CHECK(s.issue("3")->blocks == std::vector<std::string>{"5"});
+  CHECK(s.undoSize() == 1);  // 2本のつなぎが Undo 1回
+  CHECK(s.undo());
+  CHECK(s.issue("2")->blocks.empty());
+  CHECK(s.issue("3")->blocks.empty());
+  CHECK_FALSE(s.canUndo());
+  // 画面の表示順を渡したときはその順（5→3→2）
+  s.takeNotices();
+  const auto r2 = s.chainIssues({"2", "3", "5"}, {"5", "3", "2"});
+  CHECK(r2.ok);
+  CHECK(s.issue("5")->blocks == std::vector<std::string>{"3"});
+  CHECK(s.issue("3")->blocks == std::vector<std::string>{"2"});
+  CHECK(s.undoSize() == 1);
+}
+
+TEST_CASE("commands: つなぐ（2件・親と子は上だけ・重複は何もしない・件数が足りない）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kTree), &clk);
+  // 2つ選んで一発
+  CHECK(s.chainIssues({"2", "3"}).ok);
+  CHECK(s.issue("2")->blocks == std::vector<std::string>{"3"});
+  // 親(3)と子(4)を両方選んでも、子は数えない（3→5 だけ）
+  s.takeNotices();
+  const auto r = s.chainIssues({"3", "4", "5"});
+  CHECK(r.ok);
+  CHECK(r.added == 1);
+  CHECK(s.issue("3")->blocks == std::vector<std::string>{"5"});
+  CHECK(s.issue("4")->blocks.empty());
+  // 重複は足さない（一部だけ新規）
+  const auto before = s.undoSize();
+  const auto r2 = s.chainIssues({"2", "3", "5"});
+  CHECK(r2.ok);
+  CHECK(r2.added == 0);
+  CHECK(r2.existing == 2);
+  CHECK(s.undoSize() == before);  // 何も変わらなければ Undo に積まない
+  CHECK(lastNotice(s) == "すでにつながっています");
+  CHECK(s.issue("2")->blocks == std::vector<std::string>{"3"});
+  // 1件・存在しない課題・同じ課題の重複指定は、つなぐ相手がない
+  CHECK_FALSE(s.chainIssues({"2"}).ok);
+  CHECK_FALSE(s.chainIssues({"2", "2", "99"}).ok);
+  CHECK(lastNotice(s) == "つなぐ課題を2件以上選んでください");
+  CHECK(s.undoSize() == before);
+}
+
+TEST_CASE("commands: つなぐと循環になる組み合わせは、何も変えずに理由を通知する") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kTree), &clk);
+  CHECK(s.addLink("5", "2"));  // 5 → 2
+  s.takeNotices();
+  const auto before = s.issues();
+  const auto undoBefore = s.undoSize();
+  // 2→3 は良いが 3→5 で 5→2 と輪になる。全部やめる
+  const auto r = s.chainIssues({"2", "3", "5"});
+  CHECK_FALSE(r.ok);
+  CHECK(r.added == 0);
+  CHECK(s.issues() == before);
+  CHECK(s.undoSize() == undoBefore);
+  CHECK(lastNotice(s).find("ループ") != std::string::npos);
+  CHECK(s.error().empty());
+}
+
+TEST_CASE("commands: つなぎを外す（選んだ課題どうしのつなぎだけ・Undo 1回）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kTree), &clk);
+  CHECK(s.chainIssues({"2", "3", "5"}).ok);  // 2→3, 3→5
+  CHECK(s.addLink("2", "4"));                // 選ばない課題へのつなぎ
+  s.takeNotices();
+  const auto undoBefore = s.undoSize();
+  // 2,3,5 の間のつなぎ（2→3, 3→5）だけ外す。2→4 は残る
+  CHECK(s.unchainIssues({"5", "2", "3"}) == 2);
+  CHECK(s.issue("2")->blocks == std::vector<std::string>{"4"});
+  CHECK(s.issue("3")->blocks.empty());
+  CHECK(s.undoSize() == undoBefore + 1);
+  CHECK(s.undo());
+  CHECK(s.issue("2")->blocks == std::vector<std::string>{"3", "4"});
+  CHECK(s.issue("3")->blocks == std::vector<std::string>{"5"});
+  // 間につなぎがなければ何もしない
+  CHECK(s.unchainIssues({"2", "5"}) == 0);
+  CHECK(lastNotice(s) == "外すつなぎがありません");
+  CHECK(s.unchainIssues({"2"}) == 0);
+}
+
 TEST_CASE("commands: Undo/Redo（100件の上限・Redo の消去・変更なしは積まない）") {
   auto clk = clockAt(2026, 10, 19);
   Session s(dataFrom(kTree), &clk);

@@ -120,6 +120,9 @@ class AppController {
   void setStatusFor(const std::vector<std::string>& ids, const std::string& st);
   void setPrioFor(const std::vector<std::string>& ids, const std::string& pr);
   void setAssigneeFor(const std::vector<std::string>& ids, const std::string& who);
+  // 選んだ課題を画面の表示順（order。各画面の u.order）に A→B→C と順につなぐ / 選んだ課題どうしのつなぎを外す。Undo 1回
+  ChainResult chainSelection(const std::vector<std::string>& order);
+  int unchainSelection();
   std::string addSibling();  // カーソル行と同じ階層に追加（なければ最上位）
   std::string addChild();
   void undo();
