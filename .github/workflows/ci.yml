@@ -10,6 +10,19 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "付けるタグ（例: v0.2.0）。空ならビルドとテストだけ"
+        required: false
+        default: ""
+      target:
+        description: "タグを付けるコミット（空なら実行したブランチの先頭）"
+        required: false
+        default: ""
+      artifact_run:
+        description: "exe を取る CI の実行の ID（空ならこの実行で作ったもの。過去のコミットに付けるとき）"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -92,6 +105,50 @@ jobs:
         with:
           name: ProjectRoadmap-windows
           path: dist/
+
+  # 手動の実行でタグとリリースを作る（このリポジトリへのタグの push ができない環境のため）。
+  # GITHUB_TOKEN で作ったタグでは、ほかのワークフローは動かない
+  tag-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+    needs: [linux, linux-ui, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    env:
+      TAG: ${{ inputs.release_tag }}
+      TARGET: ${{ inputs.target != '' && inputs.target || github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TARGET }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: ProjectRoadmap-windows
+          path: dist
+          run-id: ${{ inputs.artifact_run != '' && inputs.artifact_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: zip・チェックサム・リリースノート
+        run: |
+          cd dist
+          # 0.1.0 の成果物は exe だけ（フォルダの形は 0.2.0 から）
+          if [ ! -d ProjectRoadmap ]; then mkdir ProjectRoadmap && find . -path ./ProjectRoadmap -prune -o -name '*.exe' -exec mv {} ProjectRoadmap/ \; ; fi
+          zip -r -X ProjectRoadmap-windows-x64.zip ProjectRoadmap
+          sha256sum ProjectRoadmap-windows-x64.zip ProjectRoadmap/*.exe > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          ver="${TAG#v}"
+          awk -v v="## ${ver}" 'index($0, "## ") == 1 { p = (index($0, v) == 1) } p' ../docs/CHANGELOG.md > notes.md
+          printf '\n---\nポータブル版: zip を展開して ProjectRoadmap.exe を実行（インストール不要）。\n' >> notes.md
+          cat notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ env.TARGET }}
+          name: ${{ env.TAG }}
+          body_path: dist/notes.md
+          files: |
+            dist/ProjectRoadmap-windows-x64.zip
+            dist/SHA256SUMS.txt
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
