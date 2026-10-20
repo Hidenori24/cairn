@@ -146,6 +146,8 @@ jobs:
           target_commitish: ${{ env.TARGET }}
           name: ${{ env.TAG }}
           body_path: dist/notes.md
+          # 過去のコミットに付けるとき（成果物の実行を指定したとき）は「最新」にしない
+          make_latest: ${{ inputs.artifact_run == '' && 'true' || 'false' }}
           files: |
             dist/ProjectRoadmap-windows-x64.zip
             dist/SHA256SUMS.txt
