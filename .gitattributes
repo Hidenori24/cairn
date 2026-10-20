@@ -1,0 +1,12 @@
+# 正解データ・サンプルは改行コード（CRLF）を含めてバイト単位で照合するため、git に変換させない
+golden/** -text
+app/resources/*.csv -text
+*.cpp text eol=lf
+*.hpp text eol=lf
+*.h text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+# 配布物の説明はメモ帳で読むので CRLF
+packaging/** text eol=crlf
