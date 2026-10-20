@@ -1,6 +1,7 @@
 // データモデル（SPEC 4章）
 #pragma once
 
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -100,6 +101,20 @@ struct InheritSpec {
   bool operator==(const InheritSpec&) const = default;
 };
 
+// 課題に付けたファイルのメタ情報（本体は <プロジェクト>/添付/<Issue Id>/<name>。SPEC 8.9）
+struct Attachment {
+  std::string name;         // フォルダ内のファイル名（そのまま表示にも使う）
+  std::uint64_t size = 0;   // バイト
+  std::string at;           // 付けた日時 "YYYY-MM-DDTHH:MM"
+  std::string who;          // 付けた人
+  bool operator==(const Attachment&) const = default;
+};
+// Issue Id → 添付（付けた順）。CSV の Issue Id で引く（表示 ID は階層で変わるため使わない）
+using AttachmentMap = std::map<std::string, std::vector<Attachment>>;
+// settings.json の "attachments" との変換。壊れた値は読み飛ばす
+Json attachmentsToJson(const AttachmentMap& m);
+AttachmentMap attachmentsFromJson(const Json& j);
+
 // CSV に入らない設定（付録B.1 の settings.json と対応）
 struct ProjectSettings {
   std::string id, name, key;
@@ -107,6 +122,7 @@ struct ProjectSettings {
   std::string holidays;  // 休業日テキスト
   std::string scenario = kStdScenario;
   ResourceLimit resource;
+  AttachmentMap attachments;      // 添付のメタ情報（空なら settings.json に書かない）
   Json ui = Json::object();     // 表示状態。未知のキーも保持
   Json unknown = Json::object();  // settings.json の未知のキー（書き戻す）
 };

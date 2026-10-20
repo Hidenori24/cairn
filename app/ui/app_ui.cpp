@@ -456,8 +456,9 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
     return;
   }
   const int nc = static_cast<int>(is.comments.size());
+  const int na = static_cast<int>(f.c.attachmentCount(id));
   const bool hov = ImGui::IsMouseHoveringRect(pos, ImVec2(pos.x + size.x, pos.y + size.y)) && o.showHoverButtons;
-  float avail = right - x - (nc ? u.m.s(30) : 0) - (hov ? u.m.s(72) : 0);
+  float avail = right - x - (nc ? u.m.s(30) : 0) - (na ? u.m.s(30) : 0) - (hov ? u.m.s(72) : 0);
   if (r.isPar) ImGui::PushFont(u.fontBold);
   const std::string nm = ellipsize(T.name[r.id], std::max(10.f, avail));
   const ImVec2 nsz = ImGui::CalcTextSize(nm.c_str());
@@ -469,6 +470,13 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
     const std::string n = std::to_string(nc);
     dl->AddText(ImVec2(x + u.m.s(14), cy - ImGui::GetTextLineHeight() / 2), u.t->muted, n.c_str());
     x += u.m.s(30);
+  }
+  if (na) {
+    bool clicked = false;
+    ImGui::PushID(id.c_str());
+    x += drawAttachBadge(f, ImVec2(x, pos.y), cy, na, &clicked) + u.m.s(8);
+    ImGui::PopID();
+    if (clicked) openDetail(f, id, 3);
   }
   if (o.showPath && r.depth > 0) {
     // 平らな一覧: 件名の右に、親の名前を薄く。残りの幅に収まらなければ真ん中を省略
@@ -1363,6 +1371,11 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
     io.InputQueueCharacters.resize(0);
   }
   c.tick();
+  if (c.currentId() != u.imageProject) {  // プロジェクトを切り替えたら、画像のテクスチャを全部捨てる
+    releaseImages(f);
+    u.imageProject = c.currentId();
+  }
+  processDrop(f);  // エクスプローラーからのドロップ（前のフレームに描いたドロップ先と照らす）
   const ImGuiViewport* vp = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(vp->WorkPos);
   ImGui::SetNextWindowSize(vp->WorkSize);
@@ -1434,6 +1447,9 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
   ImGui::PopFont();
   for (auto& fn : u.deferred) fn();  // 行・カードの途中で頼まれた操作（削除・子の追加）は、描画が終わってから
   u.deferred.clear();
+  trimImages(f);  // しばらく使っていない画像のテクスチャを解放する
+  u.dropTargets = std::move(u.dropBuild);  // 次のフレームのドロップ判定に使う
+  u.dropBuild.clear();
   u.openColFilter.clear();  // 見出しが出ていない列の要求は捨てる
   c.afterEdit();
   c.releaseFrame();

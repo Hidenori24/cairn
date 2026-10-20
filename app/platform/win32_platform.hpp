@@ -2,6 +2,7 @@
 #pragma once
 
 #include <windows.h>
+#include <d3d11.h>
 
 #include <optional>
 #include <string>
@@ -25,15 +26,21 @@ class Win32Platform final : public ui::IPlatform {
   std::optional<std::pair<std::string, std::string>> openTextFile() override;
   bool saveTextFile(const std::string& suggestedName, const std::string& content) override;
   void openFolder(const std::string& path) override;
+  void openFile(const std::string& path) override;
+  ImTextureID createTexture(const unsigned char* rgba, int w, int h) override;
+  void releaseTexture(ImTextureID tex) override;
+  std::optional<std::string> readTextFile(const std::string& path, std::string* error) override;
   std::optional<std::string> pickFolder(const std::string& start) override;
   bool systemDark() override { return systemDarkMode(); }
   void requestQuit() override { quit_ = true; }
   std::optional<std::string> clipboardText() override;
   bool quitRequested() const { return quit_; }
   void setHwnd(HWND h) { hwnd_ = h; }
+  void setDevice(ID3D11Device* d) { device_ = d; }  // 画像のテクスチャを作る先（描画に使うデバイス）
 
  private:
   HWND hwnd_;
+  ID3D11Device* device_ = nullptr;
   bool quit_ = false;
 };
 

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
 #include <cstdlib>
@@ -18,6 +19,7 @@
 #include "roadmap/schedule.hpp"
 #include "roadmap/text.hpp"
 #include "ui/app_ui.hpp"
+#include "ui/image_decode.hpp"
 #include "ui/internal.hpp"
 
 using namespace roadmap;
@@ -33,6 +35,25 @@ struct NullPlatform : ui::IPlatform {
   void requestQuit() override {}
   std::optional<std::string> clip;  // クリップボードの代わり（テストが差し替える）
   std::optional<std::string> clipboardText() override { return clip; }
+  int created = 0, released = 0;  // テクスチャ（本物は作らず、重ならない目印の値を返す）
+  ImTextureID createTexture(const unsigned char* rgba, int w, int h) override {
+    if (!rgba || w <= 0 || h <= 0) return nullptr;
+    return reinterpret_cast<ImTextureID>(static_cast<std::uintptr_t>(++created));
+  }
+  void releaseTexture(ImTextureID t) override {
+    if (t) ++released;
+  }
+  std::vector<std::string> opened;  // openFile で開いたパス
+  void openFile(const std::string& path) override { opened.push_back(path); }
+  std::map<std::string, std::string> texts;  // ドロップされた CSV の中身（パス → 本文）
+  std::optional<std::string> readTextFile(const std::string& path, std::string* error) override {
+    const auto it = texts.find(path);
+    if (it == texts.end()) {
+      if (error) *error = "読めません";
+      return std::nullopt;
+    }
+    return it->second;
+  }
 };
 
 int failures = 0;
@@ -42,6 +63,28 @@ void check(bool ok, const char* what) {
     ++failures;
   }
 }
+
+// 24bit の BMP（下の行から）。画像のデコードの確認用
+std::string makeBmp(int w, int h) {
+  const int rowBytes = (w * 3 + 3) / 4 * 4;
+  const std::uint32_t size = 54 + static_cast<std::uint32_t>(rowBytes * h);
+  std::string s;
+  const auto put32 = [&](std::uint32_t v) { for (int i = 0; i < 4; ++i) s.push_back(static_cast<char>((v >> (8 * i)) & 0xff)); };
+  const auto put16 = [&](std::uint16_t v) { s.push_back(static_cast<char>(v & 0xff)); s.push_back(static_cast<char>(v >> 8)); };
+  s += "BM";
+  put32(size); put32(0); put32(54);
+  put32(40); put32(static_cast<std::uint32_t>(w)); put32(static_cast<std::uint32_t>(h)); put16(1); put16(24);
+  put32(0); put32(static_cast<std::uint32_t>(rowBytes * h)); put32(2835); put32(2835); put32(0); put32(0);
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) { s.push_back(static_cast<char>(40)); s.push_back(static_cast<char>(x * 255 / std::max(1, w - 1))); s.push_back(static_cast<char>(200)); }
+    for (int k = w * 3; k < rowBytes; ++k) s.push_back('\0');
+  }
+  return s;
+}
+const unsigned char kPng3x2[] = {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x03,
+                                 0x00, 0x00, 0x00, 0x02, 0x08, 0x02, 0x00, 0x00, 0x00, 0x12, 0x16, 0xf1, 0x4d, 0x00, 0x00, 0x00, 0x15, 0x49, 0x44, 0x41,
+                                 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xc0, 0x00, 0xc1, 0xff, 0x81, 0xd4, 0x7f, 0x20, 0xf1, 0x1f, 0x00, 0x4a, 0xc9,
+                                 0x08, 0xf8, 0xee, 0x68, 0x40, 0xb6, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
 
 struct Harness {
   MemFileStore fs;
@@ -661,7 +704,7 @@ int main() {
     ImGuiIO& io = ImGui::GetIO();
     bool focused = false;
     for (float y = 120; y < 700 && !focused; y += 6) {
-      h.click(1250, y);
+      h.click(1150, y);
       focused = io.WantTextInput;
     }
     check(focused, "依存関係タブの入力欄に入れる");
@@ -1107,6 +1150,167 @@ int main() {
   h.click(200, 160);
   h.click(200, 160, 2);
   h.frame(3);
+  // 添付: ドロップ先が課題（行・詳細パネル）なら添付、何もないところなら CSV の取り込み
+  {
+    h.c.createProject(app::SampleKind::Hierarchy, "添付の確認", "ATT");
+    h.c.setView(app::View::List);
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.frame(3);
+    check(!h.u.dropTargets.empty(), "行がドロップ先として登録される");
+    h.fs.put("ext/メモ.txt", "hello");
+    h.fs.put("ext/run.exe", "MZ");
+    h.fs.put("ext/dir/a.png", "x");
+    h.fs.put("ext/dir/b.png", "y");
+    const ui::UiState::DropTarget t = h.u.dropTargets.front();
+    const ImVec2 mid((t.a.x + t.b.x) / 2, (t.a.y + t.b.y) / 2);
+    h.u.pendingDrop.active = true;
+    h.u.pendingDrop.paths = {"ext/メモ.txt", "ext/run.exe", "ext/dir"};
+    h.u.pendingDrop.pos = mid;
+    h.frame();
+    check(!h.u.pendingDrop.active, "ドロップは1回で処理される");
+    check(h.c.attachmentCount(t.id) == 4, "複数ファイルとフォルダが行へのドロップで付く");
+    check(h.u.dlg == ui::Dlg::None, "課題へのドロップでは取り込みを開かない");
+    h.frame(2);
+    // 詳細パネルの添付タブ（一覧・開く・削除）
+    h.c.select(t.id);
+    h.u.detailOpen = true;
+    h.u.detailTab = 3;
+    h.frame(3);
+    check(h.u.dropTargets.size() > 1, "詳細パネルもドロップ先");
+    {
+      ui::Frame f{h.c, h.u, h.p};
+      ui::openAttachment(f, t.id, 0);  // メモ.txt
+      check(h.p.opened.size() == 1, "ふつうのファイルはそのまま開く");
+      ui::openAttachment(f, t.id, 1);  // run.exe
+      check(h.p.opened.size() == 1 && h.u.dlg == ui::Dlg::AttachOpenWarn, "実行ファイルは開く前に警告する");
+    }
+    h.frame(3);
+    h.key(ImGuiKey_Escape);
+    check(h.u.dlg == ui::Dlg::None && h.p.opened.size() == 1, "警告をやめると開かない");
+    // 詳細パネルの上へのドロップ → 開いている課題へ（Esc で選択が外れたので選び直す）
+    h.c.select(t.id);
+    h.frame(2);
+    h.fs.put("ext/図.png", "z");
+    h.u.pendingDrop.active = true;
+    h.u.pendingDrop.paths = {"ext/図.png"};
+    h.u.pendingDrop.pos = ImVec2(1400, 600);
+    h.frame();
+    check(h.c.attachmentCount(t.id) == 5, "詳細パネルへのドロップで開いている課題に付く");
+    h.frame(2);
+    // 何もないところ（上のバー）へのドロップ → 今まで通り CSV の取り込み
+    h.p.texts["ext/in.csv"] = "Issue Id,Summary\n1,a\n";
+    h.u.pendingDrop.active = true;
+    h.u.pendingDrop.paths = {"ext/in.csv"};
+    h.u.pendingDrop.pos = ImVec2(3, 3);
+    const std::size_t before = h.c.attachmentCount(t.id);
+    h.frame();
+    check(h.u.dlg == ui::Dlg::Import && h.u.importName == "in", "何もないところへのドロップは CSV の取り込み");
+    check(h.c.attachmentCount(t.id) == before, "取り込みのときは添付しない");
+    h.frame(2);
+    h.key(ImGuiKey_Escape);
+    h.frame(2);
+    // 削除（_削除済み へ）
+    h.c.removeAttachment(t.id, 0);
+    h.frame(2);
+    check(h.c.attachmentCount(t.id) == before - 1, "削除で1つ減る");
+    // ボード・ガントでもバッジとドロップ先を描く
+    for (auto v : {app::View::Board, app::View::Gantt}) {
+      h.c.setView(v);
+      h.frame(12);  // 5000 件のガントで下までスクロールした位置が戻るのを待つ
+      check(!h.u.dropTargets.empty(), "ボード・ガントにもドロップ先がある");
+    }
+    // 平置きのプロジェクトでは添付できない旨を出し、ドロップしても付けずに落ちない
+    h.fs.put("data/平置き.csv", "Issue Id,Summary\n1,a\n");
+    h.c.syncFolder(true);
+    for (const auto& pi : h.c.projects())
+      if (pi.name == "平置き") h.c.openProject(pi.id);
+    h.c.setView(app::View::List);
+    h.c.select("1");
+    h.u.detailOpen = true;
+    h.u.detailTab = 3;
+    h.frame(3);
+    check(!h.c.canAttach(), "平置きは添付できない");
+    h.u.pendingDrop.active = true;
+    h.u.pendingDrop.paths = {"ext/図.png"};
+    h.u.pendingDrop.pos = ImVec2(1400, 600);
+    h.frame(2);
+    check(h.c.attachmentCount("1") == 0, "平置きへのドロップでは付かない");
+    h.u.detailOpen = false;
+    h.frame(2);
+  }
+  // 画像の添付: デコード（壊れたファイルでも落ちない）・サムネイル・プレビュー
+  {
+    const std::string png(reinterpret_cast<const char*>(kPng3x2), sizeof kPng3x2);
+    const auto d = ui::decodeImage(png, 160);
+    check(d && d->w == 3 && d->h == 2 && d->rgba.size() == 24, "PNG をデコードできる");
+    check(d && d->rgba[0] == 255 && d->rgba[1] == 0 && d->rgba[2] == 0 && d->rgba[3] == 255, "PNG の先頭の画素");
+    const auto big = ui::decodeImage(makeBmp(300, 100), 100);
+    check(big && big->w == 100 && big->h == 33 && big->rgba.size() == 100u * 33u * 4u, "長辺が上限を超える画像は縮小する");
+    const auto same = ui::decodeImage(makeBmp(30, 10), 100);
+    check(same && same->w == 30 && same->h == 10, "上限以内の画像は縮小しない");
+    check(!ui::decodeImage("", 160), "空のデータ");
+    check(!ui::decodeImage("これは画像ではありません", 160), "画像でないデータ");
+    check(!ui::decodeImage(png.substr(0, 20), 160), "途中で切れた PNG");
+    std::string broken = png;
+    broken[40] = static_cast<char>(broken[40] ^ 0x55);
+    (void)ui::decodeImage(broken, 160);  // 壊れた中身でも落ちない（結果は問わない）
+    std::string noise(4096, '\0');
+    for (std::size_t k = 0; k < noise.size(); ++k) noise[k] = static_cast<char>((k * 131 + 7) & 0xff);
+    noise.replace(0, 8, png.substr(0, 8));  // PNG の署名だけ正しい
+    check(!ui::decodeImage(noise, 160), "署名だけ正しいでたらめなデータ");
+
+    h.c.createProject(app::SampleKind::Hierarchy, "画像の確認", "IMG");
+    h.c.setView(app::View::List);
+    h.c.select("11");
+    h.fs.put("ext/a.png", png);
+    h.fs.put("ext/b.bmp", makeBmp(64, 48));
+    h.fs.put("ext/bad.png", "壊れたファイル");
+    h.fs.put("ext/note.txt", "memo");
+    h.c.attachFiles("11", {"ext/a.png", "ext/b.bmp", "ext/bad.png", "ext/note.txt"});
+    h.u.detailOpen = true;
+    h.u.detailTab = 3;
+    h.frame(8);
+    check(h.p.created >= 2, "画像のサムネイルをテクスチャにする（壊れたファイルは作らない）");
+    const int made = h.p.created;
+    h.frame(5);
+    check(h.p.created == made, "サムネイルは作り直さない（キャッシュ）");
+    {
+      ui::Frame f{h.c, h.u, h.p};
+      ui::openImagePreview(f, "11", 0);  // a.png
+      check(h.u.dlg == ui::Dlg::AttachPreview, "画像をクリックするとプレビュー");
+      h.frame(4);
+      ui::openImagePreview(f, "11", 2);  // 壊れた bad.png: 理由を出して落ちない
+      h.frame(4);
+      ui::openImagePreview(f, "11", 3);  // 画像でないものはプレビューしない
+      check(h.u.dlg != ui::Dlg::AttachPreview || h.u.previewIndex != 3, "画像でないものはプレビューしない");
+    }
+    h.u.dlg = ui::Dlg::None;
+    h.frame(2);
+    // 添付を外す・プロジェクトを切り替えたとき、使わないテクスチャを解放する
+    h.c.removeAttachment("11", 0);
+    h.frame(3);
+    h.c.createProject(app::SampleKind::Empty, "別", "");
+    h.frame(3);
+    check(h.p.released > 0, "使わなくなったテクスチャを解放する");
+    h.c.deleteCurrentProject();
+    h.frame(2);
+    h.u.detailOpen = false;
+    h.frame(2);
+  }
+  // JIRA の Attachment 列: 添付タブにメタ情報として出し、書き出しでも戻す
+  {
+    const std::string csvIn = "Issue Id,Summary,Attachment\n1,課題,20/Oct/26 9:30 AM;山田;図.png;https://example.invalid/a.png\n";
+    check(h.c.importText(csvIn, "JIRA添付", app::ImportMode::New).ok, "Attachment 列つき CSV の取り込み");
+    h.c.setView(app::View::List);
+    h.c.select("1");
+    h.u.detailOpen = true;
+    h.u.detailTab = 3;
+    h.frame(3);
+    check(h.c.session()->exportText(ExportKind::Jira).find("図.png") != std::string::npos, "Attachment 列は書き出しにも残る");
+    h.u.detailOpen = false;
+    h.frame(2);
+  }
   // 空のプロジェクト
   h.c.createProject(app::SampleKind::Empty, "空", "");
   h.frame(3);
@@ -1116,9 +1320,9 @@ int main() {
   {
     std::set<ImWchar> have(ui::uiGlyphs().begin(), ui::uiGlyphs().end());
     const char* files[] = {"app/ui/app_ui.cpp", "app/ui/view_list.cpp", "app/ui/view_gantt.cpp", "app/ui/view_board.cpp",
-                           "app/ui/view_goals.cpp", "app/ui/panel_detail.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
+                           "app/ui/view_goals.cpp", "app/ui/panel_detail.cpp", "app/ui/panel_attach.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
                            "app/ui/widgets.cpp", "app/ui/strings.hpp", "app/controller/app_controller.cpp",
-                           "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp"};
+                           "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp", "core/src/attachments.cpp"};
     for (const char* rel : files) {
       std::ifstream in(std::string(ROADMAP_SOURCE_DIR) + "/" + rel, std::ios::binary);
       std::stringstream ss;

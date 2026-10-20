@@ -153,6 +153,10 @@ class Session {
   void touchUi();  // ui を書き換えたら呼ぶ（保存の予約）
   void setCollapsed(std::string id, bool collapsed);
   bool isCollapsed(const std::string& id) const;
+  // 添付のメタ情報（本体のファイルは attachments.hpp。取り消しの対象外で、保存はする）
+  const AttachmentMap& attachments() const { return P_.settings.attachments; }
+  AttachmentMap& attachments() { return P_.settings.attachments; }
+  void touchAttachments() { persist(); }  // attachments() を書き換えたら呼ぶ（保存の予約）
   // 置き換えの取り込み（Undo で戻せる）
   void replaceIssues(std::vector<Issue> issues, ProjectMeta meta, std::vector<std::string> warns);
 

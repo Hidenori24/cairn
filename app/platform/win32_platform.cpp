@@ -111,7 +111,7 @@ std::optional<std::pair<std::string, std::string>> Win32Platform::openTextFile()
       PWSTR p = nullptr;
       if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &p))) {
         std::string err;
-        if (auto t = readTextFile(p, &err)) {
+        if (auto t = win::readTextFile(p, &err)) {
           std::wstring wp(p);
           const auto k = wp.find_last_of(L"\\/");
           out = std::make_pair(*t, narrow(k == std::wstring::npos ? wp : wp.substr(k + 1)));
@@ -204,6 +204,48 @@ bool Win32Platform::saveTextFile(const std::string& suggestedName, const std::st
   }
   dlg->Release();
   return ok;
+}
+
+// RGBA 8bit の画像を DX11 のテクスチャ（シェーダリソースビュー）にする。ImGui の DX11 バックエンドは
+// ImTextureID を ID3D11ShaderResourceView* として描く
+ImTextureID Win32Platform::createTexture(const unsigned char* rgba, int w, int h) {
+  if (!device_ || !rgba || w <= 0 || h <= 0) return nullptr;
+  D3D11_TEXTURE2D_DESC desc{};
+  desc.Width = static_cast<UINT>(w);
+  desc.Height = static_cast<UINT>(h);
+  desc.MipLevels = 1;
+  desc.ArraySize = 1;
+  desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+  desc.SampleDesc.Count = 1;
+  desc.Usage = D3D11_USAGE_DEFAULT;
+  desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+  D3D11_SUBRESOURCE_DATA sub{};
+  sub.pSysMem = rgba;
+  sub.SysMemPitch = static_cast<UINT>(w) * 4;
+  ID3D11Texture2D* tex = nullptr;
+  if (FAILED(device_->CreateTexture2D(&desc, &sub, &tex)) || !tex) return nullptr;
+  D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
+  sv.Format = desc.Format;
+  sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+  sv.Texture2D.MipLevels = 1;
+  ID3D11ShaderResourceView* srv = nullptr;
+  const HRESULT hr = device_->CreateShaderResourceView(tex, &sv, &srv);
+  tex->Release();  // ビューが持っているので、ここでは手放す
+  if (FAILED(hr)) return nullptr;
+  return reinterpret_cast<ImTextureID>(srv);
+}
+
+void Win32Platform::releaseTexture(ImTextureID tex) {
+  if (tex) static_cast<ID3D11ShaderResourceView*>(tex)->Release();
+}
+
+// 関連付けられたアプリで開く。実行ファイルかどうかの確認は UI が先に済ませている
+void Win32Platform::openFile(const std::string& path) {
+  ShellExecuteW(hwnd_, L"open", widen(path).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+std::optional<std::string> Win32Platform::readTextFile(const std::string& path, std::string* error) {
+  return win::readTextFile(widen(path), error);
 }
 
 void Win32Platform::openFolder(const std::string& path) {

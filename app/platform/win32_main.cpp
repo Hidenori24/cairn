@@ -43,7 +43,6 @@ win::Win32Platform* gPlat = nullptr;
 bool gFontsDirty = true;
 float gDpiScale = 1.0f;
 std::set<ImWchar> gExtraGlyphs;
-std::string gDroppedText, gDroppedName;
 bool gCloseRequested = false;
 bool gVerbose = false;
 
@@ -288,20 +287,25 @@ LRESULT WINAPI wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       if (gCtl && gCtl->prefs().theme == "auto") applyTheme();
       break;
     case WM_DROPFILES: {
+      // 複数のファイル・フォルダ。ドロップ先が課題なら添付、何もないところなら CSV の取り込み（UI が判断する）
       HDROP drop = reinterpret_cast<HDROP>(wParam);
-      wchar_t path[MAX_PATH * 4];
-      if (DragQueryFileW(drop, 0, path, MAX_PATH * 4)) {
-        std::string err;
-        if (auto t = win::readTextFile(path, &err)) {
-          std::wstring wp(path);
-          const auto k = wp.find_last_of(L"\\/");
-          gDroppedText = *t;
-          gDroppedName = win::narrow(k == std::wstring::npos ? wp : wp.substr(k + 1));
-        } else if (gCtl) {
-          gCtl->toast(err);
-        }
+      const UINT n = DragQueryFileW(drop, 0xFFFFFFFFu, nullptr, 0);
+      POINT pt{};
+      DragQueryPoint(drop, &pt);
+      std::vector<std::string> paths;
+      for (UINT k = 0; k < n; ++k) {
+        const UINT len = DragQueryFileW(drop, k, nullptr, 0);
+        std::wstring w(static_cast<std::size_t>(len) + 1, L'\0');
+        DragQueryFileW(drop, k, w.data(), len + 1);
+        w.resize(len);
+        paths.push_back(win::narrow(w));
       }
       DragFinish(drop);
+      if (gUi && !paths.empty()) {
+        gUi->pendingDrop.active = true;
+        gUi->pendingDrop.paths = std::move(paths);
+        gUi->pendingDrop.pos = ImVec2(static_cast<float>(pt.x), static_cast<float>(pt.y));
+      }
       return 0;
     }
     case WM_CLOSE:
@@ -394,6 +398,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
   UpdateWindow(hwnd);
   DragAcceptFiles(hwnd, TRUE);
   win::Win32Platform platform(hwnd);
+  platform.setDevice(gDevice);
   gPlat = &platform;
 
   IMGUI_CHECKVERSION();
@@ -467,20 +472,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
       lastProject = ctl.currentId();
       lastVersion = ctl.session() ? ctl.session()->version() : 0;
       checkGlyphs();
-    }
-    // ドロップされたファイル → 取り込みダイアログ（中身は読み込み済み）
-    if (!gDroppedText.empty()) {
-      uiState.dText = gDroppedText;
-      uiState.importName = gDroppedName;
-      for (const char* ext : {".csv", ".json", ".CSV", ".JSON"}) {
-        const std::string e(ext);
-        if (uiState.importName.size() > e.size() &&
-            uiState.importName.compare(uiState.importName.size() - e.size(), e.size(), e) == 0)
-          uiState.importName.resize(uiState.importName.size() - e.size());
-      }
-      uiState.dlg = ui::Dlg::Import;
-      uiState.dlgOpening = true;
-      gDroppedText.clear();
     }
     // 終了の確認（未保存があればまず保存。保存できなければ確認する）
     if (gCloseRequested) {

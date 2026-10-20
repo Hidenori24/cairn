@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -31,11 +32,25 @@ class IPlatform {
   // クリップボードのテキスト（UTF-8）。テキストがない・読めないときは nullopt。
   // 貼り付けた内容は個人情報を含みうるので、ログには出さない
   virtual std::optional<std::string> clipboardText() { return std::nullopt; }
+  // 関連付けられたアプリでファイルを開く（添付の「開く」。実行ファイルの警告は UI が先に出す）。パスは UTF-8
+  virtual void openFile(const std::string& path) { (void)path; }
+  // 画像（RGBA 8bit）をテクスチャにする（サムネイル・プレビュー）。作れなければ nullptr。不要になったら releaseTexture
+  virtual ImTextureID createTexture(const unsigned char* rgba, int w, int h) {
+    (void)rgba, (void)w, (void)h;
+    return nullptr;
+  }
+  virtual void releaseTexture(ImTextureID tex) { (void)tex; }
+  // ドロップされた CSV / JSON を読んで UTF-8 にする（文字コードを判定する。読めなければ nullopt と理由）
+  virtual std::optional<std::string> readTextFile(const std::string& path, std::string* error) {
+    (void)path;
+    if (error) *error = "このアプリでは読み込めません";
+    return std::nullopt;
+  }
 };
 
 enum class Dlg {
   None, NewProject, EditProject, ConfirmDelete, Import, Export, Folder, Settings, Workload, Warnings, Shortcuts,
-  TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete, PasteChildren
+  TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete, PasteChildren, AttachOpenWarn, AttachPreview
 };
 
 enum class EditField { None, Name, Assignee, Dur, Pred };
@@ -79,7 +94,37 @@ struct UiState {
 
   // 詳細パネル
   bool detailOpen = false;
-  int detailTab = 0;  // 0=詳細 1=依存関係 2=コメント
+  int detailTab = 0;  // 0=詳細 1=依存関係 2=コメント 3=添付
+
+  // ファイルのドロップ（エクスプローラーから）。プラットフォームが入れ、次のフレームの先頭で処理する。
+  // ドロップ先が課題（行・カード・詳細パネル）なら添付、何もないところなら CSV / JSON の取り込み
+  struct PendingDrop {
+    bool active = false;
+    std::vector<std::string> paths;  // UTF-8。ファイルまたはフォルダ
+    ImVec2 pos{0, 0};                // ウィンドウの中の位置（ImGui の座標）
+  } pendingDrop;
+  // ドロップを受ける課題の範囲。前のフレームに描いたもの（dropTargets）で判定し、いまのフレームのものは dropBuild にためる
+  struct DropTarget {
+    ImVec2 a, b;
+    std::string id;
+  };
+  std::vector<DropTarget> dropTargets, dropBuild;
+  std::string attachWarnPath;  // 開く前に警告している添付の本体（Dlg::AttachOpenWarn）
+  // 添付の画像（サムネイル・プレビュー）のテクスチャ。キー = パス・大きさ・日時・縮小の上限。
+  // 使わなくなったものは解放し、プロジェクトを切り替えたら全部解放する（releaseImages / trimImages）
+  struct ImageTex {
+    ImTextureID tex = nullptr;
+    int w = 0, h = 0;        // テクスチャの大きさ
+    int origW = 0, origH = 0;  // 元の画像の大きさ
+    bool failed = false;     // 壊れている・読めない・対応していない
+    int lastFrame = 0;       // 最後に使ったフレーム
+  };
+  std::map<std::string, ImageTex> images;
+  std::string imageProject;       // images を作ったプロジェクト
+  int imageDecodedFrame = -1;     // 画像のデコードは1フレームに1枚まで
+  std::string previewIssue;       // プレビュー中の添付（Dlg::AttachPreview）
+  std::size_t previewIndex = 0;
+  float previewZoom = 0;          // 0 = 全体に合わせる
 
   // 依存の相手を画面（一覧・ガント・ボード）のクリックで選ぶモード（Esc で中止）
   struct LinkPick {

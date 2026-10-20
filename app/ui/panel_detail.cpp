@@ -670,6 +670,9 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
   }
   flushPending(T.ids[i], false);
   ImGui::PushID(T.ids[i].c_str());
+  // パネル全体が、開いている課題へのファイルのドロップ先
+  registerDropTarget(f, T.ids[i], ImGui::GetWindowPos(),
+                     ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x, ImGui::GetWindowPos().y + ImGui::GetWindowSize().y));
   const Issue& o = s->viewIssues()[i];
   const ScheduleRow& r = (*s->rows())[i];
   // 上部
@@ -712,6 +715,7 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
     if (std::find(x.blocks.begin(), x.blocks.end(), o.id) != x.blocks.end()) ++nPred;
   const std::string tLinks = "依存関係 " + std::to_string(nPred + static_cast<int>(o.blocks.size())) + "###links";
   const std::string tCom = "コメント " + std::to_string(o.comments.size()) + "###comments";
+  const std::string tAtt = "添付 " + std::to_string(c.attachmentCount(o.id)) + "###attach";
   if (ImGui::BeginTabBar("##dtabs")) {
     if (ImGui::BeginTabItem("詳細", nullptr, u.detailTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
       if (ImGui::IsItemClicked()) u.detailTab = 0;
@@ -729,6 +733,12 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
     if (ImGui::BeginTabItem(tCom.c_str(), nullptr, u.detailTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
       ImGui::BeginChild("##ct", ImVec2(0, 0));
       commentsTab(f, i);
+      ImGui::EndChild();
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem(tAtt.c_str(), nullptr, u.detailTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
+      ImGui::BeginChild("##at", ImVec2(0, 0));
+      drawAttachTab(f, i);
       ImGui::EndChild();
       ImGui::EndTabItem();
     }

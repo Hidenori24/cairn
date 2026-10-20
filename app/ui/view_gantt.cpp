@@ -569,6 +569,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
     ImGui::PopClipRect();
     // タイムライン
     ImGui::PushClipRect(tlMin, tlMax, true);
+    registerDropTarget(f, T.ids[id], ImVec2(tlMin.x, y), ImVec2(tlMax.x, y + RH));  // バーの行へのドロップも添付
     const bool sel = c.isSelected(T.ids[id]);
     if (sel) dl->AddRectFilled(ImVec2(tlMin.x, y), ImVec2(tlMax.x, y + RH), u.t->selbg);
     if (vr.depth == 0) dl->AddLine(ImVec2(tlMin.x, y), ImVec2(tlMax.x, y), u.t->line);

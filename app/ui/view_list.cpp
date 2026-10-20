@@ -226,6 +226,7 @@ void drawTableRow(Frame& f, const VisibleRow& r, ImVec2 pos, float width, const 
   const ImVec2 end(pos.x + width, pos.y + h);
   const bool sel = c.isSelected(id);
   const bool hov = ImGui::IsMouseHoveringRect(pos, end) && ImGui::IsWindowHovered();
+  registerDropTarget(f, id, pos, end);  // ここへファイルをドロップすると添付
   if (sel) dl->AddRectFilled(pos, end, u.t->selbg);
   else if (hov) dl->AddRectFilled(pos, end, u.t->hover);
   if (highlight) dl->AddRectFilled(pos, ImVec2(pos.x + u.m.s(3), end.y), u.t->accent);
