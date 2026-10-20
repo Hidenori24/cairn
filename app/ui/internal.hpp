@@ -65,7 +65,7 @@ struct NameCellOpts {
 void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const NameCellOpts& o = {});
 
 // 表の列（リストとガントの左の表で共有）
-enum class Col { Grip, Name, Type, Status, Asg, Prio, Start, Finish, Dur, Float, Deadline };
+enum class Col { Grip, Name, Type, Status, Asg, Prio, Start, Finish, Dur, Float, Deadline, Pred };
 struct ColDef {
   Col col;
   float w;

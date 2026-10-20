@@ -14,8 +14,9 @@ namespace roadmap::ui {
 namespace {
 
 struct ColW {
-  float name = 300, asg = 84, status = 92, dur = 52, flt = 62;
+  float name = 300, asg = 84, status = 92, dur = 52, flt = 62, pred = 120;
   bool showAsg = true, showStatus = true, showDur = true, showFloat = true;
+  bool showPred = false;  // 先行の列（既定はオフ）
 };
 
 ColW readCols(const app::AppController& c) {
@@ -32,16 +33,19 @@ ColW readCols(const app::AppController& c) {
     g("status", w.status);
     g("dur", w.dur);
     g("float", w.flt);
+    g("pred", w.pred);
   }
   w.showAsg = c.uiBool("cols", "asg", true);
   w.showStatus = c.uiBool("cols", "status", true);
   w.showDur = c.uiBool("cols", "dur", true);
   w.showFloat = c.uiBool("cols", "float", true);
+  w.showPred = c.uiBool("cols", "pred", false);
   w.name = std::max(160.f, w.name);
   w.asg = std::max(48.f, w.asg);
   w.status = std::max(64.f, w.status);
   w.dur = std::max(40.f, w.dur);
   w.flt = std::max(48.f, w.flt);
+  w.pred = std::max(64.f, w.pred);
   return w;
 }
 
@@ -145,9 +149,11 @@ void drawGanttView(Frame& f, ImVec2 size) {
     else if (u.colDrag.col == "status") cw.status = nw;
     else if (u.colDrag.col == "dur") cw.dur = nw;
     else if (u.colDrag.col == "float") cw.flt = nw;
+    else if (u.colDrag.col == "pred") cw.pred = nw;
   }
   std::vector<ColDef> cols = {{Col::Grip, u.m.s(18)}, {Col::Name, u.m.s(cw.name)}};
   std::vector<std::pair<std::string, float>> resizable = {{"name", cw.name}};
+  if (cw.showPred) cols.push_back({Col::Pred, u.m.s(cw.pred)}), resizable.emplace_back("pred", cw.pred);
   if (cw.showAsg) cols.push_back({Col::Asg, u.m.s(cw.asg)}), resizable.emplace_back("asg", cw.asg);
   if (cw.showStatus) cols.push_back({Col::Status, u.m.s(cw.status)}), resizable.emplace_back("status", cw.status);
   if (cw.showDur) cols.push_back({Col::Dur, u.m.s(cw.dur)}), resizable.emplace_back("dur", cw.dur);

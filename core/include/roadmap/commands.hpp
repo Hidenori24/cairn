@@ -7,11 +7,13 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "roadmap/clock.hpp"
 #include "roadmap/filter.hpp"
 #include "roadmap/outline.hpp"
+#include "roadmap/pred_edit.hpp"
 #include "roadmap/schedule.hpp"
 #include "roadmap/templates.hpp"
 
@@ -105,6 +107,9 @@ class Session {
   // 親子の両方が選ばれていれば子は数えない。すでにあるつなぎは足さない。
   // 1つでも循環になるなら何も変えず、理由を通知する。全体で Undo 1回
   ChainResult chainIssues(std::vector<std::string> ids, const std::vector<std::string>& order = {});
+  // 「先行」列の入力（例 `DEV-12, DEV-15`）のとおりに id の先行を変える。いまとの差分（追加・削除）だけを反映し、全体で Undo 1回。
+  // 問題（存在しない・重複・循環など）があれば何も変えず、plan.ok = false と理由を返す
+  PredPlan setPredecessors(const std::string& id, std::string_view text);
   // 選んだ課題どうしのつなぎをすべて外す（選ばない課題とのつなぎは残す）。外した数を返す。Undo 1回
   int unchainIssues(const std::vector<std::string>& ids);
   bool addComment(std::string id, std::string text, std::string who);

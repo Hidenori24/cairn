@@ -13,6 +13,7 @@ struct Computed {
   Tree T;
   std::vector<ScheduleRow> R;
   std::vector<Issue> issues;  // 計算に使った課題の写し（Session が画面用に持つ。computeAll では空）
+  std::vector<std::vector<int>> declPreds;  // 課題ごとの先行（blocks の逆引き。Session が作る。「先行」列用）
 };
 
 Result<Computed> computeAll(const std::vector<Issue>& issues, const ProjectMeta& meta, const Calendar& cal,
