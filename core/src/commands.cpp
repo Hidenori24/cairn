@@ -498,6 +498,39 @@ bool Session::addLink(std::string from, std::string to) {
   return mutate([&](ProjectData& P) { P.issues[indexOf(P.issues, from)].blocks.push_back(to); });
 }
 
+LinkPreview Session::previewLink(const std::string& from, const std::string& to) const {
+  LinkPreview out;
+  if (!comp_) return out;
+  const Tree& T = comp_->T;
+  const int a = T.find(from), b = T.find(to);
+  out.block = checkLink(T, comp_->issues, a, b);
+  if (out.block != LinkBlock::None) return out;
+  // 課題の写しに足して、同じ設定で計算し直す（本物の課題・取り消しの履歴は触らない）
+  std::vector<Issue> issues = comp_->issues;
+  issues[static_cast<std::size_t>(a)].blocks.push_back(to);
+  auto t = buildTree(issues, P_.meta);
+  if (!t || t->n != T.n) return out;
+  ScheduleOptions o;
+  o.base = baseDay();
+  o.scenario = P_.settings.scenario;
+  o.resource = P_.settings.resource;
+  const auto R2 = computeSchedule(*t, issues, cal_, o);
+  const auto& R = comp_->R;
+  if (R2.size() != R.size()) return out;
+  out.ok = true;
+  const auto& targetLeaves = T.leaves[static_cast<std::size_t>(b)];
+  for (int i = 0; i < T.n; ++i) {
+    if (!T.isLeaf(i)) continue;
+    const auto& r0 = R[static_cast<std::size_t>(i)];
+    const auto& r1 = R2[static_cast<std::size_t>(i)];
+    if (r0.asapStart == r1.asapStart && r0.asapFinish == r1.asapFinish) continue;
+    out.shifts.push_back({i, r0.asapStart, r0.asapFinish, r1.asapStart, r1.asapFinish});
+    if (r1.asapStart > r0.asapStart && std::find(targetLeaves.begin(), targetLeaves.end(), i) != targetLeaves.end())
+      out.delayDays = std::max(out.delayDays, cal_.floatDays(r0.asapStart, r1.asapStart));
+  }
+  return out;
+}
+
 bool Session::removeLink(std::string from, std::string to) {
   if (!issue(from)) return false;
   return mutate([&](ProjectData& P) {

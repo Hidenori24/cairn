@@ -1114,6 +1114,10 @@ void handleKeys(Frame& f) {
   const bool modal = u.dlg != Dlg::None || u.paletteOpen || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
   if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !io.WantTextInput) {
     if (modal) return;  // ダイアログ・パレット・メニューはそれぞれで閉じる
+    if (u.linkDrag.active) {  // バーの端からのドラッグ（依存をつなぐ）を取り消し
+      u.linkDrag = {};
+      return;
+    }
     if (u.linkPick.active) {  // 依存の相手を選ぶモードを中止
       cancelLinkPick(f);
       return;
@@ -1288,6 +1292,7 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
       default: drawGanttView(f, mainSize); break;
     }
   }
+  if (u.linkDrag.active && (!s || c.view() != View::Gantt)) u.linkDrag = {};  // ガントが描かれない間にドラッグを残さない
   ImGui::EndChild();
   if (detailW > 0) {
     ImGui::SameLine(0, 0);

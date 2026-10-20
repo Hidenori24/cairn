@@ -150,3 +150,59 @@ TEST_CASE("checkLink: 1組の判定と addLink の結果が合う") {
   CHECK(s.addLink("3", "4"));
   CHECK_FALSE(s.addLink("4", "2"));  // 4→2→3→4 の循環。計算で拒否されて元に戻る
 }
+
+// ---- つなぐ前の日程の影響（Issue #8: ガントのドラッグのプレビュー）----
+
+TEST_CASE("previewLink: 後続が先行の終わりまで遅れる（営業日）。セッションは変わらない") {
+  Session s = make();
+  const std::size_t undo0 = s.undoSize();
+  const auto before = s.issues();
+  const LinkPreview p = s.previewLink("2", "3");  // 画面(1週) → DB
+  CHECK(p.ok);
+  CHECK(p.block == LinkBlock::None);
+  CHECK(p.delayDays == 5);
+  REQUIRE(p.shifts.size() == 1);
+  const Tree& T = *s.tree();
+  const auto& R = *s.rows();
+  CHECK(p.shifts[0].idx == T.find("3"));
+  CHECK(p.shifts[0].oldStart == R[T.find("3")].asapStart);
+  CHECK(p.shifts[0].newStart == R[T.find("3")].asapStart + 7);  // 1週間後の同じ曜日
+  CHECK(p.shifts[0].newFinish - p.shifts[0].newStart == p.shifts[0].oldFinish - p.shifts[0].oldStart);
+  CHECK(s.undoSize() == undo0);
+  CHECK(s.issues() == before);
+}
+
+TEST_CASE("previewLink: すでに十分遅い後続は動かない") {
+  Session s = make();
+  REQUIRE(s.addLink("2", "3"));  // DB は画面の1週間後から
+  const LinkPreview p = s.previewLink("4", "3");  // API(1週) → DB。DB はすでに API の後
+  CHECK(p.ok);
+  CHECK(p.delayDays == 0);
+  CHECK(p.shifts.empty());
+}
+
+TEST_CASE("previewLink: 親への依存は配下の葉に広がる／つなげない組は理由つきで ok=false") {
+  Session s = make();
+  const LinkPreview p = s.previewLink("3", "5");  // DB(2週) → 試験(Epic)。6・7 が遅れる
+  CHECK(p.ok);
+  CHECK(p.delayDays == 10);
+  CHECK(p.shifts.size() == 2);
+  REQUIRE(s.addLink("2", "3"));
+  const LinkPreview c = s.previewLink("3", "2");
+  CHECK_FALSE(c.ok);
+  CHECK(c.block == LinkBlock::Cycle);
+  CHECK(c.shifts.empty());
+  CHECK(s.previewLink("2", "3").block == LinkBlock::Already);
+  CHECK(s.previewLink("2", "2").block == LinkBlock::Self);
+  CHECK(s.previewLink("1", "2").block == LinkBlock::Family);
+  CHECK_FALSE(s.previewLink("2", "nothing").ok);
+}
+
+TEST_CASE("previewLink: 下流にも広がる（後続の後続も遅れる）") {
+  Session s = make();
+  REQUIRE(s.addLink("3", "4"));  // DB(2週) → API
+  const LinkPreview p = s.previewLink("2", "3");  // 画面(1週) → DB: DB が1週遅れ、API も1週遅れる
+  CHECK(p.ok);
+  CHECK(p.delayDays == 5);
+  CHECK(p.shifts.size() == 2);
+}
