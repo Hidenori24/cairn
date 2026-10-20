@@ -245,6 +245,33 @@ int main(int argc, char** argv) {
   u.customPx = 3.2f;
   shot("21_gantt_custom_narrow");
   u.customPx = 0;
+  // 依存の相手: 詳細パネルの候補一覧・画面でクリックして選ぶモード
+  {
+    c.setView(app::View::Gantt);
+    c.select("22");  // 依存のない課題（先行の入力欄が上のほうにある）
+    u.detailOpen = true;
+    u.detailTab = 1;
+    frames(3);
+    ImGuiIO& io2 = ImGui::GetIO();
+    for (float y = 150; y < 700 && !io2.WantTextInput; y += 4) {
+      io2.AddMousePosEvent(1250, y);
+      io2.AddMouseButtonEvent(0, true);
+      frames(1);
+      io2.AddMouseButtonEvent(0, false);
+      frames(1);
+    }
+    shot("22_link_picker");
+    io2.AddKeyEvent(ImGuiKey_Escape, true);
+    frames(1);
+    io2.AddKeyEvent(ImGuiKey_Escape, false);
+    frames(2);
+    io2.AddMousePosEvent(-1, -1);
+    u.linkPick = {true, "22", true, c.currentId()};
+    shot("23_link_pick_mode");
+    u.linkPick = {};
+    u.detailOpen = false;
+    frames(2);
+  }
   // アプリの設定（保存先の切り替えの確認中）・削除の確認
   u.dlg = ui::Dlg::AppSettings;
   u.dlgOpening = true;

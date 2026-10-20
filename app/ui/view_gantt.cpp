@@ -351,7 +351,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
       ImGui::InvisibleButton("##ms", ImVec2(u.m.s(16), u.m.s(16)));
       if (ImGui::IsItemHovered()) hoverTipId = T.ids[id];
     } else {
-      const bool movable = !r.done && !r.pinned;
+      const bool movable = !r.done && !r.pinned && !u.linkPick.active;
       Day s0 = r.asapStart, f0 = r.asapFinish;
       if (dragIdx == id) {
         if (u.barDrag.resize) f0 = std::max(s0, u.barDrag.origFinish + dragDelta);

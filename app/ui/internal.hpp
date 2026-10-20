@@ -30,6 +30,14 @@ void openStatusMenu(Frame& f, const std::string& id);
 void openDetail(Frame& f, const std::string& id, int tab = 0);
 // 行のクリック（Ctrl・Shift を見て選択を変える）
 void rowClick(Frame& f, const std::string& id);
+// 依存の相手を画面のクリックで選ぶモードに入る / 抜ける。起点が先行なら相手は後続、起点が後続なら相手は先行
+void beginLinkPick(Frame& f, const std::string& anchor, bool anchorIsPred);
+void cancelLinkPick(Frame& f);
+// 起点と相手をつなぐ。つなげない相手（循環など）は理由を通知して false。成功すると Undo 1回で戻せる。
+// announce = 成功を通知する（元に戻すボタンつき）
+bool linkIssues(Frame& f, const std::string& anchor, bool anchorIsPred, const std::string& other, bool announce);
+// 最近つないだ課題（いまのプロジェクトのもの。新しい順）
+const std::vector<std::string>& recentLinks(const Frame& f);
 // その場編集を始める（fresh = 追加直後の行）
 void beginEdit(Frame& f, const std::string& id, EditField field, bool fresh = false);
 // その場編集の入力欄を描く（カーソル位置に、幅 w で）。終わったら false

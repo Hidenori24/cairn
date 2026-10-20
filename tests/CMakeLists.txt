@@ -17,6 +17,7 @@ add_executable(roadmap_unit_tests
   unit/test_jira_check.cpp
   unit/test_controller.cpp
   unit/test_stats.cpp
+  unit/test_link_candidates.cpp
   unit/test_issue_name.cpp
 )
 target_link_libraries(roadmap_unit_tests PRIVATE roadmap_core roadmap_controller roadmap_test_main)

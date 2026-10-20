@@ -7,6 +7,7 @@
 #include <imgui.h>
 #include <imgui_stdlib.h>
 
+#include "roadmap/link_candidates.hpp"
 #include "roadmap/text.hpp"
 #include "ui/icons.hpp"
 #include "ui/internal.hpp"
@@ -326,9 +327,122 @@ void detailTab(Frame& f, int i) {
                       o.key.empty() ? "" : (" ／ " + o.key).c_str());
 }
 
-void linksTab(Frame& f, int i) {
+// 依存の相手の入力欄: 入力すると候補（表示ID・件名の部分一致）が出て、クリックか ↑↓ + Enter で選ぶ。
+// 「画面で選ぶ」で一覧・ガント・ボードの行をクリックして選ぶこともできる。
+struct CandState {
+  bool open = false;
+  int sel = -1;  // ↑↓ で選んだ候補（-1 = 選んでいない）
+  std::string lastQuery;
+  ImVec2 rectMin{0, 0}, rectMax{0, 0};  // 前のフレームの候補一覧の範囲（画面の座標）
+} gCand[2];
+
+void linkAdder(Frame& f, int i, LinkDir dir, std::string& buf) {
   app::AppController& c = f.c;
   UiState& u = f.u;
+  Session* s = c.session();
+  const Tree& T = *s->tree();
+  const auto& I = s->viewIssues();
+  const std::string id = I[i].id;
+  const bool addPred = dir == LinkDir::AddPred;
+  CandState& st = gCand[addPred ? 0 : 1];
+  ImGui::PushID(addPred ? "addp" : "adds");
+  const float btnW = ImGui::CalcTextSize("画面で選ぶ").x + u.m.s(20);
+  ImGui::SetNextItemWidth(-(btnW + ImGui::GetStyle().ItemSpacing.x));
+  ImGui::InputTextWithHint("##in", "表示ID・件名を入力して Enter", &buf);
+  const bool active = ImGui::IsItemActive();
+  const bool focused = ImGui::IsItemFocused();
+  ImGui::SameLine();
+  if (ImGui::Button("画面で選ぶ", ImVec2(btnW, 0))) {
+    beginLinkPick(f, id, !addPred);  // 先行を足す = 自分が後続（起点）
+    st.open = false;
+  }
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("一覧・ガント・ボードの行（カード・バー）をクリックして選びます。Esc で中止");
+  // 候補を出すのは、入力欄に入っている間と、候補をクリックする瞬間（入力欄は外れる）
+  const bool overList = st.open && ImGui::IsMouseHoveringRect(st.rectMin, st.rectMax, false);
+  // Enter を押したフレームは、入力欄はもう（Enter で）アクティブではないが、フォーカスは残っている
+  const bool enter = focused && enterPressed(u) && (!text::trim(buf).empty() || st.sel >= 0);
+  const bool show = active || overList || enter;
+  st.open = show;
+  if (!show) {
+    st.sel = -1;
+    ImGui::PopID();
+    return;
+  }
+  if (buf != st.lastQuery) {
+    st.lastQuery = buf;
+    st.sel = -1;
+  }
+  const auto cands = linkCandidates(T, I, i, dir, buf, recentLinks(f), 50);
+  // ↑↓ で、つなげられる候補だけを順にたどる（先頭の上は「選んでいない」）
+  bool moved = false;
+  if (active) {
+    const auto step = [&](int d) {
+      int k = st.sel;
+      for (;;) {
+        k += d;
+        if (k < -1 || k >= static_cast<int>(cands.size())) return;
+        if (k == -1 || cands[static_cast<std::size_t>(k)].block == LinkBlock::None) break;
+      }
+      st.sel = k;
+      moved = true;
+    };
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) step(1);
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) step(-1);
+  }
+  const auto done = [&] {
+    buf.clear();
+    st.sel = -1;
+    st.open = false;
+    st.lastQuery.clear();
+  };
+  // Enter: ↑↓ で選んだ候補、なければ入力を表示ID・件名として探す（今までどおり）
+  if (enter) {
+    if (st.sel >= 0 && st.sel < static_cast<int>(cands.size())) {
+      if (linkIssues(f, id, !addPred, T.ids[cands[static_cast<std::size_t>(st.sel)].idx], false)) done();
+    } else if (auto ref = s->resolveRef(buf)) {
+      if (linkIssues(f, id, !addPred, *ref, false)) done();
+    } else {
+      c.toast("「" + text::trim(buf) + "」が見つかりません");
+    }
+    ImGui::PopID();
+    return;
+  }
+  // 候補の一覧（入力欄の下に出す）
+  const float lh = ImGui::GetTextLineHeightWithSpacing();
+  const int rows = std::max(1, std::min<int>(static_cast<int>(cands.size()), 8));
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, v4(u.t->surface));
+  ImGui::BeginChild("##cand", ImVec2(-1, rows * lh + u.m.s(12)), ImGuiChildFlags_Border);
+  ImGui::PopStyleColor();
+  const float availW = ImGui::GetContentRegionAvail().x;
+  int clicked = -1;
+  for (std::size_t r = 0; r < cands.size(); ++r) {
+    const LinkCandidate& cd = cands[r];
+    const bool ok = cd.block == LinkBlock::None;
+    const std::string tag = !ok ? linkBlockReason(cd.block) : cd.recent ? "最近" : cd.sibling ? "同じ階層" : "";
+    const float tagW = tag.empty() ? 0.f : ImGui::CalcTextSize(tag.c_str()).x + u.m.s(8);
+    ImGui::PushID(static_cast<int>(r));
+    const bool isSel = static_cast<int>(r) == st.sel;
+    if (ImGui::Selectable(ellipsize(T.did[cd.idx] + "  " + T.name[cd.idx], availW - tagW - u.m.s(12)).c_str(), isSel,
+                          ok ? 0 : ImGuiSelectableFlags_Disabled))
+      clicked = static_cast<int>(r);
+    if (isSel && moved) ImGui::SetScrollHereY();
+    if (!ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", tag.c_str());
+    if (!tag.empty()) {
+      ImGui::SameLine(availW - tagW);
+      ImGui::TextDisabled("%s", tag.c_str());
+    }
+    ImGui::PopID();
+  }
+  if (cands.empty()) ImGui::TextDisabled("%s", text::trim(buf).empty() ? "候補がありません" : "該当する課題がありません");
+  st.rectMin = ImGui::GetWindowPos();
+  st.rectMax = ImVec2(st.rectMin.x + ImGui::GetWindowSize().x, st.rectMin.y + ImGui::GetWindowSize().y);
+  ImGui::EndChild();
+  if (clicked >= 0 && linkIssues(f, id, !addPred, T.ids[cands[static_cast<std::size_t>(clicked)].idx], false)) done();
+  ImGui::PopID();
+}
+
+void linksTab(Frame& f, int i) {
+  app::AppController& c = f.c;
   Session* s = c.session();
   const Tree& T = *s->tree();
   const auto& I = s->viewIssues();
@@ -345,33 +459,13 @@ void linksTab(Frame& f, int i) {
     s->removeLink(I[k].id, id);
     c.afterEdit();
   });
-  ImGui::SetNextItemWidth(-1);
-  ImGui::InputTextWithHint("##addp", "表示ID・件名を入力して Enter", &addPred);
-  if (ImGui::IsItemFocused() && enterPressed(u) && !text::trim(addPred).empty()) {
-    if (auto ref = s->resolveRef(addPred)) {
-      s->addLink(*ref, id);
-      addPred.clear();
-    } else {
-      c.toast("「" + text::trim(addPred) + "」が見つかりません");
-    }
-    c.afterEdit();
-  }
+  linkAdder(f, i, LinkDir::AddPred, addPred);
   ImGui::SeparatorText("後続（これが終わるのを待つ）");
   for (int k : succs) issuePill(f, k, [&, k] {
     s->removeLink(id, I[k].id);
     c.afterEdit();
   });
-  ImGui::SetNextItemWidth(-1);
-  ImGui::InputTextWithHint("##adds", "表示ID・件名を入力して Enter", &addSucc);
-  if (ImGui::IsItemFocused() && enterPressed(u) && !text::trim(addSucc).empty()) {
-    if (auto ref = s->resolveRef(addSucc)) {
-      s->addLink(id, *ref);
-      addSucc.clear();
-    } else {
-      c.toast("「" + text::trim(addSucc) + "」が見つかりません");
-    }
-    c.afterEdit();
-  }
+  linkAdder(f, i, LinkDir::AddSucc, addSucc);
   // 親の依存を含む実効の先行が直接の先行と違うとき
   if (T.isLeaf(i)) {
     std::vector<int> eff = T.preds[i];

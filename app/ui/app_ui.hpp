@@ -80,6 +80,17 @@ struct UiState {
   bool detailOpen = false;
   int detailTab = 0;  // 0=詳細 1=依存関係 2=コメント
 
+  // 依存の相手を画面（一覧・ガント・ボード）のクリックで選ぶモード（Esc で中止）
+  struct LinkPick {
+    bool active = false;
+    std::string anchor;          // 起点の課題
+    bool anchorIsPred = false;   // true = 起点が先行（相手を後続に選ぶ）
+    std::string project;         // 始めたプロジェクト（切り替わったら中止）
+  } linkPick;
+  // 最近つないだ課題（新しい順。プロジェクトごとに覚え、アプリを閉じると忘れる）
+  std::string recentLinkProject;
+  std::vector<std::string> recentLinks;
+
   // ダイアログの入力
   std::string dName, dKey, dText, dText2, dSearch;
   int dChoice = 0, dChoice2 = 0;
