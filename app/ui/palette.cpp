@@ -27,9 +27,7 @@ std::vector<Cmd> buildCommands(Frame& f) {
   };
   if (s) {
     add("課題", "課題を追加（最上位）", nullptr, [&f] {
-      Session* ss = f.c.session();
-      const auto id = ss->addIssue("", "");
-      f.c.afterEdit();
+      const auto id = f.c.createIssue("", "");
       if (!id.empty()) beginEdit(f, id, EditField::Name, true);
     });
     if (hasSel) {

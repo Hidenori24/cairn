@@ -180,6 +180,38 @@ int main() {
     check(h.u.editField == ui::EditField::Name && h.u.editId != first, "追加直後の Enter で次の行");
     h.key(ImGuiKey_Escape);
     check(h.c.session()->issue(first) && h.c.session()->issue(first)->summary == "追加1", "追加した行の件名");
+    // 新しい課題の名前（アプリの設定）: 既定の名前が入力欄に入り、そのまま Enter で確定して次の行も同じ流儀で付く
+    h.c.prefs().newNameFormat = "parentSeq";
+    h.c.select("7");
+    io.AddKeyEvent(ImGuiKey_N, true);
+    h.frame();
+    io.AddKeyEvent(ImGuiKey_N, false);
+    h.frame();
+    const std::string n1 = h.u.editId;
+    check(h.u.editField == ui::EditField::Name && h.u.editFresh && n1 != "7", "設定ありでも N で追加して編集");
+    const std::string name1 = h.c.session()->issue(n1) ? h.c.session()->issue(n1)->summary : "";
+    check(!name1.empty() && name1 != "新しい課題", "追加した行に設定どおりの名前が付く");
+    check(h.u.editBuf == h.c.session()->tree()->name[h.c.session()->find(n1)], "入力欄に既定の名前が入る");
+    h.key(ImGuiKey_Enter);  // 何も打たずに確定 → 次の行を追加
+    const std::string n2 = h.u.editId;
+    check(h.u.editField == ui::EditField::Name && n2 != n1, "追加直後の Enter で次の行（設定あり）");
+    const std::string name2 = h.c.session()->issue(n2) ? h.c.session()->issue(n2)->summary : "";
+    check(h.c.session()->issue(n1) && h.c.session()->issue(n1)->summary == name1, "そのまま確定した行の名前が残る");
+    check(!name2.empty() && name2 != "新しい課題" && name2 != name1, "次の行にも名前が付き、兄弟と重ならない");
+    h.key(ImGuiKey_Escape);
+    // 後のガントの拡大の検査（頂点数が16ビットに収まる行数）に影響しないよう、増やした行は消す
+    h.c.session()->deleteIssues({n1, n2});
+    h.c.afterEdit();
+    // 自由入力でアプリの設定を描く
+    h.c.prefs().newNameFormat = "custom";
+    h.c.prefs().newNameCustom = "{親}の子 {n}（{日付}）";
+    h.c.select("7");
+    h.u.dlg = ui::Dlg::AppSettings;
+    h.u.dlgOpening = true;
+    h.frame(3);
+    h.u.dlg = ui::Dlg::None;
+    h.frame(1);
+    h.c.prefs().newNameFormat = "keep";
   }
   // ガントでも同じ（編集の確定で計算し直しても、同じフレームの描画が古い参照で壊れないこと）
   {
