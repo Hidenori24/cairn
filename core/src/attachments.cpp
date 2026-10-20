@@ -73,8 +73,11 @@ Result<Attachment> storeOne(IFileStore& fs, const IClock& clock, const std::stri
   name = paths::uniqueName(used, name, true);
   auto data = getData();
   if (!data) return Error{data.error()};
-  if (data->size() > lim.perFile)  // 読んでいる間に大きくなった
+  // 読んでいる間に大きくなった場合に備えて、実際に読めた大きさで、1ファイルとプロジェクト合計の両方を検査し直す
+  if (data->size() > lim.perFile)
     return Error{"1ファイルの上限（" + formatBytes(lim.perFile) + "）を超えています"};
+  if (total + data->size() > lim.perProject)
+    return Error{"プロジェクト全体の合計の上限（" + formatBytes(lim.perProject) + "）を超えます（いま " + formatBytes(total) + "）"};
   if (auto s = fs.writeAtomic(joinPath(dir, name), *data); !s) return Error{"書き込めません: " + s.error()};
   Attachment a;
   a.name = name;

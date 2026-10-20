@@ -17,18 +17,33 @@ Json attachmentsToJson(const AttachmentMap& m) {
   return o;
 }
 
+namespace {
+// 設定 JSON から読んだ名前（課題の Issue Id のフォルダ名・ファイル名）が、添付フォルダの外を指さないか。
+// 区切り（/ \）・「.」「..」・制御文字（NUL を含む）・Windows の予約文字（: * ? " < > |）・先頭や末尾の空白・末尾の「.」を拒否する
+bool isSafePathComponent(std::string_view n) {
+  if (n.empty() || n == "." || n == "..") return false;
+  if (n.front() == ' ' || n.back() == ' ' || n.back() == '.') return false;
+  for (const char ch : n) {
+    const unsigned char c = static_cast<unsigned char>(ch);
+    if (c < 0x20 || c == 0x7F) return false;
+    if (std::string_view("/\\:*?\"<>|").find(ch) != std::string_view::npos) return false;
+  }
+  return true;
+}
+}  // namespace
+
 AttachmentMap attachmentsFromJson(const Json& j) {
   AttachmentMap m;
   if (!j.is_object()) return m;
   for (auto it = j.begin(); it != j.end(); ++it) {
-    if (!it.value().is_array()) continue;
+    if (!it.value().is_array() || !isSafePathComponent(it.key())) continue;
     for (const auto& x : it.value()) {
       if (!x.is_object() || !x.contains("name") || !x["name"].is_string()) continue;
       Attachment a;
       a.name = x["name"].get<std::string>();
-      if (a.name.empty()) continue;
-      if (x.contains("size") && x["size"].is_number() && x["size"].get<double>() >= 0)
-        a.size = static_cast<std::uint64_t>(x["size"].get<double>());
+      if (!isSafePathComponent(a.name)) continue;
+      // 非負の整数だけ読む（浮動小数点や範囲外の値は無視して既定のまま）
+      if (x.contains("size") && x["size"].is_number_unsigned()) a.size = x["size"].get<std::uint64_t>();
       if (x.contains("at") && x["at"].is_string()) a.at = x["at"].get<std::string>();
       if (x.contains("who") && x["who"].is_string()) a.who = x["who"].get<std::string>();
       m[it.key()].push_back(std::move(a));
@@ -94,13 +109,17 @@ int prioRank(std::string_view prio) {
   return 2;
 }
 
-std::string nextIssueId(const std::vector<Issue>& issues) {
+std::string nextIssueId(const std::vector<Issue>& issues, const AttachmentMap& reserved) {
   double m = 0;
-  for (const auto& o : issues)
-    if (text::isAsciiDigits(o.id)) {
-      const double v = std::strtod(o.id.c_str(), nullptr);
-      if (v > m) m = v;
-    }
+  const auto upto = [&m](const std::string& id) {
+    if (!text::isAsciiDigits(id)) return;
+    const double v = std::strtod(id.c_str(), nullptr);
+    if (v > m) m = v;
+  };
+  for (const auto& o : issues) upto(o.id);
+  // 削除した課題の添付が残っているとき（Undo で戻せる）、その id は再利用しない
+  for (const auto& [id, list] : reserved)
+    if (!list.empty()) upto(id);
   return text::jsNumber(m + 1);
 }
 

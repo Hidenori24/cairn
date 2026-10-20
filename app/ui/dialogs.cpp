@@ -635,7 +635,8 @@ void dlgAttachPreview(Frame& f) {
     ImGui::EndChild();
     if (ImGui::Button("全体に合わせる")) u.previewZoom = 0;
     ImGui::SameLine();
-    if (ImGui::Button("等倍")) u.previewZoom = 1.f;
+    // 表示の倍率は縮小したテクスチャが基準なので、元の画像の100%は「元の幅 ÷ テクスチャの幅」
+    if (ImGui::Button("等倍")) u.previewZoom = static_cast<float>(std::max(1, img->origW)) / static_cast<float>(std::max(1, img->w));
     ImGui::SameLine();
     if (ImGui::Button("拡大")) u.previewZoom = std::clamp(zoom * 1.25f, 0.1f, 8.f);
     ImGui::SameLine();

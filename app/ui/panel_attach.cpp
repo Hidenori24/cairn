@@ -119,9 +119,12 @@ void trimImages(Frame& f) {
     }
   }
   while (u.images.size() > kMaxImages) {
-    auto oldest = u.images.begin();
+    // このフレームで使った画像は、まだ描画に渡す前なので解放しない（解放済みのテクスチャを描くと落ちる）。
+    // それしか残っていなければ、上限を超えたまま次のフレームに回す
+    auto oldest = u.images.end();
     for (auto it = u.images.begin(); it != u.images.end(); ++it)
-      if (it->second.lastFrame < oldest->second.lastFrame) oldest = it;
+      if (it->second.lastFrame < frame && (oldest == u.images.end() || it->second.lastFrame < oldest->second.lastFrame)) oldest = it;
+    if (oldest == u.images.end()) break;
     if (oldest->second.tex) f.p.releaseTexture(oldest->second.tex);
     u.images.erase(oldest);
   }

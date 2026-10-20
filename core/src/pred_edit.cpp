@@ -77,9 +77,16 @@ std::string formatPredsForEdit(const Tree& T, const std::vector<Issue>& issues, 
   std::string out;
   for (const int p : preds) {
     const auto i = static_cast<std::size_t>(p);
+    // 入力欄にそのまま書いて、1項目として読み戻せ、同じ課題に解決できる参照だけを使う
+    // （件名のタグ `[設計、実装]` の表示 ID は、区切りの「、」で2項目に割れるため使えない）
+    const auto usable = [&](const std::string& r) {
+      if (r.empty() || resolve(T, issues, r) != p) return false;
+      const auto tk = parsePredText(r);
+      return tk.size() == 1 && tk[0].ref == r;
+    };
     std::string ref = T.did[i];
-    if (resolve(T, issues, ref) != p) ref = !issues[i].key.empty() ? issues[i].key : issues[i].id;
-    if (resolve(T, issues, ref) != p) ref = issues[i].id;
+    if (!usable(ref)) ref = issues[i].key;
+    if (!usable(ref)) ref = issues[i].id;
     if (!out.empty()) out += ", ";
     out += ref;
   }

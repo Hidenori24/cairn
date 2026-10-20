@@ -402,3 +402,129 @@ TEST_CASE("controller: プロジェクトの複製では添付のメタ情報を
   e.c.duplicateProject();
   CHECK(e.c.attachmentCount(id) == 0);
 }
+
+// ---- Copilot の指摘への対応（#38） ----
+namespace {
+// stat が実際より小さい大きさを返す（読んでいる間にファイルが大きくなった状況）
+class GrowingFs final : public IFileStore {
+ public:
+  explicit GrowingFs(MemFileStore& inner) : in_(inner) {}
+  Result<std::vector<FileInfo>> list(const std::string& dir) override { return in_.list(dir); }
+  std::optional<FileInfo> stat(const std::string& path) override {
+    auto s = in_.stat(path);
+    if (s && path.rfind("ext/", 0) == 0) s->size = 1;  // 取り込み元は「1バイト」と報告する
+    return s;
+  }
+  Result<std::string> read(const std::string& path) override { return in_.read(path); }
+  Status writeAtomic(const std::string& path, const std::string& data) override { return in_.writeAtomic(path, data); }
+  Status remove(const std::string& path) override { return in_.remove(path); }
+  Status makeDirs(const std::string& dir) override { return in_.makeDirs(dir); }
+  Status move(const std::string& from, const std::string& to) override { return in_.move(from, to); }
+
+ private:
+  MemFileStore& in_;
+};
+}  // namespace
+
+TEST_CASE("attachments: 読んでいる間に大きくなっても、プロジェクト合計の上限を超えて保存しない") {
+  MemFileStore mem;
+  AttachmentMap meta;
+  AttachLimits lim;
+  lim.perProject = 10;
+  lim.perFile = 10;
+  mem.put("ext/a", std::string(8, 'x'));
+  mem.put("ext/grow", std::string(3, 'y'));  // stat は 1 バイト。実際は 3 バイト
+  GrowingFs fs(mem);
+  CHECK(attachFiles(fs, clk, kProj, meta, "1", {"ext/a"}, "山田", lim).added.size() == 1);  // 8 / 10
+  const auto r = attachFiles(fs, clk, kProj, meta, "1", {"ext/grow"}, "山田", lim);          // 8 + 1 は通るが、実際は 8 + 3 = 11
+  CHECK(r.added.empty());
+  REQUIRE(r.rejected.size() == 1);
+  CHECK(r.rejected[0].reason.find("合計") != std::string::npos);
+  CHECK(attachmentsTotalBytes(meta) == 8);
+  CHECK_FALSE(mem.exists(std::string(kProj) + "/添付/1/grow"));
+}
+
+TEST_CASE("attachments: 設定 JSON の名前が添付フォルダの外を指していたら読み飛ばす・大きさは非負の整数だけ読む") {
+  const Json j = Json::parse(R"({
+    "1": [{"name":"../../project.csv"}, {"name":"a/b.txt"}, {"name":"a\\b.txt"}, {"name":".."}, {"name":"x.txt."},
+          {"name":" x.txt"}, {"name":"C:evil.txt"}, {"name":"ok.txt","size":1e100}, {"name":"ok2.txt","size":-5},
+          {"name":"ok3.txt","size":2.5}, {"name":"ok4.txt","size":123}, {"name":"nul\u0000.txt"}],
+    "../x": [{"name":"y.txt"}],
+    "a/b": [{"name":"y.txt"}],
+    "2": [{"name":"fine.txt","size":18446744073709551615}]
+  })");
+  const AttachmentMap m = attachmentsFromJson(j);
+  REQUIRE(m.count("1") == 1);
+  const auto& one = m.at("1");
+  REQUIRE(one.size() == 4);
+  CHECK(one[0].name == "ok.txt");
+  CHECK(one[0].size == 0);  // 範囲外の数値は無視（既定のまま）。キャストで未定義動作にならない
+  CHECK(one[1].size == 0);  // 負
+  CHECK(one[2].size == 0);  // 小数
+  CHECK(one[3].size == 123);
+  CHECK(m.count("../x") == 0);
+  CHECK(m.count("a/b") == 0);
+  REQUIRE(m.count("2") == 1);
+  CHECK(m.at("2")[0].size == 18446744073709551615ULL);
+}
+
+TEST_CASE("attachments: 添付が残っている課題の id は、削除しても新しい課題に使い回さない") {
+  std::vector<Issue> issues(2);
+  issues[0].id = "1";
+  issues[1].id = "2";
+  AttachmentMap att;
+  CHECK(nextIssueId(issues, att) == "3");
+  att["5"].push_back({"a.txt", 1, "", ""});
+  CHECK(nextIssueId(issues, att) == "6");  // 5 の添付が残っている
+  att["9"].clear();                         // 空の項目は数えない
+  CHECK(nextIssueId(issues, att) == "6");
+  CHECK(nextIssueId(issues) == "3");  // 添付を渡さなければ今まで通り
+}
+
+TEST_CASE("controller: 最大 id の課題に添付 → 削除 → 新規作成しても、id が再利用されず古い添付が付かない") {
+  CEnv e;
+  e.c.start();
+  e.c.createProject(app::SampleKind::Empty, "案件", "");
+  const std::string id = e.c.session()->addIssue("", "", "課題");
+  e.fs.put("ext/a.txt", "x");
+  e.c.attachFiles(id, {"ext/a.txt"});
+  CHECK(e.c.session()->deleteIssues({id}));
+  const std::string fresh = e.c.session()->addIssue("", "", "新しい課題");
+  CHECK(fresh != id);
+  CHECK(e.c.attachmentCount(fresh) == 0);
+  CHECK(e.c.attachmentCount(id) == 1);  // 元の課題（Undo で戻せる）の添付は残っている
+}
+
+TEST_CASE("controller: 保存先をコピー付きで切り替えると、添付の本体も新しい場所へコピーされ、開ける") {
+  CEnv e;
+  e.c.start();
+  e.c.createProject(app::SampleKind::Empty, "案件", "");
+  const std::string id = e.c.session()->addIssue("", "", "課題");
+  e.c.afterEdit();
+  e.fs.put("ext/メモ.txt", "hello");
+  e.fs.put("ext/二つ目.txt", "world");
+  REQUIRE(e.c.attachFiles(id, {"ext/メモ.txt", "ext/二つ目.txt"}).added.size() == 2);
+  e.step(600);
+  REQUIRE(e.c.switchDataDir("other", true));
+  REQUIRE(e.c.session());
+  REQUIRE(e.c.attachmentsOf(id).size() == 2);
+  CHECK(e.fs.exists("other/案件/添付/" + id + "/メモ.txt"));
+  CHECK(e.fs.content("other/案件/添付/" + id + "/二つ目.txt") == "world");
+  CHECK(e.c.attachmentExists(id, 0));  // 切り替え後の場所で開ける
+  CHECK(e.fs.exists("data/案件/添付/" + id + "/メモ.txt"));  // 元の場所は残す
+}
+
+TEST_CASE("controller: 保存先をコピー付きで切り替えるとき、もともと本体がない添付はメタ情報だけ移り、切り替えは続く") {
+  CEnv e;
+  e.c.start();
+  e.c.createProject(app::SampleKind::Empty, "案件", "");
+  const std::string id = e.c.session()->addIssue("", "", "課題");
+  e.c.afterEdit();
+  e.fs.put("ext/a.txt", "x");
+  REQUIRE(e.c.attachFiles(id, {"ext/a.txt"}).added.size() == 1);
+  e.step(600);
+  REQUIRE(e.fs.remove("data/案件/添付/" + id + "/a.txt"));  // 本体が失われている
+  REQUIRE(e.c.switchDataDir("other", true));
+  CHECK(e.c.attachmentsOf(id).size() == 1);
+  CHECK_FALSE(e.c.attachmentExists(id, 0));
+}

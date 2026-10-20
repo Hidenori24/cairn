@@ -81,15 +81,54 @@ Status AppController::switchDataDir(const std::string& dirIn, bool copy) {
   auto r = next->sync();
   if (!r) return Error{r.error()};
   int copied = 0, skipped = 0;
+  struct ToCopy {
+    std::string id;
+    AttachmentMap attachments;
+  };
+  std::vector<ToCopy> withAttachments;
   for (auto& rec : recs) {
     if (next->find(rec.settings.id)) {
       ++skipped;  // 同じプロジェクトが新しい場所にもある → 場所の方を残す
       continue;
     }
+    if (!rec.settings.attachments.empty()) withAttachments.push_back({rec.settings.id, rec.settings.attachments});
     next->add(std::move(rec), true);
     ++copied;
   }
-  if (auto w = next->flush(); !w) return Error{"新しい場所に書き込めません: " + w.error()};
+  if (auto w = next->flush(); !w) return Error{"新しい場所に書き込めません: " + w.error()};  // ここで新しい場所のフォルダ名が決まる
+  // 添付の本体もコピーする（設定にはメタ情報しか入っていない。本体を置いていかないと、切り替え後に開けなくなる）。
+  // 1つでもコピーできなければ切り替えず、今の保存先を使い続ける（新しい場所に書いた添付は消す）
+  std::vector<std::string> writtenAttachments;
+  const auto undoAttachments = [&] {
+    for (const auto& path : writtenAttachments) (void)fs_.remove(path);  // 消せなくても元の保存先は無傷
+  };
+  for (const auto& item : withAttachments) {
+    const ProjectEntry* from = ws_->find(item.id);
+    const ProjectEntry* to = next->find(item.id);
+    if (!from || !to) continue;
+    const std::string fromDir = ws_->projectDir(*from), toDir = next->projectDir(*to);
+    if (fromDir.empty() || toDir.empty()) continue;
+    for (const auto& [issueId, list] : item.attachments)
+      for (const auto& a : list) {
+        const std::string src = attachmentPath(fromDir, issueId, a);
+        if (!fs_.stat(src)) continue;  // もともと本体がない（失われている）ものは、メタ情報だけ移る
+        const std::string dst = attachmentPath(toDir, issueId, a);
+        auto data = fs_.read(src);
+        if (!data) {
+          undoAttachments();
+          return Error{"添付のファイルを読めないため、切り替えません（今の保存先を使い続けます）"};
+        }
+        if (auto m = fs_.makeDirs(paths::attachmentDir(toDir, issueId)); !m) {
+          undoAttachments();
+          return Error{"添付のフォルダを新しい場所に作れないため、切り替えません（今の保存先を使い続けます）: " + m.error()};
+        }
+        if (auto w = fs_.writeAtomic(dst, *data); !w) {
+          undoAttachments();
+          return Error{"添付のファイルを新しい場所にコピーできないため、切り替えません（今の保存先を使い続けます）: " + w.error()};
+        }
+        writtenAttachments.push_back(dst);
+      }
+  }
 
   ws_ = std::move(next);
   lastSync_ = now();

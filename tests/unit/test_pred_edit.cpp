@@ -239,3 +239,22 @@ TEST_CASE("pred: Tab 補完は入力中の項目を先頭の候補に置き換�
   CHECK(comp("4", "DEV-2, ") == "DEV-2, DEV-3");  // 入力済み（DEV-2）は候補にしない
   CHECK(comp("4", "zzz") == "zzz");               // 候補なしはそのまま
 }
+
+TEST_CASE("pred: 表示ID が区切りを含む（件名のタグ）ときは、キーか id に切り替えて、1項目として読み戻せる") {
+  Session s = fromCsv(
+      "Issue Id,Issue key,Issue Type,Summary,Parent,Duration (weeks)\n"
+      "1,DEV-1,Task,[設計、実装] 画面,,1\n"
+      "2,DEV-2,Task,結合,,1\n");
+  const Tree& T = *s.tree();
+  const int a = idx(s, "1"), b = idx(s, "2");
+  REQUIRE(T.did[static_cast<std::size_t>(a)].find("、") != std::string::npos);  // 前提: 表示ID に「、」が入る
+  const std::string ref = formatPredsForEdit(T, s.viewIssues(), {a});
+  CHECK(ref == "DEV-1");
+  const auto tk = parsePredText(ref);
+  REQUIRE(tk.size() == 1);
+  CHECK(tk[0].ref == ref);
+  // 先行に追加しても入力エラーにならない（Tab 補完・初期値と同じ書き方）
+  const PredPlan p = planPredEdit(T, s.viewIssues(), b, ref);
+  CHECK(p.ok);
+  CHECK(completePredText(T, s.viewIssues(), b, "画面") == "DEV-1");
+}

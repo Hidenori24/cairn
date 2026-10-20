@@ -154,6 +154,7 @@ inline const char* const kPriorities[] = {"Highest", "High", "Medium", "Low", "L
 int prioRank(std::string_view prio);  // 0〜4、不明は 2
 
 // 新規課題の id（数字だけの id の最大値 + 1）
-std::string nextIssueId(const std::vector<Issue>& issues);
+// reserved: 添付が残っている課題の id（課題を削除しても添付は残るので、その id を新しい課題に使い回さない）
+std::string nextIssueId(const std::vector<Issue>& issues, const AttachmentMap& reserved = {});
 
 }  // namespace roadmap
