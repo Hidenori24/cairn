@@ -343,6 +343,57 @@ TEST_CASE("controller: 画面の拡大縮小（段階・上下限・100%に戻�
   CHECK(e.c.prefs().uiScale == 200);
 }
 
+TEST_CASE("controller: 選択を順につなぐ・外す（表示順・重複なし・循環は理由を出す・Undo 1回・保存）") {
+  Env e;
+  e.c.start();
+  e.c.createProject(SampleKind::Empty, "P", "");
+  Session* s = e.c.session();
+  const auto a = s->addIssue("", "", "A");
+  const auto b = s->addIssue("", a, "B");
+  const auto c = s->addIssue("", b, "C");
+  e.c.afterEdit();
+  s->clearHistory();
+  // 何も選んでいなければ何もしない
+  CHECK_FALSE(e.c.chainSelection({a, b, c}).ok);
+  // 3件を選ぶ（選んだ順は C,A,B）。画面の順（A,B,C）でつなぐ
+  e.c.setSelection({c, a, b}, b);
+  const auto r = e.c.chainSelection({a, b, c});
+  CHECK(r.ok);
+  CHECK(r.added == 2);
+  CHECK(s->issue(a)->blocks == std::vector<std::string>{b});
+  CHECK(s->issue(b)->blocks == std::vector<std::string>{c});
+  // 通知（元に戻すつき）
+  REQUIRE_FALSE(e.c.toasts().empty());
+  CHECK(e.c.toasts().back().action == NoticeAction::Undo);
+  // もう一度は何もしない（重複なし）。Undo も増えない
+  const auto undoSize = s->undoSize();
+  CHECK(e.c.chainSelection({a, b, c}).added == 0);
+  CHECK(s->undoSize() == undoSize);
+  // 保存される
+  e.step(500);
+  CHECK(e.c.saveState() == SaveState::Saved);
+  // 1回の Undo で戻る
+  e.c.undo();
+  CHECK(s->issue(a)->blocks.empty());
+  CHECK(s->issue(b)->blocks.empty());
+  // 画面の順が C,B,A なら C→B→A
+  CHECK(e.c.chainSelection({c, b, a}).ok);
+  CHECK(s->issue(c)->blocks == std::vector<std::string>{b});
+  // 逆向き（A→B）は循環になる。何も変えず、理由を出す
+  e.c.setSelection({a, b}, b);
+  const auto bad = e.c.chainSelection({a, b});
+  CHECK_FALSE(bad.ok);
+  CHECK(s->issue(a)->blocks.empty());
+  CHECK(e.c.toasts().back().text.find("ループ") != std::string::npos);
+  // 外す: 選んだ課題どうしのつなぎ
+  e.c.setSelection({a, b, c}, b);
+  CHECK(e.c.unchainSelection() == 2);
+  CHECK(s->issue(c)->blocks.empty());
+  CHECK(s->issue(b)->blocks.empty());
+  e.c.undo();
+  CHECK(s->issue(c)->blocks == std::vector<std::string>{b});
+}
+
 TEST_CASE("controller: 新しい課題の名前（アプリの設定。既定は今のまま）") {
   Env e;
   e.c.start();

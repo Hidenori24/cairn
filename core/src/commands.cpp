@@ -1,6 +1,7 @@
 #include "roadmap/commands.hpp"
 
 #include <algorithm>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "roadmap/issue_name.hpp"
@@ -502,6 +503,81 @@ bool Session::removeLink(std::string from, std::string to) {
     auto& b = P.issues[indexOf(P.issues, from)].blocks;
     b.erase(std::remove(b.begin(), b.end(), to), b.end());
   });
+}
+
+ChainResult Session::chainIssues(std::vector<std::string> ids, const std::vector<std::string>& order) {
+  ChainResult res;
+  if (!comp_) return res;
+  const Tree& T = comp_->T;
+  // 存在する課題だけ（重複なし）
+  std::vector<int> picked;
+  std::unordered_set<int> seen;
+  for (const auto& id : ids)
+    if (const int i = T.find(id); i >= 0 && seen.insert(i).second) picked.push_back(i);
+  // 親子の両方が選ばれているときは親だけ（子は親のつなぎに含まれる）
+  std::vector<int> kept;
+  for (const int i : picked) {
+    bool anc = false;
+    for (int p = T.parentOf[i]; p >= 0 && !anc; p = T.parentOf[p]) anc = seen.count(p) > 0;
+    if (!anc) kept.push_back(i);
+  }
+  if (kept.size() < 2) {
+    notify("つなぐ課題を2件以上選んでください");
+    return res;
+  }
+  // 並び: 画面の表示順（全員が含まれているとき）、そうでなければ木の順
+  std::unordered_map<std::string, std::size_t> pos;
+  for (std::size_t k = 0; k < order.size(); ++k) pos.emplace(order[k], k);
+  const bool byView = std::all_of(kept.begin(), kept.end(), [&](int i) { return pos.count(T.ids[i]) > 0; });
+  const auto key = [&](int i) { return byView ? pos[T.ids[i]] : static_cast<std::size_t>(T.dfsPos[i]); };
+  std::stable_sort(kept.begin(), kept.end(), [&](int a, int b) { return key(a) < key(b); });
+  // 足すつなぎ（すでにあるものは足さない）
+  std::vector<std::pair<std::string, std::string>> add;
+  for (std::size_t k = 0; k + 1 < kept.size(); ++k) {
+    const Issue& a = comp_->issues[kept[k]];
+    const std::string& to = T.ids[kept[k + 1]];
+    if (std::find(a.blocks.begin(), a.blocks.end(), to) != a.blocks.end()) ++res.existing;
+    else add.emplace_back(T.ids[kept[k]], to);
+  }
+  if (add.empty()) {
+    notify("すでにつながっています");
+    res.ok = true;
+    return res;
+  }
+  // 1回の mutate で足す。循環になれば mutate が巻き戻して理由を通知する
+  if (!mutate([&](ProjectData& P) {
+        for (const auto& [from, to] : add) P.issues[indexOf(P.issues, from)].blocks.push_back(to);
+      }))
+    return res;
+  res.ok = true;
+  res.added = static_cast<int>(add.size());
+  notify(std::to_string(res.added) + "件のつなぎを追加しました" +
+             (res.existing > 0 ? "（" + std::to_string(res.existing) + "件は設定済み）" : ""),
+         NoticeAction::Undo);
+  return res;
+}
+
+int Session::unchainIssues(const std::vector<std::string>& ids) {
+  std::unordered_set<std::string> sel(ids.begin(), ids.end());
+  std::vector<std::pair<std::string, std::string>> del;
+  for (const auto& o : P_.issues) {
+    if (!sel.count(o.id)) continue;
+    for (const auto& b : o.blocks)
+      if (b != o.id && sel.count(b)) del.emplace_back(o.id, b);
+  }
+  if (del.empty()) {
+    notify("外すつなぎがありません");
+    return 0;
+  }
+  if (!mutate([&](ProjectData& P) {
+        for (const auto& [from, to] : del) {
+          auto& b = P.issues[indexOf(P.issues, from)].blocks;
+          b.erase(std::remove(b.begin(), b.end(), to), b.end());
+        }
+      }))
+    return 0;
+  notify(std::to_string(del.size()) + "件のつなぎを外しました", NoticeAction::Undo);
+  return static_cast<int>(del.size());
 }
 
 bool Session::addComment(std::string id, std::string textIn, std::string whoIn) {

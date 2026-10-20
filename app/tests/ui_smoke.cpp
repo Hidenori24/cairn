@@ -239,6 +239,42 @@ int main() {
   // 複数選択（まとめ編集バー）
   h.c.setSelection({"6", "7", "8"}, "8");
   h.frame(3);
+  // 選んだ課題を順につなぐ・外す（一覧・ガント・ボードのどこから選んでも。右クリックのメニューと選択バーを描く）
+  {
+    Session* ss = h.c.session();
+    const auto na = ss->addIssue("", "", "鎖A");
+    const auto nb = ss->addIssue("", na, "鎖B");
+    const auto nc = ss->addIssue("", nb, "鎖C");
+    h.c.afterEdit();
+    for (auto v : {app::View::List, app::View::Gantt, app::View::Board}) {
+      h.c.setView(v);
+      h.c.setSelection({nc, na, nb}, nb);
+      h.frame(2);
+      ui::Frame fr{h.c, h.u, h.p};
+      ui::openContext(fr, nb);
+      h.frame(3);  // メニューとバーを描く
+      h.click(1430, 880);  // メニューの外を押して閉じる
+      check(!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), "メニューが閉じる");
+      h.c.setSelection({nc, na, nb}, nb);
+      const auto before = ss->undoSize();
+      const auto r = h.c.chainSelection(h.u.order);
+      check(r.ok && r.added == 2, "順につなぐ（画面の表示順）");
+      check(ss->issue(na)->blocks == std::vector<std::string>{nb} && ss->issue(nb)->blocks == std::vector<std::string>{nc},
+            "A→B→C のつなぎができる");
+      h.frame(2);  // つないだ後の描画
+      check(!h.c.chainSelection(h.u.order).added, "もう一度は重複しない");
+      check(ss->undoSize() == before + 1, "Undo は1回分");
+      h.key(ImGuiKey_Z, true);
+      check(ss->issue(na)->blocks.empty() && ss->issue(nb)->blocks.empty(), "Undo 1回でつなぎが戻る");
+      h.c.chainSelection(h.u.order);
+      check(h.c.unchainSelection() == 2, "つなぎを外す");
+      h.frame(2);
+      h.c.undo();
+      h.c.undo();
+    }
+    h.c.clearSelection();
+    h.frame(1);
+  }
   // すべてのダイアログ
   for (int d = 1; d <= static_cast<int>(ui::Dlg::ConfirmIssueDelete); ++d) {
     h.u.dTargets = {"1"};

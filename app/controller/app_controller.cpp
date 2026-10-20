@@ -624,6 +624,18 @@ void AppController::moveSelection(int dir) {
   session_->endBatch();
   afterEdit();
 }
+ChainResult AppController::chainSelection(const std::vector<std::string>& order) {
+  if (!session_) return {};
+  const auto r = session_->chainIssues(sel_, order);
+  afterEdit();
+  return r;
+}
+int AppController::unchainSelection() {
+  if (!session_) return 0;
+  const int n = session_->unchainIssues(sel_);
+  afterEdit();
+  return n;
+}
 void AppController::deleteSelection() {
   if (!session_ || sel_.empty()) return;
   session_->deleteIssues(sel_);
