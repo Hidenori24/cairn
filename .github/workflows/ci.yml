@@ -23,6 +23,10 @@ on:
         description: "exe を取る CI の実行の ID（空ならこの実行で作ったもの。過去のコミットに付けるとき）"
         required: false
         default: ""
+      keep_notes:
+        description: "true ならリリースの説明文には触らず、zip とチェックサムだけを既存のリリースに追加する"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -140,7 +144,13 @@ jobs:
           awk -v v="## ${ver}" 'index($0, "## ") == 1 { p = (index($0, v) == 1) } p' ../docs/CHANGELOG.md > notes.md
           printf '\n---\nポータブル版: zip を展開して ProjectRoadmap.exe を実行（インストール不要）。\n' >> notes.md
           cat notes.md
+      - name: 既存のリリースにファイルだけ追加（説明文はそのまま）
+        if: inputs.keep_notes == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/ProjectRoadmap-windows-x64.zip dist/SHA256SUMS.txt --clobber --repo "${{ github.repository }}"
       - uses: softprops/action-gh-release@v2
+        if: inputs.keep_notes != 'true'
         with:
           tag_name: ${{ env.TAG }}
           target_commitish: ${{ env.TARGET }}
