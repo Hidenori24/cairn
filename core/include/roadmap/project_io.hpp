@@ -85,6 +85,7 @@ struct Prefs {
   // 新しい課題の名前（issue_name.hpp）。形式は keep / parentSeq / parentDefault / custom
   std::string newNameFormat = "keep";
   std::string newNameCustom = "{親}の子 {n}";  // 形式が custom のときの形
+  InheritSpec inherit;       // 追加するときの値の引き継ぎ（既定はオフ）
   Json unknown = Json::object();
 };
 Prefs prefsFromJson(const Json& j);

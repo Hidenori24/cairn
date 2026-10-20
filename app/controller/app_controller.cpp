@@ -256,6 +256,7 @@ void AppController::openSession(const std::string& id, bool keepHistory) {
   }
   if (session_) retiredSessions_.push_back(std::move(session_));
   session_ = std::make_unique<Session>(std::move(h->data), &clock_, std::move(h->warns));
+  session_->setInherit(prefs_.inherit);
   if (!session_->error().empty()) toast("このプロジェクトを計算できません: " + session_->error());
   absorbNotices();
   seenVersion_ = session_->version();
@@ -725,7 +726,10 @@ void AppController::deleteTemplate(const std::string& id) {
 }
 
 // ---------------------------------------------------------------- prefs・通知
-void AppController::savePrefs() { (void)roadmap::savePrefs(fs_, prefsPath_, prefs_); }
+void AppController::savePrefs() {
+  if (session_) session_->setInherit(prefs_.inherit);  // 追加の引き継ぎの設定を、開いているプロジェクトへ渡す
+  (void)roadmap::savePrefs(fs_, prefsPath_, prefs_);
+}
 void AppController::setTheme(const std::string& t) {
   prefs_.theme = t;
   savePrefs();

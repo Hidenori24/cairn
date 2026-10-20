@@ -194,8 +194,62 @@ bool Session::isCollapsed(const std::string& id) const {
 
 void Session::touchUi() { persist(); }
 
+std::vector<std::string> Session::applyInherit(Issue& o, const std::string& parentId, const std::string& afterId,
+                                               bool& fromSibling) const {
+  std::vector<std::string> got;
+  fromSibling = false;
+  if (!inherit_.on) return got;
+  const Issue* src = nullptr;
+  if (!afterId.empty()) {
+    const Issue* a = issue(afterId);
+    if (a && a->parent == parentId) {
+      src = a;
+      fromSibling = true;
+    }
+  }
+  if (!src && !parentId.empty()) src = issue(parentId);
+  if (!src) return got;
+  // 値があるものだけ写す（空のものは既定のまま）
+  if (fromSibling && inherit_.type && !src->type.empty() && src->type != o.type) {
+    o.type = src->type;
+    got.push_back("種別");
+  }
+  if (inherit_.assignee && !src->assignee.empty()) {
+    o.assignee = src->assignee;
+    got.push_back("担当者");
+  }
+  if (inherit_.prio && !src->prio.empty() && src->prio != o.prio) {
+    o.prio = src->prio;
+    got.push_back("優先度");
+  }
+  if (inherit_.labels && !src->labels.empty()) {
+    o.labels = src->labels;
+    got.push_back("ラベル");
+  }
+  if (inherit_.deadline) {
+    // 画面に出ている「その課題自身の期限」を写す。Deadline 列の無い CSV では Due date が期限なので、そちらへ
+    OptDay dl = src->deadline;
+    if (!P_.meta.hasDeadlineCol) {
+      dl = std::nullopt;
+      const int si = find(src->id);
+      if (comp_ && si >= 0) dl = comp_->T.ownDl[si];
+    }
+    if (dl) {
+      (P_.meta.hasDeadlineCol ? o.deadline : o.due) = dl;
+      got.push_back("期限");
+    }
+  }
+  if (fromSibling && inherit_.duration && src->durW && src->durW != o.durW) {
+    o.durW = src->durW;
+    got.push_back("期間");
+  }
+  return got;
+}
+
 std::string Session::addIssue(std::string parentId, std::string afterId, std::string name) {
   Issue o = newIssue(parentId, name);
+  bool fromSibling = false;
+  const auto inherited = applyInherit(o, parentId, afterId, fromSibling);
   const std::string id = o.id;
   const bool ok = mutate([&](ProjectData& P) {
     if (!afterId.empty()) {
@@ -207,6 +261,11 @@ std::string Session::addIssue(std::string parentId, std::string afterId, std::st
     }
     if (!parentId.empty()) setCollapsed(parentId, false);
   });
+  if (ok && !inherited.empty()) {
+    std::string t = fromSibling ? "直前の兄弟から引き継ぎました（" : "親から引き継ぎました（";
+    for (std::size_t i = 0; i < inherited.size(); ++i) t += (i ? "・" : "") + inherited[i];
+    notify(t + "）", NoticeAction::Undo);
+  }
   return ok ? id : std::string();
 }
 

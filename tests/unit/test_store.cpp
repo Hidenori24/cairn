@@ -290,6 +290,9 @@ TEST_CASE("store: データフォルダの決定・prefs") {
   CHECK(p.newNameFormat == "keep");  // 既定は今のまま
   p.newNameFormat = "custom";
   p.newNameCustom = "{親}の子 {n}";
+  p.inherit.on = true;
+  p.inherit.assignee = false;
+  p.inherit.duration = false;
   REQUIRE(savePrefs(fs, "roadmap_prefs.json", p));
   Prefs q = loadPrefs(fs, "roadmap_prefs.json");
   CHECK(q.newNameFormat == "custom");
@@ -300,6 +303,11 @@ TEST_CASE("store: データフォルダの決定・prefs") {
   CHECK(q.dimPercent == 45);
   CHECK(q.confirmDelete);
   CHECK(q.autoBaseToday);
+  CHECK(q.inherit.on);
+  CHECK_FALSE(q.inherit.assignee);
+  CHECK(q.inherit.prio);
+  CHECK_FALSE(q.inherit.duration);
+  CHECK_FALSE(Prefs{}.inherit.on);  // 既定はオフ
   CHECK(q.unknown.size() == 1);
   CHECK(q.unknown["future"] == true);
   CHECK(loadPrefs(fs, "ない.json").theme == "auto");
