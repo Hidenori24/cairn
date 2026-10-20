@@ -243,6 +243,68 @@ void drawGanttView(Frame& f, ImVec2 size) {
   const ImVec2 tlMin(wp.x + leftW, bodyTop), tlMax(wp.x + viewW, wp.y + viewH);
   const std::vector<int> rootIdx = rootIndexMap(T, I);
 
+  // ---- 依存をつなぐドラッグ: バーの位置とハンドルの当たり判定 ----
+  // ハンドルはバーの外側（左右の端の少し外）に出す。バーの中（右端の長さ変更・本体の移動）とは重ならない
+  struct Span {
+    float xl = 0, xr = 0, cy = 0;
+  };
+  const auto spanOf = [&](int i) {
+    const VisibleRow& vr = rows[static_cast<std::size_t>(i)];
+    const ScheduleRow& r = R[vr.id];
+    Span sp;
+    sp.cy = rowY(i) + RH / 2;
+    if (vr.isPar) {
+      sp.xl = ax.x(r.asapStart);
+      sp.xr = sp.xl + std::max(ax.x(r.asapFinish + 1) - sp.xl, 3.f);
+    } else if (T.kind[vr.id] == Kind::Ms) {
+      const float x = ax.x(r.asapFinish) + ax.px / 2;
+      sp.xl = x - u.m.s(7.f);
+      sp.xr = x + u.m.s(7.f);
+    } else {
+      sp.xl = ax.x(r.asapStart);
+      sp.xr = sp.xl + std::max(static_cast<float>(r.asapFinish - r.asapStart + 1) * ax.px, 3.f);
+    }
+    return sp;
+  };
+  const float handleR = u.m.s(6), handleGap = u.m.s(4);
+  const auto handleCenter = [&](const Span& sp, bool right) {
+    return ImVec2(right ? sp.xr + handleGap + handleR : sp.xl - handleGap - handleR, sp.cy);
+  };
+  // マウスの下の行と、その行のどのハンドルの上か（0 = なし 1 = 左 2 = 右）。ほかのドラッグ・選択モード・ダイアログの間は出さない
+  int hotRow = -1, hotSide = 0;
+  {
+    const ImVec2 mp = ImGui::GetMousePos();
+    const bool idle = !u.linkPick.active && !u.barDrag.active && !u.rowDrag.active && !u.colDrag.active && !u.linkDrag.active &&
+                      u.dlg == Dlg::None && !u.paletteOpen && u.editField == EditField::None && ImGui::IsWindowHovered();
+    if (idle && mp.x >= tlMin.x && mp.x < tlMax.x && mp.y >= bodyTop && mp.y < tlMax.y) {
+      const int ri = static_cast<int>(std::floor((mp.y - bodyTop + sy) / RH));
+      if (ri >= 0 && ri < static_cast<int>(rows.size())) {
+        const Span sp = spanOf(ri);
+        // バーの近くにあるときだけ「その行」にする（遠いところでは出さない）
+        if (mp.x >= sp.xl - handleGap - handleR * 3 && mp.x <= sp.xr + handleGap + handleR * 3) {
+          hotRow = ri;
+          const float rr = handleR + handleGap;
+          for (int side = 2; side >= 1; --side) {
+            const ImVec2 hc = handleCenter(sp, side == 2);
+            if ((mp.x - hc.x) * (mp.x - hc.x) + (mp.y - hc.y) * (mp.y - hc.y) <= rr * rr) {
+              hotSide = side;
+              break;
+            }
+          }
+        }
+      }
+    }
+    // ハンドルを押したらドラッグを始める（この行のクリックにはしない）
+    if (hotSide != 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+      u.linkDrag = {};
+      u.linkDrag.active = true;
+      u.linkDrag.id = T.ids[rows[static_cast<std::size_t>(hotRow)].id];
+      u.linkDrag.fromRight = hotSide == 2;
+      u.linkDrag.project = c.currentId();
+      u.linkDrag.start = mp;
+    }
+  }
+
   // 関係する行（カーソル行の先行・後続）
   const std::string cur = c.cursor();
   const int curIdx = cur.empty() ? -1 : T.find(cur);
@@ -321,9 +383,12 @@ void drawGanttView(Frame& f, ImVec2 size) {
     ImGui::SetCursorScreenPos(ImVec2(std::max(tlMin.x, ax.x(ax.rs)), y));
     ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("##trow", ImVec2(std::max(1.f, std::min(timelineW, tlMax.x - tlMin.x)), RH));
-    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) rowClick(f, T.ids[id]);
-    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) openContext(f, T.ids[id]);
-    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) openDetail(f, T.ids[id], 0);
+    const bool onHandle = hotSide != 0 && hotRow == i;  // ハンドルの上のクリックは行の選択にしない
+    if (!onHandle && !u.linkDrag.active) {
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) rowClick(f, T.ids[id]);
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) openContext(f, T.ids[id]);
+      if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) openDetail(f, T.ids[id], 0);
+    }
 
     if (vr.isPar) {
       const float x0 = ax.x(r.asapStart), x1 = ax.x(r.asapFinish + 1), xl = ax.x(std::max(r.alapFinish, r.asapFinish) + 1);
@@ -392,7 +457,8 @@ void drawGanttView(Frame& f, ImVec2 size) {
         hoverTipId = T.ids[id];
         if (movable) ImGui::SetMouseCursor(overHandle ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_Hand);
       }
-      if (movable && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.f) && !u.barDrag.active) {
+      if (movable && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.f) && !u.barDrag.active &&
+          !u.linkDrag.active) {
         u.barDrag.active = true;
         u.barDrag.id = T.ids[id];
         u.barDrag.resize = overHandle;
@@ -613,6 +679,158 @@ void drawGanttView(Frame& f, ImVec2 size) {
     }
   }
 
+  // ---- 依存をつなぐドラッグ（ハンドル・ゴムひも・つなぐ相手・日程の影響）----
+  u.barGeom.clear();
+  for (int i = first; i < last; ++i) {
+    const Span sp = spanOf(i);
+    u.barGeom.push_back({T.ids[rows[static_cast<std::size_t>(i)].id], sp.xl, sp.xr, sp.cy});
+  }
+  const auto drawHandle = [&](ImVec2 hc, bool hot, bool ok = true) {
+    const ImU32 col = ok ? u.t->accent : u.t->late;
+    dl->AddCircleFilled(hc, handleR, hot ? col : u.t->surface);
+    dl->AddCircle(hc, handleR, col, 0, 2.f);
+    dl->AddCircleFilled(hc, handleR * 0.38f, hot ? IM_COL32_WHITE : col);
+  };
+  if (u.linkDrag.active && (T.find(u.linkDrag.id) < 0 || c.currentId() != u.linkDrag.project)) u.linkDrag = {};
+  if (u.linkDrag.active) {
+    // つかんでいるバーの課題 si と、マウスの下の行の課題 tgt（同じ課題なら「元の場所」で、相手なし）
+    const int si = T.find(u.linkDrag.id);
+    const bool fromRight = u.linkDrag.fromRight;
+    const ImVec2 mp = ImGui::GetMousePos();
+    int tgtRow = -1;
+    if (mp.x >= wp.x && mp.x < wp.x + viewW && mp.y >= bodyTop && mp.y < wp.y + viewH) {
+      const int ri = static_cast<int>(std::floor((mp.y - bodyTop + sy) / RH));
+      if (ri >= 0 && ri < static_cast<int>(rows.size()) && rows[static_cast<std::size_t>(ri)].id != si) tgtRow = ri;
+    }
+    const int tgt = tgtRow >= 0 ? rows[static_cast<std::size_t>(tgtRow)].id : -1;
+    LinkBlock blk = LinkBlock::None;
+    const LinkPreview* pv = nullptr;
+    if (tgt >= 0) {
+      const int pred = fromRight ? si : tgt, succ = fromRight ? tgt : si;
+      blk = checkLink(T, I, pred, succ);  // 循環・重複・親子は赤（つなげない）
+      if (blk == LinkBlock::None) {
+        const std::string key = T.ids[pred] + "\n" + T.ids[succ];
+        if (u.linkDrag.previewKey != key || u.linkDrag.previewVer != s->version()) {
+          u.linkDrag.preview = s->previewLink(T.ids[pred], T.ids[succ]);
+          u.linkDrag.previewKey = key;
+          u.linkDrag.previewVer = s->version();
+        }
+        pv = &u.linkDrag.preview;
+      }
+    }
+    const bool ok = tgt >= 0 && blk == LinkBlock::None;
+    const bool bad = tgt >= 0 && !ok;
+    const ImU32 lineCol = bad ? u.t->late : ok ? u.t->accent : u.t->muted;
+
+    // つなぐ相手の行とバーを強調（つなげないときは赤）
+    dl->PushClipRect(tlMin, tlMax, true);
+    Span tsp;
+    if (tgtRow >= 0) {
+      tsp = spanOf(tgtRow);
+      const float y = rowY(tgtRow);
+      dl->AddRectFilled(ImVec2(tlMin.x, y), ImVec2(tlMax.x, y + RH), withAlpha(lineCol, 0.10f));
+      const float pad = u.m.s(3);
+      dl->AddRectFilled(ImVec2(tsp.xl - pad, y + u.m.s(4)), ImVec2(tsp.xr + pad, y + RH - u.m.s(4)), withAlpha(lineCol, 0.18f), u.m.s(5));
+      dl->AddRect(ImVec2(tsp.xl - pad, y + u.m.s(4)), ImVec2(tsp.xr + pad, y + RH - u.m.s(4)), lineCol, u.m.s(5), 0, 2.5f);
+    }
+    // 日程への影響のプレビュー（後続がずれる位置に薄いバー）
+    if (pv) {
+      for (const auto& sh : pv->shifts) {
+        const int rr = rowOf[static_cast<std::size_t>(sh.idx)];
+        if (rr < first || rr >= last) continue;
+        const float y = rowY(rr), cy = y + RH / 2;
+        const ImU32 gc = sh.newStart > sh.oldStart ? u.t->late : u.t->accent;
+        if (T.kind[static_cast<std::size_t>(sh.idx)] == Kind::Ms) {
+          diamond(dl, ImVec2(ax.x(sh.newFinish) + ax.px / 2, cy), u.m.s(6) * 1.2f, withAlpha(gc, 0.3f), gc);
+        } else {
+          const ImVec2 ga(ax.x(sh.newStart), y + u.m.s(6)), gb(ax.x(sh.newFinish + 1), y + RH - u.m.s(6));
+          dl->AddRectFilled(ga, ImVec2(std::max(gb.x, ga.x + 3.f), gb.y), withAlpha(gc, 0.22f), u.m.s(4));
+          dl->AddRect(ga, ImVec2(std::max(gb.x, ga.x + 3.f), gb.y), gc, u.m.s(4), 0, 1.5f);
+        }
+        // 元の位置からの動き
+        dl->AddLine(ImVec2(ax.x(sh.oldStart), cy), ImVec2(ax.x(sh.newStart), cy), withAlpha(gc, 0.8f), 1.5f);
+      }
+    }
+    dl->PopClipRect();
+
+    // ゴムひも（つかんだハンドルから、カーソルか、吸着した相手の端まで）
+    {
+      dl->PushClipRect(ImVec2(wp.x, bodyTop), ImVec2(wp.x + viewW, wp.y + viewH), true);
+      const int srow = rowOf[static_cast<std::size_t>(si)];
+      ImVec2 p0 = u.linkDrag.start;
+      if (srow >= 0) {
+        p0 = handleCenter(spanOf(srow), fromRight);
+        drawHandle(p0, true, !bad);
+      }
+      const float dir = fromRight ? 1.f : -1.f;
+      ImVec2 p1 = mp;
+      if (tgtRow >= 0) p1 = ImVec2(fromRight ? tsp.xl - u.m.s(2) : tsp.xr + u.m.s(2), tsp.cy);  // 吸着: 相手の端にぴたっと付く
+      const float dx = std::max(u.m.s(40), std::abs(p1.x - p0.x) * 0.5f);
+      const ImVec2 c1(p0.x + dir * dx, p0.y), c2(p1.x - dir * dx, p1.y);
+      dl->AddBezierCubic(p0, c1, c2, p1, withAlpha(lineCol, 0.25f), u.m.s(6));  // 太い薄い線 + 本線
+      dl->AddBezierCubic(p0, c1, c2, p1, lineCol, u.m.s(2.2f));
+      if (fromRight) {
+        dl->AddTriangleFilled(p1, ImVec2(p1.x - u.m.s(8), p1.y - u.m.s(5)), ImVec2(p1.x - u.m.s(8), p1.y + u.m.s(5)), lineCol);
+      } else {
+        dl->AddCircleFilled(p1, u.m.s(4), lineCol);
+      }
+      dl->PopClipRect();
+    }
+
+    // 理由・影響の表示（カーソルの近く）
+    {
+      const std::string a = T.did[static_cast<std::size_t>(fromRight ? si : std::max(tgt, 0))];
+      const std::string b = T.did[static_cast<std::size_t>(fromRight ? std::max(tgt, 0) : si)];
+      ImGui::BeginTooltip();
+      if (tgt < 0) {
+        ImGui::TextUnformatted("つなぐ相手のバーまでドラッグ（Esc で取り消し）");
+      } else if (bad) {
+        ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
+        ImGui::TextUnformatted((a + " → " + b + " はつなげません").c_str());
+        ImGui::TextUnformatted(linkBlockReason(blk));
+        ImGui::PopStyleColor();
+      } else {
+        ImGui::TextUnformatted((a + " → " + b + " をつなぐ").c_str());
+        const std::string who = T.did[static_cast<std::size_t>(fromRight ? tgt : si)];  // 後続
+        if (pv && pv->delayDays > 0) {
+          ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
+          std::string t = who + " が " + std::to_string(pv->delayDays) + "営業日 遅れます";
+          if (pv->shifts.size() > 1) t += "（影響 " + std::to_string(pv->shifts.size()) + "件）";
+          ImGui::TextUnformatted(t.c_str());
+          ImGui::PopStyleColor();
+        } else if (pv && !pv->shifts.empty()) {
+          ImGui::TextDisabled("%s", ("日程が変わる課題 " + std::to_string(pv->shifts.size()) + "件").c_str());
+        } else {
+          ImGui::TextDisabled("日程は変わりません");
+        }
+        ImGui::TextDisabled("離すとつなぎます（Esc で取り消し）");
+      }
+      ImGui::EndTooltip();
+    }
+    ImGui::SetMouseCursor(bad ? ImGuiMouseCursor_NotAllowed : ImGuiMouseCursor_Hand);
+
+    // 離したら確定（相手がいなければ取り消し）。課題を変えるのは描画が終わってから
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      const std::string src = u.linkDrag.id;
+      u.linkDrag = {};
+      if (tgt >= 0) {
+        const std::string other = T.ids[static_cast<std::size_t>(tgt)];
+        deferAfterFrame(f, [&f, src, other, fromRight] { linkIssues(f, src, fromRight, other, true); });
+      }
+    }
+  } else if (hotRow >= 0) {
+    // マウスを載せたバーの左右にハンドルを出す
+    dl->PushClipRect(tlMin, tlMax, true);
+    const Span sp = spanOf(hotRow);
+    drawHandle(handleCenter(sp, false), hotSide == 1);
+    drawHandle(handleCenter(sp, true), hotSide == 2);
+    dl->PopClipRect();
+    if (hotSide != 0) {
+      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+      ImGui::SetTooltip("%s", hotSide == 2 ? "ドラッグして後続につなぐ" : "ドラッグして先行につなぐ");
+    }
+  }
+
   // 空の表示
   if (rows.empty()) {
     if (I.empty()) {
@@ -631,7 +849,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
       ImGui::TextDisabled("%s", S::kNoMatch);
     }
   }
-  if (!hoverTipId.empty() && !u.barDrag.active && T.find(hoverTipId) >= 0) showTip(tipLines(*s, T.find(hoverTipId)));
+  if (!hoverTipId.empty() && !u.barDrag.active && !u.linkDrag.active && T.find(hoverTipId) >= 0) showTip(tipLines(*s, T.find(hoverTipId)));
   ImGui::EndChild();
 }
 

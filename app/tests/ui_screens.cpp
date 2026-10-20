@@ -272,6 +272,67 @@ int main(int argc, char** argv) {
     u.detailOpen = false;
     frames(2);
   }
+  // 依存のドラッグ（Issue #8）: バーに載せるとハンドル → ドラッグ中のゴムひも・日程の影響 → つなげない相手は赤
+  {
+    c.setView(app::View::Gantt);
+    c.setUi("zoom", "week");
+    c.clearSelection();
+    u.customPx = 0;
+    u.scrollToBase = true;
+    frames(3);
+    ImGuiIO& io2 = ImGui::GetIO();
+    const Session* s = c.session();
+    const Tree& T = *s->tree();
+    const auto onScreen = [&](const ui::UiState::BarGeom& g) {
+      return g.xl > u.ganttLeft + 40 && g.xr < 1300 && g.cy > 170 && g.cy < 700 && g.xr - g.xl > 12;
+    };
+    // 先行 A（上の行）→ 後続 B（下の行）で、つなぐと B が遅れる組と、すでにつながっている組（逆向きは循環）を探す
+    using Geom = ui::UiState::BarGeom;
+    std::optional<Geom> ga, gb, ca, cb;
+    for (const auto& a : u.barGeom)
+      for (const auto& b : u.barGeom) {
+        const int ia = T.find(a.id), ib = T.find(b.id);
+        if (ia < 0 || ib < 0 || !T.isLeaf(ia) || !T.isLeaf(ib) || !onScreen(a) || !onScreen(b) || b.cy <= a.cy) continue;
+        if (!ga && checkLink(T, s->viewIssues(), ia, ib) == LinkBlock::None && s->previewLink(a.id, b.id).delayDays > 0) ga = a, gb = b;
+        if (!ca && std::find(T.succs[ia].begin(), T.succs[ia].end(), ib) != T.succs[ia].end()) ca = a, cb = b;
+      }
+    const float hd = u.m.s(10.f);
+    const auto key = [&](ImGuiKey k) {
+      io2.AddKeyEvent(k, true);
+      frames(1);
+      io2.AddKeyEvent(k, false);
+      frames(1);
+    };
+    if (ga && gb) {
+      io2.AddMousePosEvent((ga->xl + ga->xr) / 2, ga->cy);
+      shot("24_link_hover");
+      io2.AddMousePosEvent(ga->xr + hd, ga->cy);
+      frames(2);
+      io2.AddMouseButtonEvent(0, true);
+      frames(2);
+      io2.AddMousePosEvent((gb->xl + gb->xr) / 2, gb->cy);
+      shot("25_link_drag_ok");
+      io2.AddMousePosEvent(900, 840);  // 相手のいない場所
+      shot("25b_link_drag_free");
+      key(ImGuiKey_Escape);  // 取り消し
+      io2.AddMouseButtonEvent(0, false);
+      frames(3);
+    }
+    if (ca && cb) {
+      // ca（先行）→ cb（後続）はすでにある。後続の右のハンドルから先行へドラッグすると循環で赤
+      io2.AddMousePosEvent(cb->xr + hd, cb->cy);
+      frames(2);
+      io2.AddMouseButtonEvent(0, true);
+      frames(2);
+      io2.AddMousePosEvent((ca->xl + ca->xr) / 2, ca->cy);
+      shot("26_link_drag_bad");
+      key(ImGuiKey_Escape);
+      io2.AddMouseButtonEvent(0, false);
+      frames(3);
+    }
+    io2.AddMousePosEvent(-1, -1);
+    frames(2);
+  }
   // アプリの設定（保存先の切り替えの確認中）・削除の確認
   u.dlg = ui::Dlg::AppSettings;
   u.dlgOpening = true;

@@ -112,6 +112,24 @@ struct UiState {
     Day origStart = 0, origFinish = 0;
     bool active = false;
   } barDrag;
+  // 依存をつなぐドラッグ（バーの端のハンドルから別のバーへ。Esc・元の場所で離すと取り消し）
+  struct LinkDrag {
+    bool active = false;
+    std::string id;           // つかんだバーの課題
+    bool fromRight = true;    // 右のハンドル = つかんだバーが先行（相手が後続）。左なら逆
+    std::string project;      // 始めたプロジェクト
+    ImVec2 start{0, 0};       // 押した位置（つかんだバーが画面にないときの線の始点）
+    // つなぐ前の日程の影響（相手が変わったときだけ計算し直す）
+    std::string previewKey;
+    std::uint64_t previewVer = 0;
+    LinkPreview preview;
+  } linkDrag;
+  // 前のフレームのガントのバーの位置（画面の座標。見えている行だけ）。煙テストが当たり位置を知るために使う
+  struct BarGeom {
+    std::string id;
+    float xl = 0, xr = 0, cy = 0;
+  };
+  std::vector<BarGeom> barGeom;
   struct RowDrag {
     std::string id;
     bool active = false;

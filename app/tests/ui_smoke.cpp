@@ -580,6 +580,173 @@ int main() {
     h.u.detailOpen = false;
     h.frame(2);
   }
+  // 依存のドラッグ（Issue #8）: ガントのバーの端のハンドルから別のバーへ
+  {
+    h.c.setView(app::View::Gantt);
+    h.c.setUi("zoom", "week");
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.u.customPx = 0;
+    h.u.scrollToBase = true;  // 基準日の付近へ（前のテストで動かしたスクロールを戻す）
+    h.frame(3);
+    ImGuiIO& io = ImGui::GetIO();
+    Session* s = h.c.session();
+    const auto geom = [&](const std::string& id) -> const ui::UiState::BarGeom* {
+      for (const auto& g : h.u.barGeom)
+        if (g.id == id) return &g;
+      return nullptr;
+    };
+    const auto linked = [&](const std::string& from, const std::string& to) {
+      const Issue* o = h.c.session()->issue(from);
+      return o && std::find(o->blocks.begin(), o->blocks.end(), to) != o->blocks.end();
+    };
+    const auto onScreen = [&](const ui::UiState::BarGeom& g) {
+      return g.xl > h.u.ganttLeft + 30 && g.xr < 1380 && g.cy > 160 && g.cy < 600 && g.xr - g.xl > 12;
+    };
+    // 画面に見えていて、つなげる葉の組 A, B（B の方が下の行）を探す
+    const Tree& T = *s->tree();
+    std::string idA, idB;
+    for (const auto& ga : h.u.barGeom)
+      for (const auto& gb : h.u.barGeom) {
+        const int a = T.find(ga.id), b = T.find(gb.id);
+        if (idA.empty() && a >= 0 && b >= 0 && gb.cy > ga.cy && onScreen(ga) && onScreen(gb) && T.isLeaf(a) && T.isLeaf(b) &&
+            T.kind[a] == Kind::Task && T.kind[b] == Kind::Task && checkLink(T, s->viewIssues(), a, b) == LinkBlock::None &&
+            checkLink(T, s->viewIssues(), b, a) == LinkBlock::None)
+          idA = ga.id, idB = gb.id;
+      }
+    check(!idA.empty() && geom(idA) && geom(idB), "ドラッグのテスト用のバーが見えている");
+    if (!idA.empty() && geom(idA) && geom(idB)) {
+      const float hd = h.u.m.s(10.f);  // バーの端からハンドルの中心まで
+      const auto move = [&](float x, float y, int n = 2) {
+        io.AddMousePosEvent(x, y);
+        h.frame(n);
+      };
+      const auto down = [&] {
+        io.AddMouseButtonEvent(0, true);
+        h.frame(2);
+      };
+      const auto up = [&] {
+        io.AddMouseButtonEvent(0, false);
+        h.frame(3);  // 確定は描画が終わってから
+      };
+      const std::size_t undo0 = s->undoSize();
+      const auto center = [&](const std::string& id, float& x, float& y) {
+        const auto* g = geom(id);
+        x = (g->xl + g->xr) / 2, y = g->cy;
+      };
+      float bx, by;
+      center(idB, bx, by);
+      // 右のハンドル → 別のバー: A が先行・B が後続になる。Undo 1回で戻る。行は選択されない
+      move(geom(idA)->xr + hd, geom(idA)->cy);
+      down();
+      check(h.u.linkDrag.active && h.u.linkDrag.fromRight && h.u.linkDrag.id == idA, "右のハンドルを押すとドラッグが始まる");
+      check(h.c.selection().empty(), "ハンドルを押しても行は選択されない");
+      center(idB, bx, by);
+      move(bx, by);
+      check(h.u.linkDrag.active && !h.u.linkDrag.previewKey.empty() && h.u.linkDrag.preview.ok, "相手に載せると日程の影響を計算する");
+      check(!linked(idA, idB), "離すまでは変わらない");
+      up();
+      check(!h.u.linkDrag.active && linked(idA, idB), "右のハンドルから別のバーへ離すと A → B がつながる");
+      check(s->undoSize() == undo0 + 1, "つなぐのは Undo 1回分");
+      h.c.undo();
+      h.frame(2);
+      check(!linked(idA, idB), "Undo 1回で戻る");
+      // 左のハンドル → 別のバー: つかんだバー(B)が後続、相手(A)が先行になる
+      center(idA, bx, by);
+      move(geom(idB)->xl - hd, geom(idB)->cy);
+      down();
+      check(h.u.linkDrag.active && !h.u.linkDrag.fromRight && h.u.linkDrag.id == idB, "左のハンドルを押すとドラッグが始まる");
+      move(bx, by);
+      up();
+      check(linked(idA, idB), "左のハンドルから別のバーへ離すと、つかんだ方が後続になる");
+      // つなげない相手（循環・重複・自分自身）には作れない
+      const std::size_t undo1 = s->undoSize();
+      const auto tryDrag = [&](const std::string& from, bool right, const std::string& to) {
+        const auto* g = geom(from);
+        move(right ? g->xr + hd : g->xl - hd, g->cy);
+        down();
+        float tx, ty;
+        center(to, tx, ty);
+        move(tx, ty);
+        const bool bad = h.u.linkDrag.active && !h.u.linkDrag.preview.ok;
+        up();
+        return bad;
+      };
+      check(s->undoSize() == undo1, "確認");
+      tryDrag(idB, true, idA);  // B → A は循環
+      check(!linked(idB, idA) && s->undoSize() == undo1, "循環になる相手にはつなげない");
+      tryDrag(idA, true, idB);  // すでにつながっている
+      check(s->undoSize() == undo1, "重複はつなげない");
+      // 元の場所で離すと取り消し
+      {
+        const auto* g = geom(idA);
+        move(g->xr + hd, g->cy);
+        down();
+        move(g->xr + hd + 60, g->cy + 2);
+        move(g->xr + hd, g->cy);
+        up();
+        check(!h.u.linkDrag.active && s->undoSize() == undo1, "元の場所で離すと取り消し");
+      }
+      // Esc で取り消し（途中でマウスを離しても確定しない）
+      h.c.undo();
+      h.frame(2);
+      check(!linked(idA, idB), "Undo で A → B を外す");
+      {
+        const std::size_t undo2 = s->undoSize();
+        move(geom(idA)->xr + hd, geom(idA)->cy);
+        down();
+        center(idB, bx, by);
+        move(bx, by);
+        check(h.u.linkDrag.active, "Esc のテスト: ドラッグ中");
+        h.key(ImGuiKey_Escape);
+        check(!h.u.linkDrag.active, "Esc でドラッグを取り消す");
+        up();
+        check(!linked(idA, idB) && s->undoSize() == undo2, "Esc の後に離しても確定しない");
+      }
+      // バーの本体のドラッグは日程の移動（ハンドルと混ざらない）
+      {
+        const auto* g = geom(idA);
+        const float mx = (g->xl + g->xr) / 2, my = g->cy;
+        move(mx, my);
+        down();
+        move(mx + 40, my, 3);
+        check(!h.u.linkDrag.active, "バーの本体を押してもハンドルのドラッグにならない");
+        const bool moved = h.u.barDrag.active;
+        up();
+        if (moved) {
+          h.c.undo();
+          h.frame(2);
+        }
+      }
+      // 選択モード（Issue #6）の間はハンドルを出さない・押してもドラッグにならない
+      {
+        ui::Frame fr{h.c, h.u, h.p};
+        ui::beginLinkPick(fr, idB, true);
+        h.frame(2);
+        const auto* g = geom(idA);
+        if (g) {
+          move(g->xr + hd, g->cy);
+          down();
+          check(!h.u.linkDrag.active, "選択モードの間はハンドルのドラッグを始めない");
+          up();
+        }
+        ui::cancelLinkPick(fr);
+        h.frame(2);
+      }
+      // ドラッグ中にビューを切り替えても残らない
+      move(geom(idA)->xr + hd, geom(idA)->cy);
+      down();
+      check(h.u.linkDrag.active, "ビュー切り替えのテスト: ドラッグ中");
+      h.c.setView(app::View::List);
+      h.frame(2);
+      check(!h.u.linkDrag.active, "ガントを離れたらドラッグは終わる");
+      up();
+      h.c.setView(app::View::Gantt);
+      h.frame(3);
+    }
+    io.AddMousePosEvent(900, 800);
+    h.frame(2);
+  }
   // スイムレーン
   h.c.setView(app::View::Board);
   for (const char* l : {"none", "asg", "root"}) {

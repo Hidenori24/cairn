@@ -11,6 +11,7 @@
 
 #include "roadmap/clock.hpp"
 #include "roadmap/filter.hpp"
+#include "roadmap/link_candidates.hpp"
 #include "roadmap/outline.hpp"
 #include "roadmap/schedule.hpp"
 #include "roadmap/templates.hpp"
@@ -31,6 +32,18 @@ struct ChainResult {
   bool ok = false;    // 失敗（件数不足・循環）なら false。すでにつながっているだけのときは true
   int added = 0;      // 足したつなぎの数
   int existing = 0;   // すでにあったので足さなかったつなぎの数
+};
+
+// 依存を足したらどうなるか（つなぐ前の確認。ガントのドラッグのプレビュー）
+struct LinkPreview {
+  struct Shift {
+    int idx = -1;  // tree() の添字（葉）
+    Day oldStart = 0, oldFinish = 0, newStart = 0, newFinish = 0;
+  };
+  bool ok = false;                 // つなげる（block == None で、計算もできる）
+  LinkBlock block = LinkBlock::None;
+  std::vector<Shift> shifts;       // 日程が動く葉（先行の影響を受けた後続・その下流）
+  int delayDays = 0;               // 後続（相手）の配下の葉の最大の遅れ（営業日。遅れなければ 0）
 };
 
 class Session {
@@ -100,6 +113,8 @@ class Session {
   bool setEarliest(std::string id, OptDay day);
   bool setDeadline(std::string id, OptDay day);
   bool addLink(std::string from, std::string to);
+  // from → to をつないだときの日程の変化を、課題を変えずに計算する（循環などでつなげない組は ok=false と理由）
+  LinkPreview previewLink(const std::string& from, const std::string& to) const;
   bool removeLink(std::string from, std::string to);
   // 選んだ課題を A→B→C と順につなぐ（終了→開始）。order は画面の表示順（空なら木の順）。
   // 親子の両方が選ばれていれば子は数えない。すでにあるつなぎは足さない。
