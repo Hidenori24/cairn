@@ -33,6 +33,10 @@ void beginEdit(Frame& f, const std::string& id, EditField field, bool fresh = fa
 // その場編集の入力欄を描く（カーソル位置に、幅 w で）。終わったら false
 bool drawInlineEdit(Frame& f, float w);
 bool editing(const UiState& u, const std::string& id, EditField field);
+// 課題を削除する（アプリの設定で「確かめる」なら確認ダイアログを出す）
+void requestDelete(Frame& f, std::vector<std::string> ids);
+// 上の絞り込みで薄くするときの不透明度（アプリの設定）
+inline float dimAlpha(const app::AppController& c) { return static_cast<float>(c.prefs().dimPercent) / 100.f; }
 // 選択をテンプレの追加先にしてダイアログを開く
 void openTplApply(Frame& f);
 void openTplSave(Frame& f, const std::string& id);

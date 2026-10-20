@@ -408,7 +408,7 @@ void drawListView(Frame& f, ImVec2 size) {
     for (int i = first; i < last; ++i) {
       const ImVec2 p(origin.x, origin.y + top + h * static_cast<float>(i));
       const std::string& sid = T.ids[rows[i].id];
-      FadeScope fade(ImGui::GetWindowDrawList(), isDimmed(u, dim, rows[i].id, sid));
+      FadeScope fade(ImGui::GetWindowDrawList(), isDimmed(u, dim, rows[i].id, sid), dimAlpha(c));
       drawTableRow(f, rows[i], p, width, cols, sorting, sid == c.cursor());
     }
     ImGui::PopClipRect();

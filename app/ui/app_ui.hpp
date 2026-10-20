@@ -24,13 +24,15 @@ class IPlatform {
   // 保存ダイアログ。成功したら true
   virtual bool saveTextFile(const std::string& suggestedName, const std::string& content) = 0;
   virtual void openFolder(const std::string& path) = 0;
+  // フォルダを選ぶ（start = 最初に開く場所）。やめたら nullopt
+  virtual std::optional<std::string> pickFolder(const std::string& start) = 0;
   virtual bool systemDark() = 0;
   virtual void requestQuit() = 0;
 };
 
 enum class Dlg {
   None, NewProject, EditProject, ConfirmDelete, Import, Export, Folder, Settings, Workload, Warnings, Shortcuts,
-  TplApply, TplSave, Conflict, ConfirmQuit
+  TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete
 };
 
 enum class EditField { None, Name, Assignee, Dur };
@@ -106,6 +108,11 @@ struct UiState {
   // リスト
   std::string sortKey;
   std::string openColFilter;  // 次のフレームで開く列の絞り込み（列のキー）
+  // アプリの設定: 選んだ新しい保存先（切り替えの確認中）
+  std::string pendingDir, pendingError;
+  bool pendingCopy = true;
+  int pendingCount = 0;
+  std::vector<std::string> pendingDelete;  // 削除の確認ダイアログで消す課題
   int sortDir = 0;  // 0=解除 1=昇順 -1=降順
 
   // 画面に並んでいる順（Shift 選択・矢印用）

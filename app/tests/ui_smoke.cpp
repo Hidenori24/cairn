@@ -23,6 +23,8 @@ struct NullPlatform : ui::IPlatform {
   std::optional<std::pair<std::string, std::string>> openTextFile() override { return std::nullopt; }
   bool saveTextFile(const std::string&, const std::string&) override { return true; }
   void openFolder(const std::string&) override {}
+  std::optional<std::string> pickFolder(const std::string&) override { return picked; }
+  std::optional<std::string> picked;
   bool systemDark() override { return false; }
   void requestQuit() override {}
 };
@@ -193,7 +195,7 @@ int main() {
   h.c.setSelection({"6", "7", "8"}, "8");
   h.frame(3);
   // すべてのダイアログ
-  for (int d = 1; d <= static_cast<int>(ui::Dlg::ConfirmQuit); ++d) {
+  for (int d = 1; d <= static_cast<int>(ui::Dlg::ConfirmIssueDelete); ++d) {
     h.u.dTargets = {"1"};
     h.u.dlg = static_cast<ui::Dlg>(d);
     h.u.dlgOpening = true;
@@ -244,6 +246,34 @@ int main() {
     h.u.sortKey.clear();
     h.c.clearFilter();
     h.frame(2);
+  }
+  // アプリの設定（保存先の切り替えの確認・文字の大きさ・薄さ）と、削除の前の確認
+  {
+    h.key(ImGuiKey_Comma, true);
+    check(h.u.dlg == ui::Dlg::AppSettings, "Ctrl+, でアプリの設定");
+    h.frame(2);
+    h.u.pendingDir = "data2";
+    h.u.pendingCount = 0;
+    h.frame(2);
+    h.u.pendingDir.clear();
+    h.c.prefs().dimPercent = 60;
+    h.c.prefs().uiScale = 125;
+    h.frame(2);
+    h.u.dlg = ui::Dlg::None;
+    h.frame(2);
+    h.c.prefs().confirmDelete = true;
+    const std::size_t n0 = h.c.session()->issues().size();
+    h.c.select(h.c.session()->issues().back().id);
+    h.key(ImGuiKey_Delete);
+    check(h.u.dlg == ui::Dlg::ConfirmIssueDelete, "確かめる設定なら確認ダイアログ");
+    check(h.c.session()->issues().size() == n0, "確認の前には消さない");
+    h.frame(2);
+    h.u.dlg = ui::Dlg::None;
+    h.u.pendingDelete.clear();
+    h.frame(2);
+    h.c.prefs().confirmDelete = false;
+    h.c.prefs().dimPercent = 30;
+    h.c.prefs().uiScale = 100;
   }
   // 行にマウスを載せると出るごみ箱で削除し、元に戻す
   {

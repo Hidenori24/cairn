@@ -76,6 +76,18 @@ void rowClick(Frame& f, const std::string& id) {
   else f.c.select(id);
 }
 
+void requestDelete(Frame& f, std::vector<std::string> ids) {
+  Session* s = f.c.session();
+  if (!s || ids.empty()) return;
+  if (f.c.prefs().confirmDelete) {
+    f.u.pendingDelete = std::move(ids);
+    openDialog(f, Dlg::ConfirmIssueDelete);
+    return;
+  }
+  s->deleteIssues(std::move(ids));
+  f.c.afterEdit();
+}
+
 bool editing(const UiState& u, const std::string& id, EditField field) {
   return u.editField == field && u.editId == id;
 }
@@ -294,10 +306,7 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
     tip("詳細を開く");
     drawIcon(dl, "right", ImVec2(b2.x + u.m.s(3), b2.y + u.m.s(3)), u.m.s(16), u.t->muted);
     ImGui::PopID();
-    if (del) {
-      s->deleteIssues({id});
-      f.c.afterEdit();
-    }
+    if (del) requestDelete(f, {id});
   }
 }
 
@@ -454,6 +463,7 @@ void drawTopBar(Frame& f) {
   ImGui::SameLine(0, u.m.s(4));
   if (iconButton(u, "more", "more", S::kMore)) ImGui::OpenPopup("##more");
   if (ImGui::BeginPopup("##more")) {
+    if (ImGui::MenuItem("アプリの設定…", "Ctrl+,")) openDialog(f, Dlg::AppSettings);
     if (ImGui::MenuItem("プロジェクト設定", nullptr, false, s != nullptr)) openDialog(f, Dlg::Settings);
     if (ImGui::MenuItem("担当者の負荷", nullptr, false, s != nullptr)) openDialog(f, Dlg::Workload);
     if (ImGui::MenuItem("読み込み時の注意", nullptr, false, s != nullptr)) openDialog(f, Dlg::Warnings);
@@ -783,7 +793,7 @@ void drawContextMenu(Frame& f) {
   if (ImGui::MenuItem("下へ", "Alt+↓", false, multi || pos + 1 < static_cast<std::ptrdiff_t>(sb.size()))) c.moveSelection(1);
   ImGui::Separator();
   ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
-  if (ImGui::MenuItem("削除", "Del")) c.deleteSelection();
+  if (ImGui::MenuItem("削除", "Del")) requestDelete(f, c.selection());
   ImGui::PopStyleColor();
   ImGui::EndPopup();
 }
@@ -850,7 +860,7 @@ void drawBulkBar(Frame& f, ImVec2 origin, float w) {
   if (ImGui::SmallButton("階層を上げる")) c.outdentSelection();
   ImGui::SameLine();
   ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
-  if (ImGui::SmallButton("削除")) c.deleteSelection();
+  if (ImGui::SmallButton("削除")) requestDelete(f, c.selection());
   ImGui::PopStyleColor();
   ImGui::SameLine();
   if (ImGui::SmallButton("選択解除")) c.clearSelection();
@@ -869,7 +879,12 @@ void drawWelcome(Frame& f, ImVec2 size) {
   ImGui::TextUnformatted(S::kWelcome);
   ImGui::PopFont();
   ImGui::TextWrapped("データフォルダにプロジェクトがありません。始め方を選んでください。選んだものだけをデータフォルダに書きます。");
+  ImGui::AlignTextToFramePadding();
   ImGui::TextDisabled("保存先: %s", c.dataDir().c_str());
+  if (!c.dataDirLocked()) {
+    ImGui::SameLine();
+    if (ImGui::SmallButton("変更…")) openDialog(f, Dlg::AppSettings);
+  }
   ImGui::Spacing();
   const ImVec2 bs(w - u.m.s(24), u.m.s(36));
   if (ImGui::Button("空のプロジェクトを作る", bs)) c.createProject(app::SampleKind::Empty, "新しいプロジェクト", "");
@@ -884,6 +899,11 @@ void handleKeys(Frame& f) {
   AppController& c = f.c;
   UiState& u = f.u;
   ImGuiIO& io = ImGui::GetIO();
+  // Ctrl+, はアプリの設定（ほかのダイアログが開いていないとき）
+  if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Comma, false) && u.dlg == Dlg::None) {
+    openDialog(f, Dlg::AppSettings);
+    return;
+  }
   // Ctrl+K はいつでも
   if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K, false)) {
     u.paletteOpen = !u.paletteOpen;
@@ -959,7 +979,7 @@ void handleKeys(Frame& f) {
   }
   if ((ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) &&
       !c.selection().empty())
-    c.deleteSelection();
+    requestDelete(f, c.selection());
   if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) u.detailOpen = !u.detailOpen;
 }
 

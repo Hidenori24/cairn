@@ -96,6 +96,8 @@ struct NullPlatform : ui::IPlatform {
   std::optional<std::pair<std::string, std::string>> openTextFile() override { return std::nullopt; }
   bool saveTextFile(const std::string&, const std::string&) override { return true; }
   void openFolder(const std::string&) override {}
+  std::optional<std::string> pickFolder(const std::string&) override { return picked; }
+  std::optional<std::string> picked;
   bool systemDark() override { return false; }
   void requestQuit() override {}
 };
@@ -222,6 +224,24 @@ int main(int argc, char** argv) {
   shot("16_colfilter_hover");
   c.clearFilter();
   ImGui::GetIO().AddMousePosEvent(-1, -1);
+  // アプリの設定（保存先の切り替えの確認中）・削除の確認
+  u.dlg = ui::Dlg::AppSettings;
+  u.dlgOpening = true;
+  frames(2);
+  shot("17_app_settings");
+  u.pendingDir = "D:/共有/projects";
+  u.pendingCount = 0;
+  u.pendingCopy = true;
+  shot("18_app_settings_switch");
+  u.pendingDir.clear();
+  u.dlg = ui::Dlg::None;
+  frames(2);
+  u.pendingDelete = {"11"};
+  u.dlg = ui::Dlg::ConfirmIssueDelete;
+  u.dlgOpening = true;
+  shot("19_confirm_delete");
+  u.dlg = ui::Dlg::None;
+  frames(2);
   u.t = &ui::darkTokens();
   ui::applyStyle(*u.t, u.m);
   c.session()->setResource({true, 1});

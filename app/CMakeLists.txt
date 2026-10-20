@@ -39,6 +39,7 @@ add_library(roadmap_ui STATIC
 target_include_directories(roadmap_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(roadmap_ui PUBLIC roadmap_controller imgui_lib)
 roadmap_set_warnings(roadmap_ui)
+target_compile_definitions(roadmap_ui PRIVATE ROADMAP_VERSION="${PROJECT_VERSION}")
 
 if(ROADMAP_BUILD_APP AND WIN32)
   enable_language(RC)

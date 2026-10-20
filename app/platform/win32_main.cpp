@@ -116,11 +116,17 @@ bool fileExists(const std::string& p) {
   return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+// 画面の倍率 = DPI × アプリの設定の「文字の大きさ」
+float uiScale() {
+  const int pct = gCtl ? gCtl->prefs().uiScale : 100;
+  return gDpiScale * static_cast<float>(pct) / 100.0f;
+}
+
 void buildFonts(ui::UiState& u) {
   ImGuiIO& io = ImGui::GetIO();
   io.Fonts->Clear();
   const std::string dir = fontsDir();
-  const float px = 13.0f * gDpiScale;
+  const float px = 13.0f * uiScale();
   // 文字の範囲: 日本語（常用漢字を含む約3,000字）+ 記号 + データにある文字
   ImFontGlyphRangesBuilder rb;
   rb.AddRanges(io.Fonts->GetGlyphRangesJapanese());
@@ -198,7 +204,7 @@ void applyTheme() {
   const std::string t = gCtl->prefs().theme;
   const bool dark = t == "dark" || (t == "auto" && win::systemDarkMode());
   gUi->t = dark ? &ui::darkTokens() : &ui::lightTokens();
-  gUi->m.scale = gDpiScale;
+  gUi->m.scale = uiScale();
   gUi->m.compact = gCtl->prefs().density == "compact";
   ui::applyStyle(*gUi->t, gUi->m);
 }
@@ -316,16 +322,19 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
   SystemClock clock;
   const std::string exe = win::exeDir();
   const std::string local = win::localAppDataDir();
-  const DataDirChoice dd = chooseDataDir(fs, args.dataDir, win::envVar("ROADMAP_DATA"), exe, local + "\\projects");
+  // 設定ファイルを先に決め、アプリの設定で選んだ保存先を読む（--data > ROADMAP_DATA > 設定 > 既定）
   std::string prefsPath = joinPath(exe, "roadmap_prefs.json");
   if (!fs.probeWritable(exe)) {
     (void)fs.makeDirs(local);
     prefsPath = joinPath(local, "roadmap_prefs.json");
   }
+  const Prefs bootPrefs = loadPrefs(fs, prefsPath);
+  const DataDirChoice dd =
+      chooseDataDir(fs, args.dataDir, win::envVar("ROADMAP_DATA"), bootPrefs.dataDir, exe, local + "\\projects");
   vlog(("data: " + dd.dir).c_str());
 
   app::AppController ctl(fs, clock, dd.dir, prefsPath);
-  ctl.dataDirFallback = dd.usedFallback;
+  ctl.setDataDirInfo(dd, exe);
   ui::UiState uiState;
   gCtl = &ctl;
   gUi = &uiState;
@@ -364,6 +373,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
   ImGui_ImplDX11_Init(gDevice, gContext);
   applyTheme();
   std::string lastTheme = ctl.prefs().theme, lastDensity = ctl.prefs().density;
+  int lastScale = ctl.prefs().uiScale;
   std::string lastProject;
   std::uint64_t lastVersion = 0;
 
@@ -394,6 +404,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
       lastDensity = ctl.prefs().density;
       applyTheme();
       win::setDarkTitleBar(hwnd, uiState.t->dark);
+    }
+    if (ctl.prefs().uiScale != lastScale) {  // 文字の大きさ → フォントを作り直す
+      lastScale = ctl.prefs().uiScale;
+      gFontsDirty = true;
     }
     if (gFontsDirty) {
       buildFonts(uiState);

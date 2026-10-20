@@ -131,6 +131,7 @@ class AppController {
 
   // ---- 端末ごとの設定 ----
   Prefs& prefs() { return prefs_; }
+  const Prefs& prefs() const { return prefs_; }
   void savePrefs();
   void setTheme(const std::string& t);
   void setDensity(const std::string& d);
@@ -145,9 +146,21 @@ class AppController {
   const std::string& saveError() const { return saveError_; }
   const std::string& savedAt() const { return savedAt_; }
   void retrySave();
-  const std::string& dataDir() const { return ws_.dataDir(); }
+  const std::string& dataDir() const { return ws_->dataDir(); }
   bool dataDirFallback = false;  // 既定の場所に書けなかった
-  Workspace& workspace() { return ws_; }
+  Workspace& workspace() { return *ws_; }
+
+  // ---- 保存先（アプリの設定）----
+  // 起動時に、決めた保存先とその由来・exe のフォルダを渡す（画面の表示と、設定に覚える相対パスのため）
+  void setDataDirInfo(const DataDirChoice& c, std::string exeDir);
+  const DataDirChoice& dataDirInfo() const { return dirInfo_; }
+  bool dataDirLocked() const;  // 起動引数・環境変数で決まっている（画面からは変えない）
+  std::string defaultDir() const;
+  int countProjectsIn(const std::string& dir);  // その場所にあるプロジェクト（CSV）の数
+  // 保存先を切り替える。copy = 手元のプロジェクトを新しい場所にも書く（同じものがあれば場所の方を残す）。
+  // 今の場所に書けないとき・新しい場所に書けないときは切り替えない
+  Status switchDataDir(const std::string& dir, bool copy);
+  const std::string& prefsPath() const { return prefsPath_; }
   const IClock& clock() const { return clock_; }
 
   // 編集の後に呼ぶ（UI は操作のたびに呼ばなくてもよい。tick でも拾う）
@@ -164,7 +177,9 @@ class AppController {
 
   IFileStore& fs_;
   const IClock& clock_;
-  Workspace ws_;
+  std::unique_ptr<Workspace> ws_;
+  DataDirChoice dirInfo_;
+  std::string exeDir_;
   std::string prefsPath_;
   Prefs prefs_;
   std::unique_ptr<Session> session_;

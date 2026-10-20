@@ -244,22 +244,64 @@ TEST_CASE("store: StdFileStore の原子的な書き込み") {
 
 TEST_CASE("store: データフォルダの決定・prefs") {
   MemFileStore fs;
-  CHECK(chooseDataDir(fs, "arg", "env", "exe", "fb").dir == "arg");
-  CHECK(chooseDataDir(fs, "", "env", "exe", "fb").dir == "env");
-  CHECK(chooseDataDir(fs, "", "", "exe", "fb").dir == "exe/data/projects");
+  CHECK(chooseDataDir(fs, "arg", "env", "pref", "exe", "fb").dir == "arg");
+  CHECK(chooseDataDir(fs, "arg", "env", "pref", "exe", "fb").source == DataDirSource::Arg);
+  CHECK(chooseDataDir(fs, "", "env", "pref", "exe", "fb").dir == "env");
+  CHECK(chooseDataDir(fs, "", "env", "pref", "exe", "fb").source == DataDirSource::Env);
+  // 設定で選んだ場所（相対なら exe のフォルダから）
+  CHECK(chooseDataDir(fs, "", "", "D:/共有/projects", "exe", "fb").dir == "D:/共有/projects");
+  CHECK(chooseDataDir(fs, "", "", "mine", "exe", "fb").dir == "exe/mine");
+  CHECK(chooseDataDir(fs, "", "", "mine", "exe", "fb").source == DataDirSource::Prefs);
+  CHECK(chooseDataDir(fs, "", "", "", "exe", "fb").dir == "exe/data/projects");
+  CHECK(chooseDataDir(fs, "", "", "", "exe", "fb").source == DataDirSource::Default);
+  CHECK(defaultDataDir("exe") == "exe/data/projects");
   fs.setFailWrites(true);
-  auto c = chooseDataDir(fs, "", "", "exe", "fb");
+  auto c = chooseDataDir(fs, "", "", "", "exe", "fb");
   CHECK(c.dir == "fb");
   CHECK(c.usedFallback);
+  CHECK(c.source == DataDirSource::Fallback);
+  // 設定の場所に書けない（外したドライブなど）→ 既定へ。そのことを画面に出せるように印を付ける
+  auto d = chooseDataDir(fs, "", "", "X:/gone", "exe", "fb");
+  CHECK(d.prefsDirUnavailable);
+  CHECK(d.dir == "fb");
   fs.setFailWrites(false);
+  // prefs に覚える形: exe のフォルダの中なら相対（フォルダごと移しても壊れない）
+  CHECK(storableDataDir("C:/app/data/projects", "C:/app") == "data/projects");
+  CHECK(storableDataDir("C:\\App\\data\\x", "c:/app/") == "data/x");
+  CHECK(storableDataDir("C:/app", "C:/app") == ".");
+  CHECK(storableDataDir("C:/apple/x", "C:/app") == "C:/apple/x");
+  CHECK(storableDataDir("D:/共有", "C:/app") == "D:/共有");
+  CHECK(storableDataDir("/home/a/p", "/home/a") == "p");
+  CHECK(resolveDataDir("data/x", "C:/app") == "C:/app/data/x");
+  CHECK(resolveDataDir(".", "C:/app") == "C:/app");
+  CHECK(resolveDataDir("D:/共有", "C:/app") == "D:/共有");
+  CHECK(resolveDataDir("\\\\srv\\share", "C:/app") == "\\\\srv\\share");
+  CHECK(resolveDataDir("/abs", "C:/app") == "/abs");
+  CHECK(resolveDataDir("", "C:/app").empty());
   Prefs p;
   p.me = "田中";
   p.unknown["future"] = true;
   REQUIRE(savePrefs(fs, "roadmap_prefs.json", p));
+  p.dataDir = "data/mine";
+  p.uiScale = 125;
+  p.dimPercent = 45;
+  p.confirmDelete = true;
+  REQUIRE(savePrefs(fs, "roadmap_prefs.json", p));
   Prefs q = loadPrefs(fs, "roadmap_prefs.json");
   CHECK(q.me == "田中");
+  CHECK(q.dataDir == "data/mine");
+  CHECK(q.uiScale == 125);
+  CHECK(q.dimPercent == 45);
+  CHECK(q.confirmDelete);
+  CHECK(q.unknown.size() == 1);
   CHECK(q.unknown["future"] == true);
   CHECK(loadPrefs(fs, "ない.json").theme == "auto");
+  // 範囲外の値は丸める
+  REQUIRE(fs.writeAtomic("bad.json", R"({"uiScale": 900, "dimPercent": -5, "dataDir": 3})"));
+  const Prefs b = loadPrefs(fs, "bad.json");
+  CHECK(b.uiScale == 200);
+  CHECK(b.dimPercent == 10);
+  CHECK(b.dataDir.empty());
 }
 
 TEST_CASE("store: 共有JSONの書き出しと取り込み") {

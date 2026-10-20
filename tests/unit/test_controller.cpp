@@ -177,3 +177,59 @@ TEST_CASE("controller: 上の絞り込みは薄くするだけ・検索語と列
   CHECK_FALSE(e.c.columnFilter().active());
   CHECK(e.c.currentId() != first);
 }
+
+TEST_CASE("controller: 保存先の切り替え（コピーする・しない・既定に戻す・決められているときは変えない）") {
+  Env e;
+  e.c.setDataDirInfo({"app/data/projects", false, DataDirSource::Default, false}, "app");
+  e.c.start();
+  e.c.createProject(SampleKind::Hierarchy, "H", "");
+  e.c.createProject(SampleKind::Regulation, "R", "");
+  REQUIRE(e.c.flushNow());
+  CHECK(e.c.defaultDir() == "app/data/projects");
+  CHECK_FALSE(e.c.dataDirLocked());
+  CHECK(e.c.countProjectsIn("data") == 2);
+
+  // コピーして切り替える → 新しい場所に2件。設定には exe からの相対で覚える
+  REQUIRE(e.c.switchDataDir("app/mine", true));
+  CHECK(e.c.dataDir() == "app/mine");
+  CHECK(e.c.projects().size() == 2);
+  CHECK(e.c.countProjectsIn("app/mine") == 2);
+  CHECK(e.c.countProjectsIn("data") == 2);  // 元の場所は消さない
+  CHECK(e.c.prefs().dataDir == "mine");
+  CHECK(e.c.dataDirInfo().source == DataDirSource::Prefs);
+  CHECK(loadPrefs(e.fs, "roadmap_prefs.json").dataDir == "mine");
+  REQUIRE(e.c.session());
+  CHECK(e.c.session()->settings().name == "R");  // 開いていたプロジェクトを開き直す
+  e.c.releaseFrame();
+
+  // コピーしないで空の場所へ → はじめに
+  REQUIRE(e.c.switchDataDir("D:/empty", false));
+  CHECK(e.c.projects().empty());
+  CHECK(e.c.firstRun());
+  CHECK(e.c.session() == nullptr);
+  CHECK(e.c.prefs().dataDir == "D:/empty");
+  e.c.releaseFrame();
+
+  // 同じプロジェクトがある場所へコピー → 場所の方を残す（増えない）
+  e.c.createProject(SampleKind::Empty, "E", "");
+  REQUIRE(e.c.switchDataDir("app/mine", true));
+  CHECK(e.c.projects().size() == 3);
+  REQUIRE(e.c.switchDataDir("app/mine", true));
+  CHECK(e.c.projects().size() == 3);
+
+  // 既定に戻す → 設定は空
+  REQUIRE(e.c.switchDataDir(e.c.defaultDir(), false));
+  CHECK(e.c.prefs().dataDir.empty());
+  CHECK(e.c.dataDirInfo().source == DataDirSource::Default);
+
+  // 書けない場所には切り替えない
+  e.fs.setFailWrites(true);
+  CHECK_FALSE(e.c.switchDataDir("X:/ro", true));
+  CHECK(e.c.dataDir() == "app/data/projects");
+  e.fs.setFailWrites(false);
+
+  // 起動引数で決まっているときは変えない
+  e.c.setDataDirInfo({"arg", false, DataDirSource::Arg, false}, "app");
+  CHECK(e.c.dataDirLocked());
+  CHECK_FALSE(e.c.switchDataDir("app/other", false));
+}

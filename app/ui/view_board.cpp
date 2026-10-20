@@ -97,10 +97,7 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, std::s
   ImGui::PopID();
   ImGui::SetCursorScreenPos(ImVec2(p.x, q.y + u.m.s(8)));
   ImGui::Dummy(ImVec2(w, 0));
-  if (del) {
-    s->deleteIssues({sid});
-    c.afterEdit();
-  }
+  if (del) requestDelete(f, {sid});
 }
 }  // namespace
 
@@ -197,7 +194,7 @@ void drawBoardView(Frame& f, ImVec2 size) {
       for (int id : ids)
         if (colOf(id) == k) {
           {
-            FadeScope fade(dl, isDimmed(u, dim, id, T.ids[id]));
+            FadeScope fade(dl, isDimmed(u, dim, id, T.ids[id]), dimAlpha(c));
             drawCard(f, id, colW - u.m.s(12), rootIdx, dummy);
           }
           cy = ImGui::GetCursorScreenPos().y;

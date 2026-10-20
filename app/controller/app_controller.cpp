@@ -24,12 +24,87 @@ View viewFromKey(const std::string& k) {
 }
 
 AppController::AppController(IFileStore& fs, const IClock& clock, std::string dataDir, std::string prefsPath)
-    : fs_(fs), clock_(clock), ws_(fs, clock, std::move(dataDir)), prefsPath_(std::move(prefsPath)) {}
+    : fs_(fs), clock_(clock), ws_(std::make_unique<Workspace>(fs, clock, std::move(dataDir))), prefsPath_(std::move(prefsPath)) {}
+
+// ---------------------------------------------------------------- 保存先（アプリの設定）
+void AppController::setDataDirInfo(const DataDirChoice& c, std::string exeDir) {
+  dirInfo_ = c;
+  exeDir_ = std::move(exeDir);
+  dataDirFallback = c.usedFallback;
+}
+
+bool AppController::dataDirLocked() const {
+  return dirInfo_.source == DataDirSource::Arg || dirInfo_.source == DataDirSource::Env;
+}
+
+std::string AppController::defaultDir() const { return defaultDataDir(exeDir_); }
+
+int AppController::countProjectsIn(const std::string& dir) {
+  auto l = fs_.list(dir);
+  if (!l) return 0;
+  int n = 0;
+  for (const auto& f : *l) {
+    const std::string low = text::toLower(f.name);
+    if (!f.isDir && low.size() > 4 && low.compare(low.size() - 4, 4, ".csv") == 0) ++n;
+  }
+  return n;
+}
+
+Status AppController::switchDataDir(const std::string& dirIn, bool copy) {
+  const std::string dir = text::trim(dirIn);
+  if (dir.empty()) return Error{"保存先が空です"};
+  if (dataDirLocked()) return Error{"起動引数か環境変数で保存先が決まっているため、変えられません"};
+  if (!fs_.probeWritable(dir)) return Error{"この場所には書き込めません: " + dir};
+  // 今の場所に書き終えてから切り替える（書けなければ切り替えない）
+  if (!flushNow()) return Error{"今の保存先に保存できないため、切り替えません: " + saveError_};
+  std::vector<ProjectRecord> recs;
+  if (copy)
+    for (const auto& e : ws_->entries()) recs.push_back(e.rec);
+  auto next = std::make_unique<Workspace>(fs_, clock_, dir);
+  auto r = next->sync();
+  if (!r) return Error{r.error()};
+  int copied = 0, skipped = 0;
+  for (auto& rec : recs) {
+    if (next->find(rec.settings.id)) {
+      ++skipped;  // 同じプロジェクトが新しい場所にもある → 場所の方を残す
+      continue;
+    }
+    next->add(std::move(rec), true);
+    ++copied;
+  }
+  if (auto w = next->flush(); !w) return Error{"新しい場所に書き込めません: " + w.error()};
+
+  ws_ = std::move(next);
+  lastSync_ = now();
+  const bool isDefault = !exeDir_.empty() && storableDataDir(dir, defaultDir()) == ".";
+  dirInfo_ = {dir, false, isDefault ? DataDirSource::Default : DataDirSource::Prefs, false};
+  dataDirFallback = false;
+  prefs_.dataDir = isDefault ? "" : storableDataDir(dir, exeDir_);
+  savePrefs();
+  // 開いていたプロジェクトは捨てずにフレームの終わりまで残す（描画中の参照のため）
+  if (session_) retiredSessions_.push_back(std::move(session_));
+  currentId_.clear();
+  sel_.clear();
+  cursor_.clear();
+  anchor_.clear();
+  colFilter_ = ColumnFilter{};
+  saveState_ = SaveState::Saved;
+  saveError_.clear();
+  saveDueAt_ = -1;
+  firstRun_ = ws_->entries().empty();
+  if (!firstRun_) openSession(ws_->find(prefs_.currentProject) ? prefs_.currentProject : ws_->entries().front().id(), false);
+  std::string msg = "保存先を切り替えました";
+  if (copied) msg += "（" + std::to_string(copied) + "件をコピー";
+  if (skipped) msg += std::string(copied ? "・" : "（") + std::to_string(skipped) + "件は新しい場所の方を残しました";
+  if (copied || skipped) msg += "）";
+  toast(msg);
+  return Unit{};
+}
 
 // ---------------------------------------------------------------- 起動・周期処理
 void AppController::start() {
   prefs_ = loadPrefs(fs_, prefsPath_);
-  auto r = ws_.sync();
+  auto r = ws_->sync();
   lastSync_ = now();
   if (!r) {
     saveState_ = SaveState::Error;
@@ -38,11 +113,11 @@ void AppController::start() {
     const std::string msg = r->message();
     if (!r->bad.empty() && !msg.empty()) toast(msg);
   }
-  if (ws_.entries().empty()) {
+  if (ws_->entries().empty()) {
     firstRun_ = true;
     return;
   }
-  const std::string want = ws_.find(prefs_.currentProject) ? prefs_.currentProject : ws_.entries().front().id();
+  const std::string want = ws_->find(prefs_.currentProject) ? prefs_.currentProject : ws_->entries().front().id();
   openSession(want, false);
 }
 
@@ -56,9 +131,9 @@ void AppController::afterEdit() {
   absorbNotices();
   if (session_->version() != seenVersion_) {
     seenVersion_ = session_->version();
-    ws_.update(currentId_, recordOf(session_->data()));
+    ws_->update(currentId_, recordOf(session_->data()));
     pruneSelection();
-    if (ws_.hasDirty()) scheduleSave();
+    if (ws_->hasDirty()) scheduleSave();
   }
 }
 
@@ -71,7 +146,7 @@ void AppController::tick() {
   afterEdit();
   const std::int64_t t = now();
   if (saveDueAt_ >= 0 && t >= saveDueAt_) {
-    auto s = ws_.flush();
+    auto s = ws_->flush();
     if (s) {
       saveState_ = SaveState::Saved;
       saveError_.clear();
@@ -98,7 +173,7 @@ void AppController::retrySave() {
 
 bool AppController::flushNow() {
   afterEdit();
-  auto s = ws_.flush();
+  auto s = ws_->flush();
   if (!s) {
     saveState_ = SaveState::Error;
     saveError_ = s.error();
@@ -112,7 +187,7 @@ bool AppController::flushNow() {
 
 bool AppController::hasUnsaved() const {
   if (session_ && session_->version() != seenVersion_) return true;
-  return ws_.hasDirty();
+  return ws_->hasDirty();
 }
 
 void AppController::onActivated() {
@@ -121,7 +196,7 @@ void AppController::onActivated() {
 
 void AppController::syncFolder(bool manual) {
   afterEdit();
-  auto r = ws_.sync();
+  auto r = ws_->sync();
   lastSync_ = now();
   if (!r) {
     saveState_ = SaveState::Error;
@@ -136,9 +211,9 @@ void AppController::syncFolder(bool manual) {
   }
   if (std::find(r->reloadedIds.begin(), r->reloadedIds.end(), currentId_) != r->reloadedIds.end())
     openSession(currentId_, false);
-  if (!session_ && !ws_.entries().empty()) {
+  if (!session_ && !ws_->entries().empty()) {
     firstRun_ = false;
-    openSession(!r->firstAddedId.empty() ? r->firstAddedId : ws_.entries().front().id(), false);
+    openSession(!r->firstAddedId.empty() ? r->firstAddedId : ws_->entries().front().id(), false);
   }
   const std::string msg = r->message(manual);
   if (!msg.empty()) toast(msg);
@@ -147,13 +222,13 @@ void AppController::syncFolder(bool manual) {
 // ---------------------------------------------------------------- プロジェクト
 std::vector<AppController::ProjectItem> AppController::projects() const {
   std::vector<ProjectItem> v;
-  for (const auto& e : ws_.entries()) v.push_back({e.id(), e.rec.settings.name, e.rec.settings.key});
+  for (const auto& e : ws_->entries()) v.push_back({e.id(), e.rec.settings.name, e.rec.settings.key});
   return v;
 }
 
 void AppController::openSession(const std::string& id, bool keepHistory) {
   (void)keepHistory;
-  const ProjectEntry* e = ws_.find(id);
+  const ProjectEntry* e = ws_->find(id);
   if (!e) return;
   auto h = hydrate(e->rec);
   if (!h) {
@@ -178,7 +253,7 @@ void AppController::openSession(const std::string& id, bool keepHistory) {
 }
 
 bool AppController::openProject(const std::string& id) {
-  if (!ws_.find(id)) return false;
+  if (!ws_->find(id)) return false;
   afterEdit();
   openSession(id, false);
   return session_ && currentId_ == id;
@@ -195,7 +270,7 @@ std::string AppController::createProject(SampleKind kind, const std::string& nam
     base = samples::kSampleBase;
   }
   const std::string name = nameIn.empty() ? "新しいプロジェクト" : nameIn;
-  const std::string id = ws_.add(newRecord(name, text::toUpper(key), csvText, base, clock_), true);
+  const std::string id = ws_->add(newRecord(name, text::toUpper(key), csvText, base, clock_), true);
   openSession(id, false);
   scheduleSave();
   toast("「" + name + "」を作りました");
@@ -214,7 +289,7 @@ void AppController::duplicateProject() {
   ProjectRecord rec = recordOf(session_->data());
   rec.settings.id.clear();
   rec.settings.name += " のコピー";
-  const std::string id = ws_.add(std::move(rec), true);
+  const std::string id = ws_->add(std::move(rec), true);
   openSession(id, false);
   scheduleSave();
   toast("複製しました");
@@ -222,9 +297,9 @@ void AppController::duplicateProject() {
 
 bool AppController::deleteCurrentProject() {
   if (!session_) return false;
-  const ProjectEntry* e = ws_.find(currentId_);
+  const ProjectEntry* e = ws_->find(currentId_);
   const std::string stem = e ? e->stem : "";
-  auto s = ws_.remove(currentId_);
+  auto s = ws_->remove(currentId_);
   if (!s) {
     toast("フォルダのファイルを移せませんでした: " + s.error());
     return false;
@@ -232,11 +307,11 @@ bool AppController::deleteCurrentProject() {
   if (!stem.empty()) toast("フォルダの「" + stem + ".csv」を「_削除済み」に移しました");
   retiredSessions_.push_back(std::move(session_));
   currentId_.clear();
-  if (ws_.entries().empty()) {
+  if (ws_->entries().empty()) {
     firstRun_ = true;
     return true;
   }
-  openSession(ws_.entries().front().id(), false);
+  openSession(ws_->entries().front().id(), false);
   return true;
 }
 
@@ -251,7 +326,7 @@ ImportOutcome AppController::importText(const std::string& textIn, const std::st
       return out;
     }
     for (const auto& p : b->projects)
-      if (!p.settings.id.empty() && ws_.find(p.settings.id)) out.conflictNames.push_back(p.settings.name);
+      if (!p.settings.id.empty() && ws_->find(p.settings.id)) out.conflictNames.push_back(p.settings.name);
     pendingJson_ = std::move(b).value();
     if (out.conflictNames.empty()) confirmJsonImport(false);
     out.ok = true;
@@ -277,7 +352,7 @@ ImportOutcome AppController::importText(const std::string& textIn, const std::st
   } else {
     const std::size_t n = imp->issues.size();
     const std::string id =
-        ws_.add(newRecord(name.empty() ? "取り込んだCSV" : name, "", textIn, clock_.todayIso(), clock_), true);
+        ws_->add(newRecord(name.empty() ? "取り込んだCSV" : name, "", textIn, clock_.todayIso(), clock_), true);
     openSession(id, false);
     scheduleSave();
     toast(std::to_string(n) + "件を読み込みました");
@@ -293,15 +368,15 @@ bool AppController::confirmJsonImport(bool overwrite) {
   pendingJson_.reset();
   std::string first;
   for (auto& p : b.projects) {
-    const bool same = !p.settings.id.empty() && ws_.find(p.settings.id);
+    const bool same = !p.settings.id.empty() && ws_->find(p.settings.id);
     std::string id;
     if (same && overwrite) {
       id = p.settings.id;
-      ws_.update(id, p);
-      ws_.find(id)->dirty = true;
+      ws_->update(id, p);
+      ws_->find(id)->dirty = true;
     } else {
       p.settings.id.clear();
-      id = ws_.add(std::move(p), true);
+      id = ws_->add(std::move(p), true);
     }
     if (first.empty()) first = id;
   }
@@ -324,7 +399,7 @@ bool AppController::confirmJsonImport(bool overwrite) {
 std::string AppController::exportText(const std::string& kind) const {
   if (kind == "backup") {
     std::vector<ProjectRecord> recs;
-    for (const auto& e : ws_.entries())
+    for (const auto& e : ws_->entries())
       recs.push_back(session_ && e.id() == currentId_ ? recordOf(session_->data()) : e.rec);
     return exportShareJson(recs, prefs_.templates, clock_);
   }
