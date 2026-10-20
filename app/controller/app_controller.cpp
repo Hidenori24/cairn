@@ -44,14 +44,27 @@ bool AppController::dataDirLocked() const {
 std::string AppController::defaultDir() const { return defaultDataDir(exeDir_); }
 
 int AppController::countProjectsIn(const std::string& dir) {
-  auto l = fs_.list(dir);
-  if (!l) return 0;
-  int n = 0;
-  for (const auto& f : *l) {
-    const std::string low = text::toLower(f.name);
-    if (!f.isDir && low.size() > 4 && low.compare(low.size() - 4, 4, ".csv") == 0) ++n;
+  auto l = scanProjects(fs_, dir);
+  return l ? static_cast<int>(l->size()) : 0;
+}
+
+Result<Workspace::MigrateReport> AppController::migrateLegacy() {
+  afterEdit();
+  auto r = ws_->migrateLegacy();
+  lastSync_ = now();
+  if (!r) {
+    saveState_ = SaveState::Error;
+    saveError_ = r.error();
+    toast("フォルダ構成へ移せませんでした（元のファイルはそのままです）: " + r.error());
+    return r;
   }
-  return n;
+  saveState_ = SaveState::Saved;
+  saveError_.clear();
+  savedAt_ = clock_.hhmm();
+  saveDueAt_ = -1;
+  if (r->moved > 0) toast(std::to_string(r->moved) + "件をフォルダ構成に移しました（移す前の控え: 「" + std::string(kBackupDir) + "」の「移行前…」）");
+  if (!r->failed.empty()) toast("移せなかったプロジェクト（平置きのまま残してあります）: " + text::join(r->failed, ", "));
+  return r;
 }
 
 Status AppController::switchDataDir(const std::string& dirIn, bool copy) {
@@ -119,6 +132,10 @@ void AppController::start() {
   } else {
     const std::string msg = r->message();
     if (!r->bad.empty() && !msg.empty()) toast(msg);
+    // 以前の平置きは自動では動かさない。移せることだけ知らせる
+    if (ws_->legacyCount() > 0)
+      toast("以前の保存形式（平置き）のプロジェクトが " + std::to_string(ws_->legacyCount()) +
+            "件あります。「アプリの設定」の保存先から、プロジェクトごとのフォルダ構成に移せます");
   }
   if (ws_->entries().empty()) {
     firstRun_ = true;
@@ -319,12 +336,14 @@ bool AppController::deleteCurrentProject() {
   if (!session_) return false;
   const ProjectEntry* e = ws_->find(currentId_);
   const std::string stem = e ? e->stem : "";
+  const bool folder = !e || e->layout == Layout::Folder;
   auto s = ws_->remove(currentId_);
   if (!s) {
     toast("フォルダのファイルを移せませんでした: " + s.error());
     return false;
   }
-  if (!stem.empty()) toast("フォルダの「" + stem + ".csv」を「_削除済み」に移しました");
+  if (!stem.empty())
+    toast(folder ? "フォルダ「" + stem + "」を「_削除済み」に移しました" : "フォルダの「" + stem + ".csv」を「_削除済み」に移しました");
   retiredSessions_.push_back(std::move(session_));
   currentId_.clear();
   if (ws_->entries().empty()) {

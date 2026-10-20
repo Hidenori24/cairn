@@ -120,6 +120,16 @@ Status StdFileStore::makeDirs(const std::string& dir) {
   return okStatus();
 }
 
+Status StdFileStore::move(const std::string& from, const std::string& to) {
+  std::error_code ec;
+  const fs::path a = P(from), b = P(to);
+  if (!fs::exists(a, ec)) return Error{"移す元がありません: " + from};
+  if (fs::exists(b, ec)) return Error{"移す先に同じ名前があります: " + to};
+  fs::rename(a, b, ec);
+  if (ec) return errOf("移せません（他のアプリが開いている可能性があります）", ec);
+  return okStatus();
+}
+
 // ---------------------------------------------------------------- メモリ上の実装
 namespace {
 std::string parentOf(const std::string& p) {
@@ -151,8 +161,17 @@ Result<std::vector<FileInfo>> MemFileStore::list(const std::string& dir) {
 
 std::optional<FileInfo> MemFileStore::stat(const std::string& path) {
   auto it = files_.find(path);
-  if (it == files_.end()) return std::nullopt;
-  return FileInfo{baseOf(path), it->second.mtime, it->second.data.size(), false};
+  if (it != files_.end()) return FileInfo{baseOf(path), it->second.mtime, it->second.data.size(), false};
+  // フォルダ（makeDirs したもの、または中にファイルやフォルダがあるもの）
+  bool dir = dirs_.count(path) > 0;
+  const std::string prefix = path + "/";
+  for (auto f = files_.lower_bound(prefix); !dir && f != files_.end() && f->first.compare(0, prefix.size(), prefix) == 0; ++f) dir = true;
+  for (auto d = dirs_.lower_bound(prefix); !dir && d != dirs_.end() && d->first.compare(0, prefix.size(), prefix) == 0; ++d) dir = true;
+  if (!dir) return std::nullopt;
+  FileInfo info;
+  info.name = baseOf(path);
+  info.isDir = true;
+  return info;
 }
 
 Result<std::string> MemFileStore::read(const std::string& path) {
@@ -172,12 +191,42 @@ Status MemFileStore::writeAtomic(const std::string& path, const std::string& dat
 Status MemFileStore::remove(const std::string& path) {
   if (failWrites_) return Error{"削除できません（テスト）"};
   files_.erase(path);
+  dirs_.erase(path);
   return okStatus();
 }
 
 Status MemFileStore::makeDirs(const std::string& dir) {
   if (failWrites_) return Error{"フォルダを作れません（テスト）"};
   dirs_[dir] = true;
+  return okStatus();
+}
+
+Status MemFileStore::move(const std::string& from, const std::string& to) {
+  if (failWrites_) return Error{"移せません（テスト）"};
+  if (!stat(from)) return Error{"移す元がありません: " + from};
+  if (stat(to)) return Error{"移す先に同じ名前があります: " + to};
+  if (files_.count(from)) {
+    auto node = files_.extract(from);
+    node.key() = to;
+    files_.insert(std::move(node));
+    return okStatus();
+  }
+  const std::string prefix = from + "/";
+  std::vector<std::string> fk, dk;
+  for (const auto& [p, f] : files_)
+    if (p.compare(0, prefix.size(), prefix) == 0) fk.push_back(p);
+  for (const auto& [p, v] : dirs_)
+    if (p == from || p.compare(0, prefix.size(), prefix) == 0) dk.push_back(p);
+  for (const auto& p : fk) {
+    auto node = files_.extract(p);
+    node.key() = to + p.substr(from.size());
+    files_.insert(std::move(node));
+  }
+  for (const auto& p : dk) {
+    dirs_.erase(p);
+    dirs_[to + p.substr(from.size())] = true;
+  }
+  dirs_[to] = true;
   return okStatus();
 }
 

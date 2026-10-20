@@ -61,8 +61,10 @@ class FolderWatch {
     if (dir == dir_ && h_ != INVALID_HANDLE_VALUE) return;
     close();
     dir_ = dir;
-    h_ = FindFirstChangeNotificationW(win::widen(dir).c_str(), FALSE,
-                                      FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE);
+    // プロジェクトごとのフォルダの中（<data>/<プロジェクト>/project.csv）も見るため、下のフォルダまで監視する
+    h_ = FindFirstChangeNotificationW(win::widen(dir).c_str(), TRUE,
+                                      FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE |
+                                          FILE_NOTIFY_CHANGE_SIZE);
     vlog(h_ == INVALID_HANDLE_VALUE ? "フォルダを監視できません" : "フォルダの監視を始めました");
   }
   HANDLE handle() const { return h_; }

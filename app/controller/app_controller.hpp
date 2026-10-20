@@ -168,7 +168,11 @@ class AppController {
   const DataDirChoice& dataDirInfo() const { return dirInfo_; }
   bool dataDirLocked() const;  // 起動引数・環境変数で決まっている（画面からは変えない）
   std::string defaultDir() const;
-  int countProjectsIn(const std::string& dir);  // その場所にあるプロジェクト（CSV）の数
+  int countProjectsIn(const std::string& dir);  // その場所にあるプロジェクトの数（フォルダ構成も平置きも）
+  // 平置き（以前の保存形式）のまま読んでいるプロジェクトの数。自動では動かさず、利用者の操作で移す
+  int legacyCount() const { return ws_->legacyCount(); }
+  // 平置きをフォルダ構成へ移す（移す前に _バックアップ/移行前.<日時>/ へ控える）。結果は通知にも出す
+  Result<Workspace::MigrateReport> migrateLegacy();
   // 保存先を切り替える。copy = 手元のプロジェクトを新しい場所にも書く（同じものがあれば場所の方を残す）。
   // 今の場所に書けないとき・新しい場所に書けないときは切り替えない
   Status switchDataDir(const std::string& dir, bool copy);
