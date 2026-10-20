@@ -2,6 +2,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include <imgui.h>
 
@@ -19,6 +20,10 @@ ImU32 rootColor(const UiState& u, int idx);
 std::string initials(const std::string& name);
 // 表示幅に収まるよう末尾を「…」で切る
 std::string ellipsize(const std::string& s, float maxW);
+// 祖先の名前（根 → 直近の親）
+std::vector<std::string> ancestorNames(const Tree& T, int idx);
+// 祖先のパス（`A › … › B`）。幅 maxW に収まるよう真ん中を省略し、それでも長ければ末尾を切る。親がいなければ空
+std::string ancestorLabel(const Tree& T, int idx, float maxW);
 
 // アイコンだけのボタン（ツールチップつき）
 bool iconButton(UiState& u, const char* id, const char* icon, const char* tip, bool enabled = true, bool active = false);

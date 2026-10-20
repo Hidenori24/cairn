@@ -58,3 +58,41 @@ TEST_CASE("encoding: UTF-8 / BOM / Shift_JIS / 置換") {
   CHECK(d.detected == Detected::Utf8Replaced);
   CHECK(d.text == "abc\xEF\xBF\xBD");
 }
+
+namespace {
+// 幅の代わりに文字数（コードポイント）で測る
+float cpWidth(const std::string& s) { return static_cast<float>(text::codepointCount(s)); }
+std::vector<std::string> anc4() { return {"要件定義", "認証", "ログイン", "画面"}; }
+}  // namespace
+
+TEST_CASE("ancestorPath: 収まるときは全部・親がいなければ空") {
+  CHECK(text::ancestorPath({}, cpWidth, 100).empty());
+  const auto k = text::ancestorPath(anc4(), cpWidth, 100);
+  CHECK(k == std::vector<int>{0, 1, 2, 3});
+  CHECK(text::ancestorPathText(anc4(), k) == "要件定義 › 認証 › ログイン › 画面");
+}
+
+TEST_CASE("ancestorPath: 長いときは真ん中を省略（先頭と直近の親を残す）") {
+  const auto names = anc4();
+  // 全部 = 4+2+4+2 + 区切り3×3 = 21
+  auto k = text::ancestorPath(names, cpWidth, 20);
+  CHECK(text::ancestorPathText(names, k) == "要件定義 › … › ログイン › 画面");
+  k = text::ancestorPath(names, cpWidth, 15);
+  CHECK(text::ancestorPathText(names, k) == "要件定義 › … › 画面");
+  k = text::ancestorPath(names, cpWidth, 8);
+  CHECK(text::ancestorPathText(names, k) == "… › 画面");
+  // どうしても収まらなくても、直近の親は必ず残す
+  k = text::ancestorPath(names, cpWidth, 1);
+  CHECK(text::ancestorPathText(names, k) == "… › 画面");
+  CHECK(k == std::vector<int>{-1, 3});
+  // 親が1人なら省略しない
+  const std::vector<std::string> one = {"長い長い長い名前"};
+  k = text::ancestorPath(one, cpWidth, 1);
+  CHECK(text::ancestorPathText(one, k) == "長い長い長い名前");
+}
+
+TEST_CASE("ancestorPath: 区切りを変えられる") {
+  const auto names = anc4();
+  const auto k = text::ancestorPath(names, cpWidth, 100, " / ");
+  CHECK(text::ancestorPathText(names, k, " / ") == "要件定義 / 認証 / ログイン / 画面");
+}
