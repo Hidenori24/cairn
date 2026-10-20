@@ -91,6 +91,15 @@ struct ResourceLimit {
   bool operator==(const ResourceLimit&) const = default;
 };
 
+// 課題を追加するときの値の引き継ぎ（アプリの設定。既定はオフ = 今までどおり）。
+// 「子を追加」は親から（担当者・優先度・ラベル・期限）、「同じ階層に追加」は直前の兄弟から（それに種別・期間も）
+struct InheritSpec {
+  bool on = false;
+  bool assignee = true, prio = true, labels = true, deadline = true;
+  bool type = true, duration = true;  // 直前の兄弟からだけ
+  bool operator==(const InheritSpec&) const = default;
+};
+
 // CSV に入らない設定（付録B.1 の settings.json と対応）
 struct ProjectSettings {
   std::string id, name, key;

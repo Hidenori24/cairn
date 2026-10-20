@@ -285,6 +285,34 @@ TEST_CASE("controller: 開いたら基準日を今日に合わせる（アプリ
   CHECK(c2.session()->settings().baseDate == "2026-10-19");
 }
 
+TEST_CASE("controller: 引き継ぎの設定は開いているプロジェクトへ渡り、追加直後の通知から Undo で戻せる") {
+  Env e;
+  e.c.start();
+  e.c.createProject(SampleKind::Empty, "P", "");
+  const auto a = e.c.session()->addIssue("", "", "親");
+  e.c.session()->setField(a, [](Issue& o) { o.assignee = "山田"; o.prio = "High"; });
+  e.c.afterEdit();
+  e.c.select(a);
+  // オフなら今までどおり
+  const auto c0 = e.c.addChild();
+  CHECK(e.c.session()->issue(c0)->assignee.empty());
+  e.c.prefs().inherit.on = true;
+  e.c.savePrefs();
+  e.c.select(a);
+  const auto c1 = e.c.addChild();
+  CHECK(e.c.session()->issue(c1)->assignee == "山田");
+  CHECK(e.c.session()->issue(c1)->prio == "High");
+  CHECK(e.c.toasts().back().text.find("親から引き継ぎました") == 0);
+  CHECK(e.c.toasts().back().action == NoticeAction::Undo);
+  e.c.undo();
+  CHECK_FALSE(e.c.session()->issue(c1));
+  // プロジェクトを開き直しても有効
+  e.c.openProject(e.c.currentId());
+  CHECK(e.c.session()->issue(a));
+  const auto c2 = e.c.session()->addIssue(a, "");
+  CHECK(e.c.session()->issue(c2)->assignee == "山田");
+}
+
 TEST_CASE("controller: 画面の拡大縮小（段階・上下限・100%に戻す・保存）") {
   Env e;
   e.c.start();

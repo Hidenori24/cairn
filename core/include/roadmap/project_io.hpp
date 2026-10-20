@@ -82,6 +82,7 @@ struct Prefs {
   int dimPercent = 30;       // 上の絞り込みで薄くするときの不透明度（%、10〜80）
   bool confirmDelete = false;  // 課題を削除する前に確かめる
   bool autoBaseToday = false;  // プロジェクトを開いたら基準日を今日に合わせる（起動中、プロジェクトごとに1回）
+  InheritSpec inherit;       // 追加するときの値の引き継ぎ（既定はオフ）
   Json unknown = Json::object();
 };
 Prefs prefsFromJson(const Json& j);
