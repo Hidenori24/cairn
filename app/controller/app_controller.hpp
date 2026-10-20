@@ -120,6 +120,13 @@ class AppController {
   void setStatusFor(const std::vector<std::string>& ids, const std::string& st);
   void setPrioFor(const std::vector<std::string>& ids, const std::string& pr);
   void setAssigneeFor(const std::vector<std::string>& ids, const std::string& who);
+  // 選んだ課題を画面の表示順（order。各画面の u.order）に A→B→C と順につなぐ / 選んだ課題どうしのつなぎを外す。Undo 1回
+  ChainResult chainSelection(const std::vector<std::string>& order);
+  int unchainSelection();
+  // 課題を追加する（名前はアプリの設定「新しい課題の名前」に従う。選択は変えない）。afterId の後ろに入れる。作った id を返す
+  std::string createIssue(std::string parentId, std::string afterId);
+  // 設定に従った、parentId（空 = 最上位）の下に作る課題の名前。空 = 既定名
+  std::string newIssueName(const std::string& parentId) const;
   std::string addSibling();  // カーソル行と同じ階層に追加（なければ最上位）
   std::string addChild();
   void undo();

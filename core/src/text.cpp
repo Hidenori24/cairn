@@ -256,6 +256,37 @@ std::string join(const std::vector<std::string>& v, std::string_view sep) {
   return out;
 }
 
+std::string ancestorPathText(const std::vector<std::string>& names, const std::vector<int>& kept,
+                             std::string_view sep) {
+  std::string out;
+  for (std::size_t i = 0; i < kept.size(); ++i) {
+    if (i) out += sep;
+    const int k = kept[i];
+    out += (k >= 0 && static_cast<std::size_t>(k) < names.size()) ? names[static_cast<std::size_t>(k)] : "…";
+  }
+  return out;
+}
+
+std::vector<int> ancestorPath(const std::vector<std::string>& names,
+                              const std::function<float(const std::string&)>& measure, float maxW,
+                              std::string_view sep) {
+  const int n = static_cast<int>(names.size());
+  std::vector<int> all;
+  for (int i = 0; i < n; ++i) all.push_back(i);
+  if (n <= 1 || measure(ancestorPathText(names, all, sep)) <= maxW) return all;
+  // 残す数 k を減らしていく。先頭に k/2 個、直近の親の側に残りを置き、間を「…」にする
+  std::vector<int> best;
+  for (int k = n - 1; k >= 1; --k) {
+    const int head = k / 2, tail = k - head;
+    best.clear();
+    for (int i = 0; i < head; ++i) best.push_back(i);
+    best.push_back(-1);
+    for (int i = n - tail; i < n; ++i) best.push_back(i);
+    if (measure(ancestorPathText(names, best, sep)) <= maxW) break;
+  }
+  return best;
+}
+
 std::vector<std::string> splitAny(std::string_view s, std::u32string_view sepCps, bool alsoJsSpace) {
   std::vector<std::string> out;
   std::string cur;

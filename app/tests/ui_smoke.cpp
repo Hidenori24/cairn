@@ -189,6 +189,38 @@ int main() {
     check(h.u.editField == ui::EditField::Name && h.u.editId != first, "追加直後の Enter で次の行");
     h.key(ImGuiKey_Escape);
     check(h.c.session()->issue(first) && h.c.session()->issue(first)->summary == "追加1", "追加した行の件名");
+    // 新しい課題の名前（アプリの設定）: 既定の名前が入力欄に入り、そのまま Enter で確定して次の行も同じ流儀で付く
+    h.c.prefs().newNameFormat = "parentSeq";
+    h.c.select("7");
+    io.AddKeyEvent(ImGuiKey_N, true);
+    h.frame();
+    io.AddKeyEvent(ImGuiKey_N, false);
+    h.frame();
+    const std::string n1 = h.u.editId;
+    check(h.u.editField == ui::EditField::Name && h.u.editFresh && n1 != "7", "設定ありでも N で追加して編集");
+    const std::string name1 = h.c.session()->issue(n1) ? h.c.session()->issue(n1)->summary : "";
+    check(!name1.empty() && name1 != "新しい課題", "追加した行に設定どおりの名前が付く");
+    check(h.u.editBuf == h.c.session()->tree()->name[h.c.session()->find(n1)], "入力欄に既定の名前が入る");
+    h.key(ImGuiKey_Enter);  // 何も打たずに確定 → 次の行を追加
+    const std::string n2 = h.u.editId;
+    check(h.u.editField == ui::EditField::Name && n2 != n1, "追加直後の Enter で次の行（設定あり）");
+    const std::string name2 = h.c.session()->issue(n2) ? h.c.session()->issue(n2)->summary : "";
+    check(h.c.session()->issue(n1) && h.c.session()->issue(n1)->summary == name1, "そのまま確定した行の名前が残る");
+    check(!name2.empty() && name2 != "新しい課題" && name2 != name1, "次の行にも名前が付き、兄弟と重ならない");
+    h.key(ImGuiKey_Escape);
+    // 後のガントの拡大の検査（頂点数が16ビットに収まる行数）に影響しないよう、増やした行は消す
+    h.c.session()->deleteIssues({n1, n2});
+    h.c.afterEdit();
+    // 自由入力でアプリの設定を描く
+    h.c.prefs().newNameFormat = "custom";
+    h.c.prefs().newNameCustom = "{親}の子 {n}（{日付}）";
+    h.c.select("7");
+    h.u.dlg = ui::Dlg::AppSettings;
+    h.u.dlgOpening = true;
+    h.frame(3);
+    h.u.dlg = ui::Dlg::None;
+    h.frame(1);
+    h.c.prefs().newNameFormat = "keep";
   }
   // ガントでも同じ（編集の確定で計算し直しても、同じフレームの描画が古い参照で壊れないこと）
   {
@@ -210,6 +242,42 @@ int main() {
   // 複数選択（まとめ編集バー）
   h.c.setSelection({"6", "7", "8"}, "8");
   h.frame(3);
+  // 選んだ課題を順につなぐ・外す（一覧・ガント・ボードのどこから選んでも。右クリックのメニューと選択バーを描く）
+  {
+    Session* ss = h.c.session();
+    const auto na = ss->addIssue("", "", "鎖A");
+    const auto nb = ss->addIssue("", na, "鎖B");
+    const auto nc = ss->addIssue("", nb, "鎖C");
+    h.c.afterEdit();
+    for (auto v : {app::View::List, app::View::Gantt, app::View::Board}) {
+      h.c.setView(v);
+      h.c.setSelection({nc, na, nb}, nb);
+      h.frame(2);
+      ui::Frame fr{h.c, h.u, h.p};
+      ui::openContext(fr, nb);
+      h.frame(3);  // メニューとバーを描く
+      h.click(1430, 880);  // メニューの外を押して閉じる
+      check(!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), "メニューが閉じる");
+      h.c.setSelection({nc, na, nb}, nb);
+      const auto before = ss->undoSize();
+      const auto r = h.c.chainSelection(h.u.order);
+      check(r.ok && r.added == 2, "順につなぐ（画面の表示順）");
+      check(ss->issue(na)->blocks == std::vector<std::string>{nb} && ss->issue(nb)->blocks == std::vector<std::string>{nc},
+            "A→B→C のつなぎができる");
+      h.frame(2);  // つないだ後の描画
+      check(!h.c.chainSelection(h.u.order).added, "もう一度は重複しない");
+      check(ss->undoSize() == before + 1, "Undo は1回分");
+      h.key(ImGuiKey_Z, true);
+      check(ss->issue(na)->blocks.empty() && ss->issue(nb)->blocks.empty(), "Undo 1回でつなぎが戻る");
+      h.c.chainSelection(h.u.order);
+      check(h.c.unchainSelection() == 2, "つなぎを外す");
+      h.frame(2);
+      h.c.undo();
+      h.c.undo();
+    }
+    h.c.clearSelection();
+    h.frame(1);
+  }
   // すべてのダイアログ
   for (int d = 1; d <= static_cast<int>(ui::Dlg::ConfirmIssueDelete); ++d) {
     h.u.dTargets = {"1"};

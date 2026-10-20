@@ -51,6 +51,8 @@ void startPasteChildren(Frame& f);
 struct NameCellOpts {
   bool showHoverButtons = true;
   bool indent = true;
+  // 件名の右に祖先のパスを薄く出す（階層が見えない平らな一覧用。行の高さは変えない）
+  bool showPath = false;
 };
 void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const NameCellOpts& o = {});
 

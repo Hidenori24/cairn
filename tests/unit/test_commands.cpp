@@ -59,6 +59,146 @@ TEST_CASE("commands: 追加（種別・位置・採番・キー）") {
   CHECK_FALSE(s.isCollapsed("3"));
 }
 
+namespace {
+const char* kInherit =
+    "Issue Id,Issue Type,Summary,Parent,Assignee,Priority,Labels,Deadline,Duration (weeks)\n"
+    "1,Epic,E,,山田,High,a b,2026-12-01,\n"
+    "2,Task,T,1,佐藤,Low,x,2026-11-20,3\n"
+    "3,Story,S,1,鈴木,Highest,,,2\n";
+}
+
+TEST_CASE("commands: 引き継ぎ（既定はオフ。今までどおり）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kInherit), &clk);
+  const auto c = s.addIssue("1", "");
+  CHECK(s.issue(c)->assignee.empty());
+  CHECK(s.issue(c)->prio == "Medium");
+  CHECK(s.issue(c)->labels.empty());
+  CHECK_FALSE(s.issue(c)->deadline);
+  CHECK(s.issue(c)->durW == 1.0);
+  CHECK(s.takeNotices().empty());
+}
+
+TEST_CASE("commands: 引き継ぎ（子を追加は親の値。種別は階層で決まる）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kInherit), &clk);
+  InheritSpec sp;
+  sp.on = true;
+  s.setInherit(sp);
+  const auto c = s.addIssue("1", "");
+  const Issue* o = s.issue(c);
+  CHECK(o->type == "Task");
+  CHECK(o->assignee == "山田");
+  CHECK(o->prio == "High");
+  CHECK_FALSE(o->labels.empty());
+  CHECK(o->labels == s.issue("1")->labels);
+  CHECK(o->deadline == D("2026-12-01"));
+  CHECK(o->durW == 1.0);  // 期間は親からは引き継がない
+  const auto n = s.takeNotices();
+  REQUIRE(n.size() == 1);
+  CHECK(n[0].text.find("親から引き継ぎました") == 0);
+  CHECK(n[0].action == NoticeAction::Undo);
+  // 孫は Sub-task
+  const auto g = s.addIssue("2", "");
+  CHECK(s.issue(g)->type == "Sub-task");
+  CHECK(s.issue(g)->assignee == "佐藤");
+}
+
+TEST_CASE("commands: 引き継ぎ（同じ階層に追加は直前の兄弟のコピー）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kInherit), &clk);
+  InheritSpec sp;
+  sp.on = true;
+  s.setInherit(sp);
+  const auto c = s.addIssue("1", "3");
+  const Issue* o = s.issue(c);
+  CHECK(o->type == "Story");
+  CHECK(o->assignee == "鈴木");
+  CHECK(o->prio == "Highest");
+  CHECK(o->durW == 2.0);
+  CHECK_FALSE(o->deadline);
+  const auto n = s.takeNotices();
+  REQUIRE(n.size() == 1);
+  CHECK(n[0].text.find("直前の兄弟から引き継ぎました") == 0);
+  // 最上位の兄弟
+  const auto r = s.addIssue("", "1");
+  CHECK(s.issue(r)->type == "Epic");
+  CHECK(s.issue(r)->assignee == "山田");
+  CHECK(s.issue(r)->labels == s.issue("1")->labels);
+}
+
+TEST_CASE("commands: 引き継ぎの期限（Deadline 列の無い CSV では Due date を写す）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom("Issue Id,Summary,Parent,Due date\n1,P,,\n2,a,1,2026-11-20\n"), &clk);
+  InheritSpec sp;
+  sp.on = true;
+  s.setInherit(sp);
+  const auto c = s.addIssue("1", "2");
+  CHECK(s.issue(c)->due == D("2026-11-20"));
+  CHECK(s.rows()->size() == 3);
+}
+
+TEST_CASE("commands: 引き継ぐ項目を選べる") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kInherit), &clk);
+  InheritSpec sp;
+  sp.on = true;
+  sp.assignee = false;
+  sp.labels = false;
+  sp.deadline = false;
+  sp.type = false;
+  sp.duration = false;
+  s.setInherit(sp);
+  const auto c = s.addIssue("1", "2");
+  const Issue* o = s.issue(c);
+  CHECK(o->assignee.empty());
+  CHECK(o->labels.empty());
+  CHECK_FALSE(o->deadline);
+  CHECK(o->durW == 1.0);
+  CHECK(o->prio == "Low");
+  // 何も引き継げない（全部外した）ときは通知を出さない
+  sp.prio = false;
+  s.setInherit(sp);
+  s.takeNotices();
+  s.addIssue("1", "2");
+  CHECK(s.takeNotices().empty());
+}
+
+TEST_CASE("commands: 引き継ぎの追加は Undo 1回で戻り、CSV の往復で値が変わらない") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kInherit), &clk);
+  InheritSpec sp;
+  sp.on = true;
+  s.setInherit(sp);
+  const auto before = s.issues();
+  const auto c1 = s.addIssue("1", "2");
+  const auto c2 = s.addIssue("2", "");
+  CHECK(s.undo());
+  CHECK(s.undo());
+  CHECK(s.issues() == before);
+  CHECK(s.redo());
+  CHECK(s.redo());
+  REQUIRE(s.issue(c1));
+  REQUIRE(s.issue(c2));
+  auto imp = csv::importCsv(s.exportText(ExportKind::App));
+  REQUIRE(imp);
+  REQUIRE(imp->issues.size() == s.issues().size());
+  for (const auto& id : {c1, c2}) {
+    const Issue* a = s.issue(id);
+    const Issue* b = nullptr;
+    for (const auto& o : imp->issues)
+      if (o.id == id) b = &o;
+    REQUIRE(b);
+    CHECK(b->type == a->type);
+    CHECK(b->assignee == a->assignee);
+    CHECK(b->prio == a->prio);
+    CHECK(b->labels == a->labels);
+    CHECK(b->deadline == a->deadline);
+    CHECK(b->durW == a->durW);
+    CHECK(b->parent == a->parent);
+  }
+}
+
 TEST_CASE("commands: 削除（子孫も・blocks から外す）と通知") {
   auto clk = clockAt(2026, 10, 19);
   auto d = dataFrom("Issue Id,Summary,Parent,Outward issue link (Blocks)\n1,P,,\n2,a,1,\n3,b,,1\n");
@@ -121,6 +261,97 @@ TEST_CASE("commands: mutate の失敗時の巻き戻し") {
   CHECK(lastNotice(s) == "すでに設定されています");
   CHECK(s.removeLink("2", "3"));
   CHECK(s.issue("2")->blocks.empty());
+}
+
+TEST_CASE("commands: 選んだ課題を順につなぐ（木の順・表示順・Undo 1回）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kTree), &clk);
+  // 選んだ順（5,3,2）ではなく木の順（2,3,5）で 2→3→5
+  const auto r = s.chainIssues({"5", "3", "2"});
+  CHECK(r.ok);
+  CHECK(r.added == 2);
+  CHECK(r.existing == 0);
+  CHECK(s.issue("2")->blocks == std::vector<std::string>{"3"});
+  CHECK(s.issue("3")->blocks == std::vector<std::string>{"5"});
+  CHECK(s.undoSize() == 1);  // 2本のつなぎが Undo 1回
+  CHECK(s.undo());
+  CHECK(s.issue("2")->blocks.empty());
+  CHECK(s.issue("3")->blocks.empty());
+  CHECK_FALSE(s.canUndo());
+  // 画面の表示順を渡したときはその順（5→3→2）
+  s.takeNotices();
+  const auto r2 = s.chainIssues({"2", "3", "5"}, {"5", "3", "2"});
+  CHECK(r2.ok);
+  CHECK(s.issue("5")->blocks == std::vector<std::string>{"3"});
+  CHECK(s.issue("3")->blocks == std::vector<std::string>{"2"});
+  CHECK(s.undoSize() == 1);
+}
+
+TEST_CASE("commands: つなぐ（2件・親と子は上だけ・重複は何もしない・件数が足りない）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kTree), &clk);
+  // 2つ選んで一発
+  CHECK(s.chainIssues({"2", "3"}).ok);
+  CHECK(s.issue("2")->blocks == std::vector<std::string>{"3"});
+  // 親(3)と子(4)を両方選んでも、子は数えない（3→5 だけ）
+  s.takeNotices();
+  const auto r = s.chainIssues({"3", "4", "5"});
+  CHECK(r.ok);
+  CHECK(r.added == 1);
+  CHECK(s.issue("3")->blocks == std::vector<std::string>{"5"});
+  CHECK(s.issue("4")->blocks.empty());
+  // 重複は足さない（一部だけ新規）
+  const auto before = s.undoSize();
+  const auto r2 = s.chainIssues({"2", "3", "5"});
+  CHECK(r2.ok);
+  CHECK(r2.added == 0);
+  CHECK(r2.existing == 2);
+  CHECK(s.undoSize() == before);  // 何も変わらなければ Undo に積まない
+  CHECK(lastNotice(s) == "すでにつながっています");
+  CHECK(s.issue("2")->blocks == std::vector<std::string>{"3"});
+  // 1件・存在しない課題・同じ課題の重複指定は、つなぐ相手がない
+  CHECK_FALSE(s.chainIssues({"2"}).ok);
+  CHECK_FALSE(s.chainIssues({"2", "2", "99"}).ok);
+  CHECK(lastNotice(s) == "つなぐ課題を2件以上選んでください");
+  CHECK(s.undoSize() == before);
+}
+
+TEST_CASE("commands: つなぐと循環になる組み合わせは、何も変えずに理由を通知する") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kTree), &clk);
+  CHECK(s.addLink("5", "2"));  // 5 → 2
+  s.takeNotices();
+  const auto before = s.issues();
+  const auto undoBefore = s.undoSize();
+  // 2→3 は良いが 3→5 で 5→2 と輪になる。全部やめる
+  const auto r = s.chainIssues({"2", "3", "5"});
+  CHECK_FALSE(r.ok);
+  CHECK(r.added == 0);
+  CHECK(s.issues() == before);
+  CHECK(s.undoSize() == undoBefore);
+  CHECK(lastNotice(s).find("ループ") != std::string::npos);
+  CHECK(s.error().empty());
+}
+
+TEST_CASE("commands: つなぎを外す（選んだ課題どうしのつなぎだけ・Undo 1回）") {
+  auto clk = clockAt(2026, 10, 19);
+  Session s(dataFrom(kTree), &clk);
+  CHECK(s.chainIssues({"2", "3", "5"}).ok);  // 2→3, 3→5
+  CHECK(s.addLink("2", "4"));                // 選ばない課題へのつなぎ
+  s.takeNotices();
+  const auto undoBefore = s.undoSize();
+  // 2,3,5 の間のつなぎ（2→3, 3→5）だけ外す。2→4 は残る
+  CHECK(s.unchainIssues({"5", "2", "3"}) == 2);
+  CHECK(s.issue("2")->blocks == std::vector<std::string>{"4"});
+  CHECK(s.issue("3")->blocks.empty());
+  CHECK(s.undoSize() == undoBefore + 1);
+  CHECK(s.undo());
+  CHECK(s.issue("2")->blocks == std::vector<std::string>{"3", "4"});
+  CHECK(s.issue("3")->blocks == std::vector<std::string>{"5"});
+  // 間につなぎがなければ何もしない
+  CHECK(s.unchainIssues({"2", "5"}) == 0);
+  CHECK(lastNotice(s) == "外すつなぎがありません");
+  CHECK(s.unchainIssues({"2"}) == 0);
 }
 
 TEST_CASE("commands: Undo/Redo（100件の上限・Redo の消去・変更なしは積まない）") {

@@ -108,18 +108,41 @@ void detailTab(Frame& f, int i) {
   const bool leaf = T.isLeaf(i);
   const float W = ImGui::GetContentRegionAvail().x;
   using AC = app::AppController;
-  // パンくず
+  // パンくず（祖先のパス。押すとその課題へ移動。長いときは真ん中を「…」にして、マウスを載せると全体を出す）
   {
     std::vector<int> anc;
-    for (int a = T.parentOf[i]; a >= 0; a = T.parentOf[a]) anc.insert(anc.begin(), a);
-    for (std::size_t k = 0; k < anc.size(); ++k) {
+    for (int a = T.parentOf[i], guard = 0; a >= 0 && guard < T.n; a = T.parentOf[a], ++guard) anc.insert(anc.begin(), a);
+    std::vector<std::string> names;
+    for (int a : anc) names.push_back(ellipsize(T.name[a], u.m.s(120)));
+    // 1つ分の余白（小ボタンの内側の余白・区切り）を足して幅を測る
+    const float perItem = ImGui::GetStyle().FramePadding.x * 2 + u.m.s(4) + ImGui::CalcTextSize("›").x;
+    const auto kept = text::ancestorPath(
+        names,
+        [&](const std::string& t) {
+          int parts = 1;
+          for (std::size_t p = t.find(" › "); p != std::string::npos; p = t.find(" › ", p + 1)) ++parts;
+          return ImGui::CalcTextSize(t.c_str()).x - ImGui::CalcTextSize(" › ").x * static_cast<float>(parts - 1) +
+                 perItem * static_cast<float>(parts);
+        },
+        W);
+    for (std::size_t k = 0; k < kept.size(); ++k) {
       if (k) {
         ImGui::SameLine(0, u.m.s(2));
         ImGui::TextDisabled("›");
         ImGui::SameLine(0, u.m.s(2));
       }
-      ImGui::PushID(anc[k]);
-      if (ImGui::SmallButton(ellipsize(T.name[anc[k]], u.m.s(120)).c_str())) c.select(T.ids[anc[k]]);
+      if (kept[k] < 0) {
+        ImGui::TextDisabled("…");
+        if (ImGui::IsItemHovered()) {
+          std::vector<std::string> full;
+          for (int a : anc) full.push_back(T.name[a]);
+          ImGui::SetTooltip("%s", text::join(full, " › ").c_str());
+        }
+        continue;
+      }
+      const int a = anc[static_cast<std::size_t>(kept[k])];
+      ImGui::PushID(a);
+      if (ImGui::SmallButton(names[static_cast<std::size_t>(kept[k])].c_str())) c.select(T.ids[a]);
       ImGui::PopID();
     }
   }
@@ -453,13 +476,11 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
   if (ImGui::BeginPopup("##dops")) {
     const std::string id = o.id;
     if (ImGui::MenuItem("子を追加")) {
-      const auto nid = s->addIssue(id, "");
-      c.afterEdit();
+      const auto nid = c.createIssue(id, "");
       if (!nid.empty()) c.select(nid);
     }
     if (ImGui::MenuItem("同じ階層に追加")) {
-      const auto nid = s->addIssue(o.parent, id);
-      c.afterEdit();
+      const auto nid = c.createIssue(o.parent, id);
       if (!nid.empty()) c.select(nid);
     }
     if (ImGui::MenuItem("階層を下げる")) s->indent(id), c.afterEdit();
