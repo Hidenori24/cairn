@@ -8,6 +8,7 @@
 #include <imgui_stdlib.h>
 
 #include "roadmap/link_candidates.hpp"
+#include "roadmap/other_links.hpp"
 #include "roadmap/text.hpp"
 #include "ui/icons.hpp"
 #include "ui/internal.hpp"
@@ -441,6 +442,123 @@ void linkAdder(Frame& f, int i, LinkDir dir, std::string& buf) {
   ImGui::PopID();
 }
 
+// Blocks 以外の JIRA リンク（Relates・Duplicate など）。日程には使わない。値は CSV の「未知の列」に入っていて、
+// 書き出しでは元の列名（Outward issue link (Relates) など）のまま戻る（Issue #12）
+struct OtherLinkForm {
+  std::string kind = "Relates";
+  std::string ref;
+  bool outward = true;
+} gOtherForm;
+
+void otherLinksSection(Frame& f, int i) {
+  app::AppController& c = f.c;
+  UiState& u = f.u;
+  Session* s = c.session();
+  const Tree& T = *s->tree();
+  const auto& I = s->viewIssues();
+  const std::string id = I[i].id;
+  OtherLinkForm& form = gOtherForm;
+  ImGui::SeparatorText("関連リンク（日程には影響しません）");
+  const auto links = otherLinksOf(s->meta(), I, static_cast<std::size_t>(i));
+  // 種類と向きごとにまとめる（最初に出てきた順）
+  struct Group {
+    std::string kind;
+    bool outward;
+    std::vector<std::size_t> items;
+  };
+  std::vector<Group> groups;
+  for (std::size_t k = 0; k < links.size(); ++k) {
+    auto it = std::find_if(groups.begin(), groups.end(), [&](const Group& g) {
+      return g.outward == links[k].outward && text::toLower(g.kind) == text::toLower(links[k].kind);
+    });
+    if (it == groups.end()) {
+      groups.push_back({links[k].kind, links[k].outward, {}});
+      it = groups.end() - 1;
+    }
+    it->items.push_back(k);
+  }
+  if (groups.empty()) {
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextDisabled("関連リンクはありません。JIRA の Relates・Duplicate などのリンクを、日程とは別に控えておけます。");
+    ImGui::PopTextWrapPos();
+  }
+  for (const Group& g : groups) {
+    ImGui::TextDisabled("%s（%s）", g.kind.empty() ? "リンク" : g.kind.c_str(), g.outward ? "外向き" : "内向き");
+    for (std::size_t k : g.items) {
+      const OtherLink& l = links[k];
+      const std::size_t col = l.col;
+      ImGui::PushID(static_cast<int>(col));
+      const auto remove = [&f, id, col] {
+        deferAfterFrame(f, [&f, id, col] {
+          Session* ss = f.c.session();
+          if (!ss || !ss->issue(id)) return;
+          ss->removeOtherLink(id, col);
+          f.c.afterEdit();
+        });
+      };
+      if (l.target >= 0 && l.target < T.n) {
+        issuePill(f, l.target, remove);
+      } else {
+        // 相手がこのプロジェクトにないとき（JIRA 側だけにある課題など）は文字のまま
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(l.ref.c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("（このプロジェクトにない課題）");
+        ImGui::SameLine();
+        if (iconButton(u, "rm", "x", "外す")) remove();
+      }
+      ImGui::PopID();
+    }
+  }
+  // 追加
+  ImGui::PushID("otherlink");
+  ImGui::Spacing();
+  const float spacing = ImGui::GetStyle().ItemSpacing.x;
+  const float pickW = ImGui::CalcTextSize("候補").x + u.m.s(20);
+  ImGui::SetNextItemWidth(std::max(u.m.s(80), ImGui::GetContentRegionAvail().x * 0.5f - pickW - spacing));
+  ImGui::InputTextWithHint("##kind", "種類（例: Relates）", &form.kind);
+  ImGui::SameLine();
+  if (ImGui::Button("候補", ImVec2(pickW, 0))) ImGui::OpenPopup("##kinds");
+  if (ImGui::BeginPopup("##kinds")) {
+    std::vector<std::string> kinds = otherLinkKinds(s->meta());
+    for (const char* d : {"Relates", "Duplicate", "Cloners"})
+      if (std::none_of(kinds.begin(), kinds.end(), [&](const std::string& k) { return text::iequals(k, d); }))
+        kinds.push_back(d);
+    for (const auto& k : kinds)
+      if (ImGui::Selectable(k.c_str())) form.kind = k;
+    ImGui::EndPopup();
+  }
+  ImGui::SameLine();
+  if (ImGui::RadioButton("外向き", form.outward)) form.outward = true;
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("この課題から相手へのリンク（JIRA の Outward issue link 列）");
+  ImGui::SameLine();
+  if (ImGui::RadioButton("内向き", !form.outward)) form.outward = false;
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("相手からこの課題へのリンク（JIRA の Inward issue link 列）");
+  const float addW = ImGui::CalcTextSize("追加").x + u.m.s(20);
+  ImGui::SetNextItemWidth(-(addW + spacing));
+  const bool enter = ImGui::InputTextWithHint("##ref", "相手の表示ID・キー・件名（JIRA 側だけの課題はキーを入力）", &form.ref,
+                                              ImGuiInputTextFlags_EnterReturnsTrue);
+  ImGui::SameLine();
+  const bool click = ImGui::Button("追加", ImVec2(addW, 0));
+  if ((enter || click) && !text::trim(form.ref).empty()) {
+    deferAfterFrame(f, [&f, id] {
+      Session* ss = f.c.session();
+      if (!ss || !ss->issue(id)) return;
+      const std::string ref = text::trim(gOtherForm.ref);
+      // プロジェクトの課題に当たれば、JIRA の CSV と同じくキー（なければ Issue Id）で持つ
+      std::string stored = ref;
+      if (const auto rid = ss->resolveRef(ref))
+        if (const Issue* t = ss->issue(*rid)) stored = t->key.empty() ? t->id : t->key;
+      if (ss->addOtherLink(id, gOtherForm.kind, gOtherForm.outward, stored)) gOtherForm.ref.clear();
+      f.c.afterEdit();
+    });
+  }
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextDisabled("ここに入れたリンクは日程の計算に使いません。CSV には元の列名（Outward issue link (Relates) など）で書き出します。");
+  ImGui::PopTextWrapPos();
+  ImGui::PopID();
+}
+
 void linksTab(Frame& f, int i) {
   app::AppController& c = f.c;
   Session* s = c.session();
@@ -479,6 +597,7 @@ void linksTab(Frame& f, int i) {
       ImGui::PopTextWrapPos();
     }
   }
+  otherLinksSection(f, i);
 }
 
 void commentsTab(Frame& f, int i) {
