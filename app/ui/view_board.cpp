@@ -56,7 +56,7 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, std::s
     floatChip(u, r);
   }
   y += lh + u.m.s(3);
-  dl->AddText(ImVec2(x0, y), u.t->ink, ellipsize(T.name[id], w - u.m.s(inCard ? 44 : 20)).c_str());
+  dl->AddText(ImVec2(x0, y), u.t->ink, ellipsize(T.name[id], w - u.m.s(inCard ? 44.f : 20.f)).c_str());
   bool del = false;
   if (inCard) {
     // 削除（通知の「元に戻す」で戻せる）
