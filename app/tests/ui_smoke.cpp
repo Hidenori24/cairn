@@ -747,6 +747,233 @@ int main() {
     io.AddMousePosEvent(900, 800);
     h.frame(2);
   }
+  // 依存の矢印（Issue #10）: ホバー・つかんで付け替え・削除・たどる・クリティカル
+  {
+    h.c.setView(app::View::Gantt);
+    h.c.setUi("zoom", "week");
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.u.customPx = 0;
+    h.u.scrollToBase = true;
+    h.frame(3);
+    ImGuiIO& io = ImGui::GetIO();
+    Session* s = h.c.session();
+    using Geom = ui::UiState::BarGeom;
+    using AGeom = ui::UiState::ArrowGeom;
+    const auto linked = [&](const std::string& from, const std::string& to) {
+      const Issue* o = h.c.session()->issue(from);
+      return o && std::find(o->blocks.begin(), o->blocks.end(), to) != o->blocks.end();
+    };
+    const auto onScreen = [&](ImVec2 p) { return p.x > h.u.ganttLeft + 24 && p.x < 1380 && p.y > 170 && p.y < 600; };
+    const auto barOk = [&](const Geom& g) {
+      const Tree& T = *s->tree();
+      const int i = T.find(g.id);
+      return i >= 0 && T.isLeaf(i) && g.xl > h.u.ganttLeft + 30 && g.xr < 1380 && g.cy > 175 && g.cy < 595 && g.xr - g.xl > 12;
+    };
+    const auto at = [&](const AGeom& a, float frac) {  // 折れ線の道のりの割合 frac の点
+      float total = 0;
+      for (std::size_t i = 0; i + 1 < a.pts.size(); ++i) total += std::hypot(a.pts[i + 1].x - a.pts[i].x, a.pts[i + 1].y - a.pts[i].y);
+      float run = 0;
+      for (std::size_t i = 0; i + 1 < a.pts.size(); ++i) {
+        const float len = std::hypot(a.pts[i + 1].x - a.pts[i].x, a.pts[i + 1].y - a.pts[i].y);
+        if (len > 0 && run + len >= total * frac) {
+          const float t = (total * frac - run) / len;
+          return ImVec2(a.pts[i].x + (a.pts[i + 1].x - a.pts[i].x) * t, a.pts[i].y + (a.pts[i + 1].y - a.pts[i].y) * t);
+        }
+        run += len;
+      }
+      return a.pts.back();
+    };
+    const auto move = [&](float x, float y, int n = 2) {
+      io.AddMousePosEvent(x, y);
+      h.frame(n);
+    };
+    // 矢印 a の道のりの割合 fracs のどれかでマウスを載せて、その矢印が「マウスの下」になる点を探す
+    const auto hoverOn = [&](const AGeom& a, std::initializer_list<float> fracs) -> bool {
+      for (float fr : fracs) {
+        const ImVec2 p = at(a, fr);
+        if (!onScreen(p)) continue;
+        move(p.x, p.y);
+        if (h.u.arrowHoverFrom == a.from && h.u.arrowHoverTo == a.to) return true;
+      }
+      return false;
+    };
+    const std::initializer_list<float> headFr = {0.8f, 0.75f, 0.7f, 0.85f, 0.65f, 0.9f, 0.6f};
+    const std::initializer_list<float> tailFr = {0.2f, 0.25f, 0.3f, 0.15f, 0.35f, 0.1f, 0.4f};
+    // 付け替えできる矢印（先行・後続とも画面に見える葉で、課題に書かれたつなぎ）
+    std::vector<AGeom> cands;
+    for (const auto& a : h.u.arrowGeom) {
+      bool all = a.pts.size() >= 4 && linked(a.from, a.to);
+      for (const auto& p : a.pts) all = all && onScreen(p);
+      const Tree& T = *s->tree();
+      all = all && T.find(a.from) >= 0 && T.find(a.to) >= 0 && T.isLeaf(T.find(a.from)) && T.isLeaf(T.find(a.to));
+      if (all) cands.push_back(a);
+    }
+    check(!h.u.arrowGeom.empty(), "ガントに依存の矢印がある");
+    check(!cands.empty(), "つかめる矢印（画面内の葉どうし）がある");
+    // 矢印の上にマウスを載せたとき: 「マウスの下の矢印」になる
+    AGeom pick;
+    bool havePick = false;
+    for (const auto& a : cands) {
+      if (!hoverOn(a, headFr)) continue;
+      pick = a;
+      havePick = true;
+      break;
+    }
+    check(havePick, "矢印にマウスを載せると、その矢印がマウスの下になる");
+    if (havePick) {
+      const auto pickTarget = [&](bool head) -> std::optional<Geom> {
+        for (const auto& g : h.u.barGeom) {
+          if (!barOk(g) || g.id == pick.from || g.id == pick.to) continue;
+          const std::string np = head ? pick.from : g.id, ns = head ? g.id : pick.to;
+          if (s->previewLink(np, ns, pick.from, pick.to).block == LinkBlock::None) return g;
+        }
+        return std::nullopt;
+      };
+      const auto grab = [&](bool head) -> bool {  // 矢印の近い方の端をつかむ（押す）
+        if (!hoverOn(pick, head ? headFr : tailFr)) return false;
+        io.AddMouseButtonEvent(0, true);
+        h.frame(2);
+        return h.u.arrowDrag.pending || h.u.arrowDrag.active;
+      };
+      const auto release = [&] {
+        io.AddMouseButtonEvent(0, false);
+        h.frame(3);  // 確定は描画が終わってから
+      };
+      const std::size_t undo0 = s->undoSize();
+      // 動かさずに離す（クリック）: 何も変わらず、行も選ばれない
+      check(grab(true), "矢印の上で押せる");
+      check(h.u.arrowDrag.editable, "画面の葉どうしの矢印はつかんで付け替えできる");
+      check(h.c.selection().empty(), "矢印を押しても行は選択されない");
+      release();
+      check(!h.u.arrowDrag.pending && !h.u.arrowDrag.active && s->undoSize() == undo0 && linked(pick.from, pick.to),
+            "動かさずに離すと何も変えない");
+      // 後続の端をつかんで別のバーへ: 付け替え（Undo 1回）
+      if (auto t = pickTarget(true); t) {
+        check(grab(true), "後続側の端をつかめる");
+        move((t->xl + t->xr) / 2, t->cy);
+        check(h.u.arrowDrag.active && h.u.arrowDrag.grabHead, "動かすとドラッグになる（後続側の端）");
+        check(h.u.arrowDrag.preview.ok, "付け替え先の日程の影響を計算する");
+        check(linked(pick.from, pick.to), "離すまでは変わらない");
+        release();
+        check(!linked(pick.from, pick.to) && linked(pick.from, t->id), "後続の端を別のバーへ離すと付け替わる");
+        check(s->undoSize() == undo0 + 1, "付け替えは Undo 1回分");
+        h.c.undo();
+        h.frame(2);
+        check(linked(pick.from, pick.to) && !linked(pick.from, t->id), "Undo 1回で戻る");
+      } else {
+        check(false, "後続の付け替え先のバーがある");
+      }
+      // 先行の根元をつかんで別のバーへ
+      if (auto t = pickTarget(false); t) {
+        h.frame(2);
+        if (grab(false)) {
+          move((t->xl + t->xr) / 2, t->cy);
+          check(h.u.arrowDrag.active && !h.u.arrowDrag.grabHead, "根元に近い所は先行側の端をつかむ");
+          release();
+          check(!linked(pick.from, pick.to) && linked(t->id, pick.to), "先行の端を別のバーへ離すと付け替わる");
+          h.c.undo();
+          h.frame(2);
+          check(linked(pick.from, pick.to), "先行の付け替えも Undo 1回で戻る");
+        } else {
+          check(false, "先行側の端をつかめる");
+        }
+      }
+      // バーのない場所へ離すと削除（Undo 1回）
+      {
+        float fx = h.u.ganttLeft + 4;
+        const float fy = h.u.barGeom.empty() ? 300.f : h.u.barGeom.front().cy;
+        const auto freeAt = [&](float x, float y) {
+          for (const auto& g : h.u.barGeom)
+            if (std::abs(g.cy - y) < 14 && x > g.xl - 24 && x < g.xr + 24) return false;
+          return true;
+        };
+        for (float x = h.u.ganttLeft + 4; x < 1300; x += 9)
+          if (freeAt(x, fy)) {
+            fx = x;
+            break;
+          }
+        check(grab(true), "削除のテスト: 矢印をつかめる");
+        move(fx, fy);
+        check(h.u.arrowDrag.active, "削除のテスト: ドラッグ中");
+        check(linked(pick.from, pick.to), "離すまでは外れない");
+        release();
+        check(!linked(pick.from, pick.to), "バーのない場所へ離すと依存が外れる");
+        check(s->undoSize() == undo0 + 1, "削除は Undo 1回分");
+        h.c.undo();
+        h.frame(2);
+        check(linked(pick.from, pick.to) && s->undoSize() == undo0, "Undo 1回で戻る");
+      }
+      // 取り消し: タイムラインの外で離す・Esc・元の相手の上で離す
+      {
+        check(grab(true), "取り消しのテスト: 矢印をつかめる");
+        move(60, 300);  // 左の表の上（タイムラインの外）
+        release();
+        check(linked(pick.from, pick.to) && s->undoSize() == undo0, "タイムラインの外で離すと取り消し（外さない）");
+        check(grab(true), "Esc のテスト: 矢印をつかめる");
+        move(h.u.ganttLeft + 6, 300);
+        check(h.u.arrowDrag.active, "Esc のテスト: ドラッグ中");
+        h.key(ImGuiKey_Escape);
+        check(!h.u.arrowDrag.active && !h.u.arrowDrag.pending, "Esc で取り消す");
+        release();
+        check(linked(pick.from, pick.to) && s->undoSize() == undo0, "Esc の後に離しても外れない");
+        const Geom* orig = nullptr;
+        for (const auto& g : h.u.barGeom)
+          if (g.id == pick.to) orig = &g;
+        if (orig && barOk(*orig)) {
+          check(grab(true), "元の相手のテスト: 矢印をつかめる");
+          move((orig->xl + orig->xr) / 2, orig->cy);
+          release();
+          check(linked(pick.from, pick.to) && s->undoSize() == undo0, "元の相手の上で離すと変えない");
+        }
+      }
+      // つなげない相手（先行元自身）には付け替えない
+      {
+        const Geom* self = nullptr;
+        for (const auto& g : h.u.barGeom)
+          if (g.id == pick.from) self = &g;
+        if (self && barOk(*self)) {
+          check(grab(true), "つなげない相手のテスト: 矢印をつかめる");
+          move((self->xl + self->xr) / 2, self->cy);
+          check(h.u.arrowDrag.active && !h.u.arrowDrag.preview.ok, "自分自身へはつなげない（プレビューなし）");
+          release();
+          check(linked(pick.from, pick.to) && s->undoSize() == undo0, "つなげない相手に離しても変わらない");
+        }
+      }
+    }
+    // 依存をたどる・クリティカルの強調: 描いて落ちない・設定が保存される
+    {
+      const Tree& T = *s->tree();
+      std::string withLinks;
+      for (int i = 0; i < T.n; ++i)
+        if (T.isLeaf(i) && (!T.preds[i].empty() || !T.succs[i].empty())) {
+          withLinks = T.ids[i];
+          break;
+        }
+      check(!withLinks.empty(), "依存のある課題がある");
+      if (!withLinks.empty()) h.c.select(withLinks);
+      h.c.setUiSub("dep", "trace", true);
+      h.frame(3);
+      check(h.c.uiBool("dep", "trace", false), "たどる表示をオンにできる");
+      h.c.setUiSub("dep", "crit", true);
+      h.frame(3);
+      check(h.c.uiBool("dep", "crit", false), "クリティカルの強調をオンにできる");
+      for (const char* z : {"day", "month", "all", "week"}) {
+        h.c.setUi("zoom", z);
+        h.frame(2);
+      }
+      h.c.clearSelection();
+      h.frame(2);  // 選んだ課題がなければたどらない
+      h.c.setUiSub("dep", "trace", false);
+      h.c.setUiSub("dep", "crit", false);
+      h.frame(2);
+      check(!h.c.uiBool("dep", "trace", true) && !h.c.uiBool("dep", "crit", true), "オフに戻せる");
+      h.c.setUi("zoom", "week");
+      h.frame(2);
+    }
+    io.AddMousePosEvent(900, 800);
+    h.frame(2);
+  }
   // スイムレーン
   h.c.setView(app::View::Board);
   for (const char* l : {"none", "asg", "root"}) {

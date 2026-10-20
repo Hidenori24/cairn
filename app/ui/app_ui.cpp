@@ -724,6 +724,15 @@ void drawToolBar(Frame& f) {
     if (v == View::Gantt) {
       ImGui::SameLine();
       if (iconTextButton(u, "tobase", "calendar", "基準日へ")) u.scrollToBase = true;
+      // 依存の見せ方（選んだ課題の連鎖をたどる・余裕 0 の連鎖を強調）。どちらかがオンなら押した見た目にする
+      ImGui::SameLine();
+      const bool depTrace = c.uiBool("dep", "trace", false), depCrit = c.uiBool("dep", "crit", false);
+      if (iconTextButton(u, "dep", nullptr, "依存 ▼", false, depTrace || depCrit)) ImGui::OpenPopup("##dep");
+      if (ImGui::BeginPopup("##dep")) {
+        if (ImGui::MenuItem("選んだ課題の先行・後続をたどる（ほかを薄く）", nullptr, depTrace)) c.setUiSub("dep", "trace", !depTrace);
+        if (ImGui::MenuItem("クリティカルパスを強調（余裕 0）", nullptr, depCrit)) c.setUiSub("dep", "crit", !depCrit);
+        ImGui::EndPopup();
+      }
     }
   }
   if (v == View::Board) {
@@ -1118,6 +1127,10 @@ void handleKeys(Frame& f) {
       u.linkDrag = {};
       return;
     }
+    if (u.arrowDrag.pending || u.arrowDrag.active) {  // 依存の矢印のドラッグ（付け替え・削除）を取り消し
+      u.arrowDrag = {};
+      return;
+    }
     if (u.linkPick.active) {  // 依存の相手を選ぶモードを中止
       cancelLinkPick(f);
       return;
@@ -1293,6 +1306,7 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
     }
   }
   if (u.linkDrag.active && (!s || c.view() != View::Gantt)) u.linkDrag = {};  // ガントが描かれない間にドラッグを残さない
+  if ((u.arrowDrag.pending || u.arrowDrag.active) && (!s || c.view() != View::Gantt)) u.arrowDrag = {};
   ImGui::EndChild();
   if (detailW > 0) {
     ImGui::SameLine(0, 0);

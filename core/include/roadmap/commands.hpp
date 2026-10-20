@@ -114,8 +114,13 @@ class Session {
   bool setDeadline(std::string id, OptDay day);
   bool addLink(std::string from, std::string to);
   // from → to をつないだときの日程の変化を、課題を変えずに計算する（循環などでつなげない組は ok=false と理由）
-  LinkPreview previewLink(const std::string& from, const std::string& to) const;
+  // dropFrom → dropTo を指定すると、そのつなぎを外した状態で判定・計算する（付け替えのプレビュー）
+  LinkPreview previewLink(const std::string& from, const std::string& to, const std::string& dropFrom = {},
+                          const std::string& dropTo = {}) const;
   bool removeLink(std::string from, std::string to);
+  // oldFrom → oldTo のつなぎを newFrom → newTo に付け替える（片方の端だけ変えるのが普通）。
+  // 元のつなぎがない・同じ組・つなげない相手（循環・重複・親子・自分自身）なら何も変えず false。Undo 1回
+  bool relinkIssue(std::string oldFrom, std::string oldTo, std::string newFrom, std::string newTo);
   // 選んだ課題を A→B→C と順につなぐ（終了→開始）。order は画面の表示順（空なら木の順）。
   // 親子の両方が選ばれていれば子は数えない。すでにあるつなぎは足さない。
   // 1つでも循環になるなら何も変えず、理由を通知する。全体で Undo 1回

@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 
+#include "roadmap/dependency_view.hpp"
 #include "roadmap/text.hpp"
 #include "ui/icons.hpp"
 #include "ui/internal.hpp"
@@ -77,6 +78,67 @@ void diamond(ImDrawList* dl, ImVec2 c, float r, ImU32 fill, ImU32 border) {
   const ImVec2 pts[4] = {ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r), ImVec2(c.x - r, c.y)};
   if (fill) dl->AddConvexPolyFilled(pts, 4, fill);
   if (border) dl->AddPolyline(pts, 4, border, ImDrawFlags_Closed, 1.5f);
+}
+
+// 折れ線を点線で描く
+// （描く範囲 = クリップの外の点線は頂点を作らない。長い矢印で頂点が増えすぎないように）
+void dashedPolyline(ImDrawList* dl, const std::vector<ImVec2>& pts, ImU32 col, float th, float dash) {
+  const ImVec4 clip(dl->GetClipRectMin().x, dl->GetClipRectMin().y, dl->GetClipRectMax().x, dl->GetClipRectMax().y);
+  for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+    const ImVec2 p = pts[i], q = pts[i + 1];
+    const float len = std::hypot(q.x - p.x, q.y - p.y);
+    if (len <= 0.f) continue;
+    if (std::max(p.x, q.x) < clip.x || std::min(p.x, q.x) > clip.z || std::max(p.y, q.y) < clip.y || std::min(p.y, q.y) > clip.w) continue;
+    for (float t = 0; t < len; t += dash * 2) {
+      const float t2 = std::min(len, t + dash);
+      const float xa = p.x + (q.x - p.x) * t / len, xb = p.x + (q.x - p.x) * t2 / len;
+      const float ya = p.y + (q.y - p.y) * t / len, yb = p.y + (q.y - p.y) * t2 / len;
+      if (std::max(xa, xb) < clip.x || std::min(xa, xb) > clip.z || std::max(ya, yb) < clip.y || std::min(ya, yb) > clip.w) continue;
+      dl->AddLine(ImVec2(xa, ya), ImVec2(xb, yb), col, th);
+    }
+  }
+}
+
+// 折れ線の上で m にいちばん近い点: 距離と、始点からそこまでの道のりの割合（0〜1）
+struct PolyHit {
+  float dist = 1e9f;
+  float frac = 0;
+};
+PolyHit nearestOnPolyline(const std::vector<ImVec2>& pts, ImVec2 m) {
+  PolyHit best;
+  float total = 0;
+  for (std::size_t i = 0; i + 1 < pts.size(); ++i) total += std::hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+  if (total <= 0.f) return best;
+  float run = 0;
+  for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+    const ImVec2 p = pts[i], q = pts[i + 1];
+    const float dx = q.x - p.x, dy = q.y - p.y, len2 = dx * dx + dy * dy, len = std::sqrt(len2);
+    float t = len2 > 0.f ? ((m.x - p.x) * dx + (m.y - p.y) * dy) / len2 : 0.f;
+    t = std::clamp(t, 0.f, 1.f);
+    const float d = std::hypot(m.x - (p.x + dx * t), m.y - (p.y + dy * t));
+    if (d < best.dist) {
+      best.dist = d;
+      best.frac = (run + len * t) / total;
+    }
+    run += len;
+  }
+  return best;
+}
+
+// 折れ線の道のりの割合 frac の位置
+ImVec2 pointAtFrac(const std::vector<ImVec2>& pts, float frac) {
+  float total = 0;
+  for (std::size_t i = 0; i + 1 < pts.size(); ++i) total += std::hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+  float want = total * frac, run = 0;
+  for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+    const float len = std::hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+    if (len > 0.f && run + len >= want) {
+      const float t = (want - run) / len;
+      return ImVec2(pts[i].x + (pts[i + 1].x - pts[i].x) * t, pts[i].y + (pts[i + 1].y - pts[i].y) * t);
+    }
+    run += len;
+  }
+  return pts.empty() ? ImVec2(0, 0) : pts.back();
 }
 
 std::vector<std::string> tipLines(const Session& s, int id) {
@@ -272,10 +334,12 @@ void drawGanttView(Frame& f, ImVec2 size) {
   };
   // マウスの下の行と、その行のどのハンドルの上か（0 = なし 1 = 左 2 = 右）。ほかのドラッグ・選択モード・ダイアログの間は出さない
   int hotRow = -1, hotSide = 0;
+  bool idle = false;  // ほかのドラッグ・選択モード・ダイアログがなく、マウスがガントの上にある
   {
     const ImVec2 mp = ImGui::GetMousePos();
-    const bool idle = !u.linkPick.active && !u.barDrag.active && !u.rowDrag.active && !u.colDrag.active && !u.linkDrag.active &&
-                      u.dlg == Dlg::None && !u.paletteOpen && u.editField == EditField::None && ImGui::IsWindowHovered();
+    idle = !u.linkPick.active && !u.barDrag.active && !u.rowDrag.active && !u.colDrag.active && !u.linkDrag.active &&
+           !u.arrowDrag.pending && !u.arrowDrag.active && u.dlg == Dlg::None && !u.paletteOpen &&
+           u.editField == EditField::None && ImGui::IsWindowHovered();
     if (idle && mp.x >= tlMin.x && mp.x < tlMax.x && mp.y >= bodyTop && mp.y < tlMax.y) {
       const int ri = static_cast<int>(std::floor((mp.y - bodyTop + sy) / RH));
       if (ri >= 0 && ri < static_cast<int>(rows.size())) {
@@ -323,6 +387,131 @@ void drawGanttView(Frame& f, ImVec2 size) {
   for (int x : related)
     if (int r = visRow(x); r >= 0) relatedRows.insert(r);
 
+  // ---- 依存をたどる・クリティカルの強調（アプリの表示設定。プロジェクトごとに覚える）----
+  const bool traceOn = curIdx >= 0 && c.uiBool("dep", "trace", false);
+  const bool critOn = c.uiBool("dep", "crit", false);
+  const std::vector<char> traceSet = traceOn ? traceDependencies(T, curIdx) : std::vector<char>{};
+
+  // ---- 依存の矢印の形と色の判断（描くのは行のあと。マウスの当たり判定のため先に作る）----
+  struct Arrow {
+    int a = 0, b = 0;      // 行
+    int succLeaf = 0;      // 色の判断
+    bool hot = false;      // カーソル行に関係する
+    bool traced = false;   // 選んだ課題の先行・後続の連鎖の中（たどる表示）
+    bool conflict = false;  // 後続が先行より前の日付
+    bool critical = false;  // 余裕 0 以下の連鎖
+    float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    std::vector<ImVec2> pts;
+  };
+  std::vector<Arrow> arrows;
+  {
+    std::map<std::pair<int, int>, Arrow> amap;
+    for (int leaf : T.leafOrder)
+      for (int sc : T.succs[leaf]) {
+        const int ra = visRow(leaf), rb = visRow(sc);
+        if (ra < 0 || rb < 0 || ra == rb) continue;
+        if (std::max(ra, rb) < first || std::min(ra, rb) > last) continue;
+        const bool hot = curIdx >= 0 && (rows[ra].id == curIdx || rows[rb].id == curIdx ||
+                                         std::find(T.leaves[curIdx].begin(), T.leaves[curIdx].end(), leaf) != T.leaves[curIdx].end() ||
+                                         std::find(T.leaves[curIdx].begin(), T.leaves[curIdx].end(), sc) != T.leaves[curIdx].end());
+        const bool traced = traceOn && traceSet[leaf] && traceSet[sc];
+        const bool zw = T.kind[sc] == Kind::Ms && R[sc].weeks == 0;
+        const bool conflict = isDateConflict(R[leaf], R[sc], zw);
+        const bool critical = isCriticalLink(R[leaf], R[sc]);
+        auto [it, fresh] = amap.try_emplace({ra, rb});
+        Arrow& ar = it->second;
+        if (fresh) {
+          ar.a = ra;
+          ar.b = rb;
+          ar.succLeaf = sc;
+        }
+        ar.hot = ar.hot || hot;
+        ar.traced = ar.traced || traced;
+        ar.conflict = ar.conflict || conflict;
+        ar.critical = ar.critical || critical;
+      }
+    for (auto& [k, ar] : amap) {
+      const int ia = rows[ar.a].id, ib = rows[ar.b].id;
+      const ScheduleRow& ra = R[ia];
+      const ScheduleRow& rb = R[ib];
+      const bool msA = T.isLeaf(ia) && T.kind[ia] == Kind::Ms, msB = T.isLeaf(ib) && T.kind[ib] == Kind::Ms;
+      ar.y0 = rowY(ar.a) + RH / 2;
+      ar.y1 = rowY(ar.b) + RH / 2;
+      ar.x0 = msA ? ax.x(ra.asapFinish) + ax.px / 2 + u.m.s(7) : ax.x(ra.asapFinish + 1);
+      ar.x1 = msB ? ax.x(rb.asapStart) + ax.px / 2 - u.m.s(7) : ax.x(rb.asapStart);
+      const float kk = u.m.s(6);
+      if (ar.x1 >= ar.x0 + u.m.s(12)) {
+        ar.pts = {ImVec2(ar.x0, ar.y0), ImVec2(ar.x0 + kk, ar.y0), ImVec2(ar.x0 + kk, ar.y1), ImVec2(ar.x1, ar.y1)};
+      } else {
+        const float ym = ar.y0 + (ar.y1 > ar.y0 ? RH / 2 : -RH / 2);
+        ar.pts = {ImVec2(ar.x0, ar.y0), ImVec2(ar.x0 + kk, ar.y0), ImVec2(ar.x0 + kk, ym),
+                  ImVec2(ar.x1 - kk, ym), ImVec2(ar.x1 - kk, ar.y1), ImVec2(ar.x1, ar.y1)};
+      }
+      arrows.push_back(std::move(ar));
+    }
+  }
+  // 課題に書かれたつなぎ（x の blocks に y）のうち、行 ra → 行 rb の矢印を作っているものが、行の課題そのものの1本だけか。
+  // そのときだけ矢印をつかんで付け替え・削除できる（親や折りたたみをまたぐ依存は詳細パネルで）
+  const auto editableArrow = [&](const Arrow& ar) {
+    const int ia = rows[ar.a].id, ib = rows[ar.b].id;
+    int n = 0;
+    bool exact = false;
+    for (int x = 0; x < T.n; ++x)
+      for (const auto& bid : I[x].blocks) {
+        const int y = T.find(bid);
+        if (y < 0) continue;
+        const auto reaches = [&](int issue, int row) {
+          for (int lf : T.leaves[issue])
+            if (visRow(lf) == row) return true;
+          return false;
+        };
+        if (!reaches(x, ar.a) || !reaches(y, ar.b)) continue;
+        ++n;
+        if (x == ia && y == ib) exact = true;
+      }
+    return n == 1 && exact;
+  };
+  // マウスの下の矢印（ハンドル・ほかのドラッグ・ダイアログのないとき）
+  int hoverArrow = -1;
+  float hoverFrac = 0;
+  {
+    const ImVec2 mp = ImGui::GetMousePos();
+    if (idle && hotSide == 0 && mp.x >= tlMin.x && mp.x < tlMax.x && mp.y >= bodyTop && mp.y < tlMax.y) {
+      float best = u.m.s(4.f);
+      for (std::size_t k = 0; k < arrows.size(); ++k) {
+        const PolyHit h = nearestOnPolyline(arrows[k].pts, mp);
+        if (h.dist <= best) {
+          best = h.dist;
+          hoverArrow = static_cast<int>(k);
+          hoverFrac = h.frac;
+        }
+      }
+    }
+  }
+  u.arrowHoverFrom.clear();
+  u.arrowHoverTo.clear();
+  bool hoverEditable = false;
+  if (hoverArrow >= 0) {
+    const Arrow& ar = arrows[static_cast<std::size_t>(hoverArrow)];
+    u.arrowHoverFrom = T.ids[rows[ar.a].id];
+    u.arrowHoverTo = T.ids[rows[ar.b].id];
+    hoverEditable = editableArrow(ar);
+    // 矢印の上で押した: 動かしたらつなぎ替え（まだクリックでは何もしない。行の選択・バーのドラッグにもしない）
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+      u.arrowDrag = {};
+      u.arrowDrag.pending = true;
+      u.arrowDrag.editable = hoverEditable;
+      u.arrowDrag.from = u.arrowHoverFrom;
+      u.arrowDrag.to = u.arrowHoverTo;
+      u.arrowDrag.grabHead = hoverFrac > 0.5f;  // 近い方の端をつかむ
+      u.arrowDrag.project = c.currentId();
+      u.arrowDrag.start = ImGui::GetMousePos();
+    }
+  }
+  u.arrowGeom.clear();
+  for (const Arrow& ar : arrows) u.arrowGeom.push_back({T.ids[rows[ar.a].id], T.ids[rows[ar.b].id], ar.pts, ar.conflict, ar.critical});
+  const bool arrowBusy = hoverArrow >= 0 || u.arrowDrag.pending || u.arrowDrag.active;
+
   // ---- タイムラインの背景 ----
   dl->PushClipRect(tlMin, tlMax, true);
   {
@@ -366,7 +555,8 @@ void drawGanttView(Frame& f, ImVec2 size) {
     const float y = rowY(i);
     const Risk risk = riskOf(r.floatDays, r.done);
     const ImU32 bc = colorOf(id, risk);
-    FadeScope fade(dl, isDimmed(u, dim, id, T.ids[id]), dimAlpha(c));  // 上の絞り込みに一致しない行は薄く
+    // 上の絞り込みに一致しない行は薄く。「依存をたどる」では、選んだ課題の連鎖にない行も薄く
+    FadeScope fade(dl, isDimmed(u, dim, id, T.ids[id]) || (traceOn && !traceSet[id] && u.editId != T.ids[id]), dimAlpha(c));
     // 左の表（横スクロールで固定）
     ImGui::PushClipRect(ImVec2(wp.x, bodyTop), ImVec2(wp.x + leftW, tlMax.y), true);
     drawTableRow(f, vr, ImVec2(wp.x, y), leftW, cols, false, relatedRows.count(i) > 0 || T.ids[id] == cur);
@@ -384,7 +574,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
     ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("##trow", ImVec2(std::max(1.f, std::min(timelineW, tlMax.x - tlMin.x)), RH));
     const bool onHandle = hotSide != 0 && hotRow == i;  // ハンドルの上のクリックは行の選択にしない
-    if (!onHandle && !u.linkDrag.active) {
+    if (!onHandle && !u.linkDrag.active && !arrowBusy) {
       if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) rowClick(f, T.ids[id]);
       if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) openContext(f, T.ids[id]);
       if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) openDetail(f, T.ids[id], 0);
@@ -458,7 +648,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
         if (movable) ImGui::SetMouseCursor(overHandle ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_Hand);
       }
       if (movable && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.f) && !u.barDrag.active &&
-          !u.linkDrag.active) {
+          !u.linkDrag.active && !arrowBusy) {
         u.barDrag.active = true;
         u.barDrag.id = T.ids[id];
         u.barDrag.resize = overHandle;
@@ -482,49 +672,69 @@ void drawGanttView(Frame& f, ImVec2 size) {
   // ---- 依存の矢印（見える範囲に関係するもの）----
   {
     dl->PushClipRect(tlMin, tlMax, true);
-    struct Arrow {
-      int a, b;      // 行
-      int succLeaf;  // 色の判断
-      bool hot;
+    // つかんで動かしている矢印は、元の場所では薄くする（ゴムひもが代わりに動く）
+    const auto isDragged = [&](const Arrow& ar) {
+      return u.arrowDrag.active && T.ids[rows[ar.a].id] == u.arrowDrag.from && T.ids[rows[ar.b].id] == u.arrowDrag.to;
     };
-    std::map<std::pair<int, int>, Arrow> arrows;
-    for (int leaf : T.leafOrder)
-      for (int sc : T.succs[leaf]) {
-        const int ra = visRow(leaf), rb = visRow(sc);
-        if (ra < 0 || rb < 0 || ra == rb) continue;
-        if (std::max(ra, rb) < first || std::min(ra, rb) > last) continue;
-        const bool hot = curIdx >= 0 && (rows[ra].id == curIdx || rows[rb].id == curIdx ||
-                                         std::find(T.leaves[curIdx].begin(), T.leaves[curIdx].end(), leaf) != T.leaves[curIdx].end() ||
-                                         std::find(T.leaves[curIdx].begin(), T.leaves[curIdx].end(), sc) != T.leaves[curIdx].end());
-        auto& ar = arrows[{ra, rb}];
-        if (ar.a == ar.b) ar = {ra, rb, sc, hot};
-        else ar.hot = ar.hot || hot;
-      }
-    for (int pass = 0; pass < 2; ++pass)
-      for (const auto& [k, ar] : arrows) {
-        if ((pass == 1) != ar.hot) continue;
+    // 重なりの順: 通常 → クリティカル → 関係する・たどる・衝突 → マウスの下
+    const auto layerOf = [&](const Arrow& ar, bool hov) {
+      if (hov) return 3;
+      if (ar.hot || ar.traced || ar.conflict) return 2;
+      return critOn && ar.critical ? 1 : 0;
+    };
+    for (int layer = 0; layer < 4; ++layer)
+      for (std::size_t k = 0; k < arrows.size(); ++k) {
+        const Arrow& ar = arrows[k];
+        const bool hov = static_cast<int>(k) == hoverArrow;
+        if (layerOf(ar, hov) != layer) continue;
         const int ia = rows[ar.a].id, ib = rows[ar.b].id;
-        const ScheduleRow& ra = R[ia];
-        const ScheduleRow& rb = R[ib];
-        const bool msA = T.isLeaf(ia) && T.kind[ia] == Kind::Ms, msB = T.isLeaf(ib) && T.kind[ib] == Kind::Ms;
-        const float y0 = rowY(ar.a) + RH / 2, y1 = rowY(ar.b) + RH / 2;
-        const float x0 = msA ? ax.x(ra.asapFinish) + ax.px / 2 + u.m.s(7) : ax.x(ra.asapFinish + 1);
-        const float x1 = msB ? ax.x(rb.asapStart) + ax.px / 2 - u.m.s(7) : ax.x(rb.asapStart);
         const ScheduleRow& sr = R[ar.succLeaf];
-        ImU32 col = sr.floatDays < 0 ? u.t->late : sr.floatDays == 0 ? u.t->tightEdge : u.t->arrow;
-        if (ar.hot) col = u.t->accent;
-        else if (curIdx >= 0) col = withAlpha(col, 0.35f);
-        if (!ar.hot && isDimmed(u, dim, ia, T.ids[ia]) && isDimmed(u, dim, ib, T.ids[ib])) col = withAlpha(col, dimAlpha(c));
-        const float kk = u.m.s(6);
-        std::vector<ImVec2> pts;
-        if (x1 >= x0 + u.m.s(12)) {
-          pts = {ImVec2(x0, y0), ImVec2(x0 + kk, y0), ImVec2(x0 + kk, y1), ImVec2(x1, y1)};
-        } else {
-          const float ym = y0 + (y1 > y0 ? RH / 2 : -RH / 2);
-          pts = {ImVec2(x0, y0), ImVec2(x0 + kk, y0), ImVec2(x0 + kk, ym), ImVec2(x1 - kk, ym), ImVec2(x1 - kk, y1), ImVec2(x1, y1)};
+        const ImU32 base = sr.floatDays < 0 ? u.t->late : sr.floatDays == 0 ? u.t->tightEdge : u.t->arrow;
+        const bool strong = ar.hot || ar.traced;
+        ImU32 col = base;
+        float th = 1.3f;
+        if (strong) {
+          col = u.t->accent;
+          th = 2.f;
+        } else if (curIdx >= 0) {
+          col = withAlpha(base, traceOn ? std::min(0.35f, dimAlpha(c)) : 0.35f);
         }
-        dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), col, ImDrawFlags_None, ar.hot ? 2.f : 1.3f);
-        dl->AddTriangleFilled(ImVec2(x1, y1), ImVec2(x1 - u.m.s(6), y1 - u.m.s(4)), ImVec2(x1 - u.m.s(6), y1 + u.m.s(4)), col);
+        if (critOn) {
+          if (ar.critical) {  // 余裕 0 以下の連鎖: 太く（遅れなら赤、ちょうどなら橙）
+            th = std::max(th, 2.8f);
+            if (!strong) col = sr.floatDays < 0 ? u.t->late : u.t->tightEdge;
+          } else if (!strong) {
+            col = withAlpha(base, 0.3f);
+          }
+        }
+        if (!strong && !ar.conflict && isDimmed(u, dim, ia, T.ids[ia]) && isDimmed(u, dim, ib, T.ids[ib])) col = withAlpha(col, dimAlpha(c));
+        if (ar.conflict) {  // 日付が合わない: 赤・太め・点線・「!」（色だけに頼らない）
+          col = u.t->late;
+          th = std::max(th, 2.4f);
+        }
+        if (hov) {
+          if (!ar.conflict) col = u.t->accent;
+          th += 1.2f;
+          dl->AddPolyline(ar.pts.data(), static_cast<int>(ar.pts.size()), withAlpha(col, 0.25f), ImDrawFlags_None, th + u.m.s(5));
+        }
+        if (isDragged(ar)) col = withAlpha(col, 0.2f);
+        if (ar.conflict && !isDragged(ar)) dashedPolyline(dl, ar.pts, col, th, u.m.s(5));
+        else dl->AddPolyline(ar.pts.data(), static_cast<int>(ar.pts.size()), col, ImDrawFlags_None, th);
+        dl->AddTriangleFilled(ImVec2(ar.x1, ar.y1), ImVec2(ar.x1 - u.m.s(6), ar.y1 - u.m.s(4)), ImVec2(ar.x1 - u.m.s(6), ar.y1 + u.m.s(4)), col);
+        if (ar.conflict && !isDragged(ar)) {
+          const ImVec2 mid = pointAtFrac(ar.pts, 0.5f);
+          const ImVec2 ts = ImGui::CalcTextSize("!");
+          dl->AddCircleFilled(mid, u.m.s(7), u.t->late);
+          dl->AddText(ImVec2(mid.x - ts.x / 2, mid.y - ts.y / 2), IM_COL32_WHITE, "!");
+        }
+        if (hov && hoverEditable) {  // 両端のつまみ（近い方の端がつかまれる）
+          const bool head = hoverFrac > 0.5f;
+          const ImVec2 pt(ar.x0, ar.y0), ph(ar.x1, ar.y1);
+          dl->AddCircleFilled(pt, u.m.s(head ? 3.f : 5.f), head ? col : u.t->surface);
+          dl->AddCircle(pt, u.m.s(head ? 3.f : 5.f), col, 0, 2.f);
+          dl->AddCircleFilled(ph, u.m.s(head ? 5.f : 3.f), head ? u.t->surface : col);
+          dl->AddCircle(ph, u.m.s(head ? 5.f : 3.f), col, 0, 2.f);
+        }
       }
     dl->PopClipRect();
   }
@@ -691,6 +901,47 @@ void drawGanttView(Frame& f, ImVec2 size) {
     dl->AddCircle(hc, handleR, col, 0, 2.f);
     dl->AddCircleFilled(hc, handleR * 0.38f, hot ? IM_COL32_WHITE : col);
   };
+  // 相手の行とバーの強調（つなげないときは lineCol を赤にする）
+  const auto highlightTarget = [&](int tgtRow, ImU32 lineCol) {
+    const Span tsp = spanOf(tgtRow);
+    const float y = rowY(tgtRow);
+    dl->AddRectFilled(ImVec2(tlMin.x, y), ImVec2(tlMax.x, y + RH), withAlpha(lineCol, 0.10f));
+    const float pad = u.m.s(3);
+    dl->AddRectFilled(ImVec2(tsp.xl - pad, y + u.m.s(4)), ImVec2(tsp.xr + pad, y + RH - u.m.s(4)), withAlpha(lineCol, 0.18f), u.m.s(5));
+    dl->AddRect(ImVec2(tsp.xl - pad, y + u.m.s(4)), ImVec2(tsp.xr + pad, y + RH - u.m.s(4)), lineCol, u.m.s(5), 0, 2.5f);
+  };
+  // 日程への影響のプレビュー（後続がずれる位置に薄いバー）
+  const auto drawGhosts = [&](const LinkPreview* pv) {
+    if (!pv) return;
+    for (const auto& sh : pv->shifts) {
+      const int rr = rowOf[static_cast<std::size_t>(sh.idx)];
+      if (rr < first || rr >= last) continue;
+      const float y = rowY(rr), cy = y + RH / 2;
+      const ImU32 gc = sh.newStart > sh.oldStart ? u.t->late : u.t->accent;
+      if (T.kind[static_cast<std::size_t>(sh.idx)] == Kind::Ms) {
+        diamond(dl, ImVec2(ax.x(sh.newFinish) + ax.px / 2, cy), u.m.s(6) * 1.2f, withAlpha(gc, 0.3f), gc);
+      } else {
+        const ImVec2 ga(ax.x(sh.newStart), y + u.m.s(6)), gb(ax.x(sh.newFinish + 1), y + RH - u.m.s(6));
+        dl->AddRectFilled(ga, ImVec2(std::max(gb.x, ga.x + 3.f), gb.y), withAlpha(gc, 0.22f), u.m.s(4));
+        dl->AddRect(ga, ImVec2(std::max(gb.x, ga.x + 3.f), gb.y), gc, u.m.s(4), 0, 1.5f);
+      }
+      // 元の位置からの動き
+      dl->AddLine(ImVec2(ax.x(sh.oldStart), cy), ImVec2(ax.x(sh.newStart), cy), withAlpha(gc, 0.8f), 1.5f);
+    }
+  };
+  // ゴムひも（p0 から p1 まで。fromRight = p0 が先行側の右端から右へ出る。そうでなければ左へ出る）
+  const auto drawRubber = [&](ImVec2 p0, ImVec2 p1, bool fromRight, ImU32 lineCol) {
+    const float dir = fromRight ? 1.f : -1.f;
+    const float dx = std::max(u.m.s(40), std::abs(p1.x - p0.x) * 0.5f);
+    const ImVec2 c1(p0.x + dir * dx, p0.y), c2(p1.x - dir * dx, p1.y);
+    dl->AddBezierCubic(p0, c1, c2, p1, withAlpha(lineCol, 0.25f), u.m.s(6));  // 太い薄い線 + 本線
+    dl->AddBezierCubic(p0, c1, c2, p1, lineCol, u.m.s(2.2f));
+    if (fromRight) {
+      dl->AddTriangleFilled(p1, ImVec2(p1.x - u.m.s(8), p1.y - u.m.s(5)), ImVec2(p1.x - u.m.s(8), p1.y + u.m.s(5)), lineCol);
+    } else {
+      dl->AddCircleFilled(p1, u.m.s(4), lineCol);
+    }
+  };
   if (u.linkDrag.active && (T.find(u.linkDrag.id) < 0 || c.currentId() != u.linkDrag.project)) u.linkDrag = {};
   if (u.linkDrag.active) {
     // つかんでいるバーの課題 si と、マウスの下の行の課題 tgt（同じ課題なら「元の場所」で、相手なし）
@@ -722,38 +973,15 @@ void drawGanttView(Frame& f, ImVec2 size) {
     const bool bad = tgt >= 0 && !ok;
     const ImU32 lineCol = bad ? u.t->late : ok ? u.t->accent : u.t->muted;
 
-    // つなぐ相手の行とバーを強調（つなげないときは赤）
+    // つなぐ相手の行とバーを強調（つなげないときは赤）、日程への影響のプレビュー、ゴムひも
     dl->PushClipRect(tlMin, tlMax, true);
     Span tsp;
     if (tgtRow >= 0) {
       tsp = spanOf(tgtRow);
-      const float y = rowY(tgtRow);
-      dl->AddRectFilled(ImVec2(tlMin.x, y), ImVec2(tlMax.x, y + RH), withAlpha(lineCol, 0.10f));
-      const float pad = u.m.s(3);
-      dl->AddRectFilled(ImVec2(tsp.xl - pad, y + u.m.s(4)), ImVec2(tsp.xr + pad, y + RH - u.m.s(4)), withAlpha(lineCol, 0.18f), u.m.s(5));
-      dl->AddRect(ImVec2(tsp.xl - pad, y + u.m.s(4)), ImVec2(tsp.xr + pad, y + RH - u.m.s(4)), lineCol, u.m.s(5), 0, 2.5f);
+      highlightTarget(tgtRow, lineCol);
     }
-    // 日程への影響のプレビュー（後続がずれる位置に薄いバー）
-    if (pv) {
-      for (const auto& sh : pv->shifts) {
-        const int rr = rowOf[static_cast<std::size_t>(sh.idx)];
-        if (rr < first || rr >= last) continue;
-        const float y = rowY(rr), cy = y + RH / 2;
-        const ImU32 gc = sh.newStart > sh.oldStart ? u.t->late : u.t->accent;
-        if (T.kind[static_cast<std::size_t>(sh.idx)] == Kind::Ms) {
-          diamond(dl, ImVec2(ax.x(sh.newFinish) + ax.px / 2, cy), u.m.s(6) * 1.2f, withAlpha(gc, 0.3f), gc);
-        } else {
-          const ImVec2 ga(ax.x(sh.newStart), y + u.m.s(6)), gb(ax.x(sh.newFinish + 1), y + RH - u.m.s(6));
-          dl->AddRectFilled(ga, ImVec2(std::max(gb.x, ga.x + 3.f), gb.y), withAlpha(gc, 0.22f), u.m.s(4));
-          dl->AddRect(ga, ImVec2(std::max(gb.x, ga.x + 3.f), gb.y), gc, u.m.s(4), 0, 1.5f);
-        }
-        // 元の位置からの動き
-        dl->AddLine(ImVec2(ax.x(sh.oldStart), cy), ImVec2(ax.x(sh.newStart), cy), withAlpha(gc, 0.8f), 1.5f);
-      }
-    }
+    drawGhosts(pv);
     dl->PopClipRect();
-
-    // ゴムひも（つかんだハンドルから、カーソルか、吸着した相手の端まで）
     {
       dl->PushClipRect(ImVec2(wp.x, bodyTop), ImVec2(wp.x + viewW, wp.y + viewH), true);
       const int srow = rowOf[static_cast<std::size_t>(si)];
@@ -762,18 +990,9 @@ void drawGanttView(Frame& f, ImVec2 size) {
         p0 = handleCenter(spanOf(srow), fromRight);
         drawHandle(p0, true, !bad);
       }
-      const float dir = fromRight ? 1.f : -1.f;
       ImVec2 p1 = mp;
       if (tgtRow >= 0) p1 = ImVec2(fromRight ? tsp.xl - u.m.s(2) : tsp.xr + u.m.s(2), tsp.cy);  // 吸着: 相手の端にぴたっと付く
-      const float dx = std::max(u.m.s(40), std::abs(p1.x - p0.x) * 0.5f);
-      const ImVec2 c1(p0.x + dir * dx, p0.y), c2(p1.x - dir * dx, p1.y);
-      dl->AddBezierCubic(p0, c1, c2, p1, withAlpha(lineCol, 0.25f), u.m.s(6));  // 太い薄い線 + 本線
-      dl->AddBezierCubic(p0, c1, c2, p1, lineCol, u.m.s(2.2f));
-      if (fromRight) {
-        dl->AddTriangleFilled(p1, ImVec2(p1.x - u.m.s(8), p1.y - u.m.s(5)), ImVec2(p1.x - u.m.s(8), p1.y + u.m.s(5)), lineCol);
-      } else {
-        dl->AddCircleFilled(p1, u.m.s(4), lineCol);
-      }
+      drawRubber(p0, p1, fromRight, lineCol);
       dl->PopClipRect();
     }
 
@@ -831,6 +1050,169 @@ void drawGanttView(Frame& f, ImVec2 size) {
     }
   }
 
+  // ---- 依存の矢印をつかんで付け替え・削除するドラッグ ----
+  if (u.arrowDrag.pending || u.arrowDrag.active) {
+    if (T.find(u.arrowDrag.from) < 0 || T.find(u.arrowDrag.to) < 0 || c.currentId() != u.arrowDrag.project) u.arrowDrag = {};
+  }
+  if (u.arrowDrag.pending) {
+    const ImVec2 mp = ImGui::GetMousePos();
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      u.arrowDrag = {};  // 動かさずに離した（クリック）。何もしない
+    } else if (u.arrowDrag.editable && std::hypot(mp.x - u.arrowDrag.start.x, mp.y - u.arrowDrag.start.y) >= u.m.s(4.f)) {
+      u.arrowDrag.pending = false;
+      u.arrowDrag.active = true;
+    }
+  }
+  if (u.arrowDrag.active) {
+    const int fi = T.find(u.arrowDrag.from), ti = T.find(u.arrowDrag.to);
+    const bool head = u.arrowDrag.grabHead;  // true = 後続の端をつかんで動かす（先行 fi は動かさない）
+    const int fixedIdx = head ? fi : ti, origIdx = head ? ti : fi;
+    const ImVec2 mp = ImGui::GetMousePos();
+    const bool inTimeline = mp.x >= tlMin.x && mp.x < tlMax.x && mp.y >= bodyTop && mp.y < tlMax.y;
+    // マウスの下のバー（バーの上だけ。空いている場所は「外す」になる）
+    int tgtRow = -1;
+    if (inTimeline) {
+      const float pad = u.m.s(4);
+      for (int i = first; i < last && tgtRow < 0; ++i) {
+        const Span sp = spanOf(i);
+        const float y = rowY(i);
+        if (mp.x >= sp.xl - pad && mp.x <= sp.xr + pad && mp.y >= y + u.m.s(4) && mp.y <= y + RH - u.m.s(4)) tgtRow = i;
+      }
+    }
+    const int tgt = tgtRow >= 0 ? rows[static_cast<std::size_t>(tgtRow)].id : -1;
+    enum class Act { Cancel, Keep, Relink, Remove, Bad } act = Act::Cancel;
+    LinkBlock blk = LinkBlock::None;
+    const LinkPreview* pv = nullptr;
+    int newPred = fi, newSucc = ti;
+    if (tgt >= 0 && tgt == origIdx) {
+      act = Act::Keep;  // 元の相手の上: そのまま
+    } else if (tgt >= 0) {
+      newPred = head ? fi : tgt;
+      newSucc = head ? tgt : ti;
+      const std::string key = T.ids[newPred] + "\n" + T.ids[newSucc];
+      if (u.arrowDrag.previewKey != key || u.arrowDrag.previewVer != s->version()) {
+        u.arrowDrag.preview = s->previewLink(T.ids[newPred], T.ids[newSucc], u.arrowDrag.from, u.arrowDrag.to);
+        u.arrowDrag.previewKey = key;
+        u.arrowDrag.previewVer = s->version();
+      }
+      blk = u.arrowDrag.preview.block;
+      if (blk == LinkBlock::None && u.arrowDrag.preview.ok) {
+        act = Act::Relink;
+        pv = &u.arrowDrag.preview;
+      } else {
+        act = Act::Bad;
+      }
+    } else if (inTimeline) {
+      act = Act::Remove;  // バーのない場所
+    }
+    const ImU32 lineCol = act == Act::Bad ? u.t->late : act == Act::Remove ? u.t->tightEdge : act == Act::Cancel ? u.t->muted : u.t->accent;
+
+    dl->PushClipRect(tlMin, tlMax, true);
+    if (tgtRow >= 0) highlightTarget(tgtRow, lineCol);
+    drawGhosts(pv);
+    dl->PopClipRect();
+    {
+      dl->PushClipRect(ImVec2(wp.x, bodyTop), ImVec2(wp.x + viewW, wp.y + viewH), true);
+      const int frow = rowOf[static_cast<std::size_t>(fixedIdx)];
+      ImVec2 p0 = u.arrowDrag.start;
+      if (frow >= 0) {
+        const Span fsp = spanOf(frow);
+        p0 = ImVec2(head ? fsp.xr : fsp.xl, fsp.cy);  // 動かさない端（先行の右端 / 後続の左端）
+        dl->AddCircleFilled(p0, u.m.s(4), lineCol);
+      }
+      ImVec2 p1 = mp;
+      if (tgtRow >= 0) {
+        const Span tsp = spanOf(tgtRow);
+        p1 = ImVec2(head ? tsp.xl - u.m.s(2) : tsp.xr + u.m.s(2), tsp.cy);
+      }
+      drawRubber(p0, p1, head, lineCol);
+      if (act == Act::Remove) {  // 外す印
+        const float r = u.m.s(5);
+        dl->AddLine(ImVec2(mp.x - r, mp.y - r), ImVec2(mp.x + r, mp.y + r), lineCol, 2.5f);
+        dl->AddLine(ImVec2(mp.x - r, mp.y + r), ImVec2(mp.x + r, mp.y - r), lineCol, 2.5f);
+      }
+      dl->PopClipRect();
+    }
+
+    // 説明（カーソルの近く）
+    {
+      const std::string oa = T.did[static_cast<std::size_t>(fi)] + " → " + T.did[static_cast<std::size_t>(ti)];
+      ImGui::BeginTooltip();
+      switch (act) {
+        case Act::Cancel:
+          ImGui::TextUnformatted("つなぎ替える相手のバーへ（ここで離すと取り消し）");
+          ImGui::TextDisabled("%s", oa.c_str());
+          break;
+        case Act::Keep:
+          ImGui::TextUnformatted((oa + " のまま").c_str());
+          ImGui::TextDisabled("離すと変更しません");
+          break;
+        case Act::Remove:
+          ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->tightEdge));
+          ImGui::TextUnformatted((oa + " を外します").c_str());
+          ImGui::PopStyleColor();
+          ImGui::TextDisabled("離すと外します（Esc で取り消し）");
+          break;
+        case Act::Bad:
+          ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
+          ImGui::TextUnformatted((T.did[static_cast<std::size_t>(newPred)] + " → " + T.did[static_cast<std::size_t>(newSucc)] + " はつなげません").c_str());
+          ImGui::TextUnformatted(linkBlockReason(blk));
+          ImGui::PopStyleColor();
+          break;
+        case Act::Relink:
+          ImGui::TextUnformatted((oa + " を " + T.did[static_cast<std::size_t>(newPred)] + " → " + T.did[static_cast<std::size_t>(newSucc)] + " に付け替える").c_str());
+          if (pv && pv->delayDays > 0) {
+            ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
+            std::string t = T.did[static_cast<std::size_t>(newSucc)] + " が " + std::to_string(pv->delayDays) + "営業日 遅れます";
+            if (pv->shifts.size() > 1) t += "（影響 " + std::to_string(pv->shifts.size()) + "件）";
+            ImGui::TextUnformatted(t.c_str());
+            ImGui::PopStyleColor();
+          } else if (pv && !pv->shifts.empty()) {
+            ImGui::TextDisabled("%s", ("日程が変わる課題 " + std::to_string(pv->shifts.size()) + "件").c_str());
+          } else {
+            ImGui::TextDisabled("日程は変わりません");
+          }
+          ImGui::TextDisabled("離すと付け替えます（Esc で取り消し）");
+          break;
+      }
+      ImGui::EndTooltip();
+    }
+    ImGui::SetMouseCursor(act == Act::Bad ? ImGuiMouseCursor_NotAllowed : ImGuiMouseCursor_Hand);
+
+    // 離したら確定。課題を変えるのは描画が終わってから（Undo 1回）
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      const std::string proj = u.arrowDrag.project, from = u.arrowDrag.from, to = u.arrowDrag.to;
+      const std::string oa = T.did[static_cast<std::size_t>(fi)] + " → " + T.did[static_cast<std::size_t>(ti)];
+      std::string nf, nt, msg;
+      if (act == Act::Relink) {
+        nf = T.ids[static_cast<std::size_t>(newPred)];
+        nt = T.ids[static_cast<std::size_t>(newSucc)];
+        msg = oa + " を " + T.did[static_cast<std::size_t>(newPred)] + " → " + T.did[static_cast<std::size_t>(newSucc)] + " に付け替えました";
+      }
+      u.arrowDrag = {};
+      if (act == Act::Relink) {
+        deferAfterFrame(f, [&f, proj, from, to, nf, nt, msg] {
+          Session* ss = f.c.session();
+          if (!ss || f.c.currentId() != proj) return;
+          const bool ok = ss->relinkIssue(from, to, nf, nt);
+          f.c.afterEdit();
+          if (ok) f.c.toast(msg, NoticeAction::Undo);
+        });
+      } else if (act == Act::Remove) {
+        const std::string rmsg = oa + " を外しました";
+        deferAfterFrame(f, [&f, proj, from, to, rmsg] {
+          Session* ss = f.c.session();
+          if (!ss || f.c.currentId() != proj) return;
+          const bool ok = ss->removeLink(from, to);
+          f.c.afterEdit();
+          if (ok) f.c.toast(rmsg, NoticeAction::Undo);
+        });
+      } else if (act == Act::Bad) {
+        f.c.toast(std::string("つなぎ替えできません: ") + linkBlockReason(blk));
+      }
+    }
+  }
+
   // 空の表示
   if (rows.empty()) {
     if (I.empty()) {
@@ -849,7 +1231,24 @@ void drawGanttView(Frame& f, ImVec2 size) {
       ImGui::TextDisabled("%s", S::kNoMatch);
     }
   }
-  if (!hoverTipId.empty() && !u.barDrag.active && !u.linkDrag.active && T.find(hoverTipId) >= 0) showTip(tipLines(*s, T.find(hoverTipId)));
+  if (hoverArrow >= 0 && !u.arrowDrag.pending && !u.arrowDrag.active && !u.barDrag.active && !u.linkDrag.active) {
+    // 矢印にマウスを載せた: 「A → B」と、日付の衝突・クリティカル・つなぎ替えのしかた
+    const Arrow& ar = arrows[static_cast<std::size_t>(hoverArrow)];
+    ImGui::BeginTooltip();
+    ImGui::TextUnformatted((T.did[static_cast<std::size_t>(rows[ar.a].id)] + " → " + T.did[static_cast<std::size_t>(rows[ar.b].id)]).c_str());
+    if (ar.conflict) {
+      ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
+      ImGui::TextUnformatted("日付が合いません（後続が先行より前に始まります）");
+      ImGui::PopStyleColor();
+    }
+    if (ar.critical) ImGui::TextDisabled("クリティカルな連鎖（余裕 0 以下）");
+    if (hoverEditable) ImGui::TextDisabled("端をドラッグでつなぎ替え・バーのない所へ離すと外します");
+    else ImGui::TextDisabled("親や折りたたみをまたぐ依存です。詳細パネルの依存関係で編集できます");
+    ImGui::EndTooltip();
+    if (hoverEditable) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+  } else if (!hoverTipId.empty() && !u.barDrag.active && !u.linkDrag.active && !u.arrowDrag.active && T.find(hoverTipId) >= 0) {
+    showTip(tipLines(*s, T.find(hoverTipId)));
+  }
   ImGui::EndChild();
 }
 

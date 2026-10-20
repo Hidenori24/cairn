@@ -124,6 +124,29 @@ struct UiState {
     std::uint64_t previewVer = 0;
     LinkPreview preview;
   } linkDrag;
+  // 依存の矢印をつかんで付け替え・削除するドラッグ（矢印の上で押して動かす。Esc・元の場所で離す・タイムライン外で離すと取り消し）
+  struct ArrowDrag {
+    bool pending = false;     // 矢印の上で押した（まだ動いていない。付け替えできない矢印のときはそのまま）
+    bool editable = false;    // つかんで付け替え・削除できる矢印か
+    bool active = false;
+    std::string from, to;     // つかんだ矢印の元のつなぎ（先行 → 後続の課題 id）
+    bool grabHead = true;     // true = 矢じり側（後続）の端をつかんだ。false = 根元（先行）の端
+    std::string project;
+    ImVec2 start{0, 0};
+    // つなぎ替えの日程の影響（相手が変わったときだけ計算し直す）
+    std::string previewKey;
+    std::uint64_t previewVer = 0;
+    LinkPreview preview;
+  } arrowDrag;
+  // 前のフレームのガントの依存の矢印（画面の座標の折れ線）と、マウスの下の矢印。煙テストが当たり位置を知るために使う
+  struct ArrowGeom {
+    std::string from, to;     // 矢印の両端の行の課題 id
+    std::vector<ImVec2> pts;
+    bool conflict = false;    // 後続が先行より前の日付
+    bool critical = false;    // 余裕 0 以下の連鎖
+  };
+  std::vector<ArrowGeom> arrowGeom;
+  std::string arrowHoverFrom, arrowHoverTo;
   // 前のフレームのガントのバーの位置（画面の座標。見えている行だけ）。煙テストが当たり位置を知るために使う
   struct BarGeom {
     std::string id;
