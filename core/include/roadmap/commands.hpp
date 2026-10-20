@@ -63,6 +63,9 @@ class Session {
   // 通知（UI が取り出して表示する）
   std::vector<Notice> takeNotices();
   void notify(std::string text, NoticeAction a = NoticeAction::None);
+  // 追加するときの値の引き継ぎ（設定。取り消しの対象外で、保存もしない）
+  void setInherit(const InheritSpec& s) { inherit_ = s; }
+  const InheritSpec& inherit() const { return inherit_; }
 
   // ---- 計算と取り消し ----
   // 再計算する。エラーなら文字列を返す
@@ -145,6 +148,9 @@ class Session {
   void restore(Snapshot s);
   void persist() { ++version_; }
   Issue newIssue(const std::string& parentId, const std::string& name) const;
+  // 引き継ぎを反映する。引き継いだ項目名（「担当者」など）と元（親 / 直前の兄弟）を返す
+  std::vector<std::string> applyInherit(Issue& o, const std::string& parentId, const std::string& afterId,
+                                        bool& fromSibling) const;
   std::string todayMinBase() const;
   Day todayDay() const;
   std::string nowDT() const;
@@ -159,6 +165,7 @@ class Session {
   std::deque<Snapshot> undo_;
   std::vector<Snapshot> redo_;
   std::vector<Notice> notices_;
+  InheritSpec inherit_;
   std::uint64_t version_ = 0;
   int batchDepth_ = 0;
   std::optional<Snapshot> batchSnap_;

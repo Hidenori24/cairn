@@ -1,10 +1,12 @@
 // ダイアログ（SPEC 10.11）
 #include <algorithm>
+#include <cfloat>
 #include <set>
 
 #include <imgui.h>
 #include <imgui_stdlib.h>
 
+#include "roadmap/issue_name.hpp"
 #include "roadmap/project_io.hpp"
 #include "roadmap/text.hpp"
 #include "ui/internal.hpp"
@@ -445,6 +447,62 @@ void dlgAppSettings(Frame& f) {
   if (ImGui::Checkbox("課題を削除する前に確かめる", &pr.confirmDelete)) c.savePrefs();
   ImGui::SameLine();
   ImGui::TextDisabled("（確かめなくても、通知の「元に戻す」か Ctrl+Z で戻せます）");
+  {
+    // 新しい課題の名前（追加した行の入力欄に最初から入る名前。入力欄は全選択なので、使わないときはそのまま打てば上書きできる）
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("新しい課題の名前");
+    using NM = std::pair<const char*, const char*>;
+    for (const auto& [k, l] : {NM{"keep", "今のまま"}, NM{"parentSeq", "親の名前＋連番"}, NM{"parentDefault", "親の名前／既定名"},
+                               NM{"custom", "自由入力"}}) {
+      ImGui::SameLine();
+      if (ImGui::RadioButton(l, pr.newNameFormat == k)) {
+        pr.newNameFormat = k;
+        c.savePrefs();
+      }
+    }
+    if (pr.newNameFormat == "custom") {
+      ImGui::SetNextItemWidth(-FLT_MIN);
+      ImGui::InputTextWithHint("##newname", "例: {親}の子 {n}", &pr.newNameCustom);
+      if (ImGui::IsItemDeactivatedAfterEdit()) {
+        pr.newNameCustom = clampNewNameCustom(pr.newNameCustom);
+        c.savePrefs();
+      }
+      ImGui::PushTextWrapPos(0);
+      ImGui::TextDisabled("{親} 親の名前　{親ID} 親の表示ID　{n} 連番（兄弟の名前と重ならない）　{日付} 今日の日付");
+      ImGui::PopTextWrapPos();
+    }
+    if (pr.newNameFormat != "keep" && c.session()) {
+      // 見本: 今選んでいる課題の下に作ると
+      const Session* s = c.session();
+      const std::string par = !c.cursor().empty() && s->issue(c.cursor()) ? c.cursor() : std::string();
+      const std::string nm = c.newIssueName(par);
+      ImGui::TextDisabled("%s", par.empty() ? "見本（最上位に作ると）:" : "見本（選んでいる課題の下に作ると）:");
+      ImGui::SameLine();
+      ImGui::TextUnformatted(nm.empty() ? kDefaultIssueName : nm.c_str());
+    }
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextDisabled("最上位に作るときは親がないので、連番だけ（新しい課題 n）か既定名になります。名前を空にして確定すると、最初に入っていた名前のままにします");
+    ImGui::PopTextWrapPos();
+  }
+  if (ImGui::Checkbox("課題を追加したとき、親や直前の兄弟の値を引き継ぐ", &pr.inherit.on)) c.savePrefs();
+  ImGui::TextDisabled("「子を追加」は親から、「同じ階層に追加」は直前の兄弟から引き継ぎます。追加直後の通知から元に戻せます");
+  ImGui::BeginDisabled(!pr.inherit.on);
+  ImGui::Indent();
+  if (ImGui::Checkbox("担当者", &pr.inherit.assignee)) c.savePrefs();
+  ImGui::SameLine();
+  if (ImGui::Checkbox("優先度", &pr.inherit.prio)) c.savePrefs();
+  ImGui::SameLine();
+  if (ImGui::Checkbox("ラベル", &pr.inherit.labels)) c.savePrefs();
+  ImGui::SameLine();
+  if (ImGui::Checkbox("期限", &pr.inherit.deadline)) c.savePrefs();
+  ImGui::SameLine();
+  if (ImGui::Checkbox("種別（兄弟から）", &pr.inherit.type)) c.savePrefs();
+  ImGui::SameLine();
+  if (ImGui::Checkbox("期間（兄弟から）", &pr.inherit.duration)) c.savePrefs();
+  ImGui::TextDisabled("種別は、オフでも階層で決まります（Epic の子は Task、それ以外は Sub-task）");
+  ImGui::TextWrapped("注意: 担当者を引き継ぐと、同じ人に作業が集まります。同時に進める作業の制限（担当者ごと）や日程が変わるので、追加したあとに担当者を確かめてください");
+  ImGui::Unindent();
+  ImGui::EndDisabled();
 
   // ---- その他 ----
   ImGui::SeparatorText("その他");

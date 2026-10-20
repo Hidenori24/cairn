@@ -285,6 +285,34 @@ TEST_CASE("controller: 開いたら基準日を今日に合わせる（アプリ
   CHECK(c2.session()->settings().baseDate == "2026-10-19");
 }
 
+TEST_CASE("controller: 引き継ぎの設定は開いているプロジェクトへ渡り、追加直後の通知から Undo で戻せる") {
+  Env e;
+  e.c.start();
+  e.c.createProject(SampleKind::Empty, "P", "");
+  const auto a = e.c.session()->addIssue("", "", "親");
+  e.c.session()->setField(a, [](Issue& o) { o.assignee = "山田"; o.prio = "High"; });
+  e.c.afterEdit();
+  e.c.select(a);
+  // オフなら今までどおり
+  const auto c0 = e.c.addChild();
+  CHECK(e.c.session()->issue(c0)->assignee.empty());
+  e.c.prefs().inherit.on = true;
+  e.c.savePrefs();
+  e.c.select(a);
+  const auto c1 = e.c.addChild();
+  CHECK(e.c.session()->issue(c1)->assignee == "山田");
+  CHECK(e.c.session()->issue(c1)->prio == "High");
+  CHECK(e.c.toasts().back().text.find("親から引き継ぎました") == 0);
+  CHECK(e.c.toasts().back().action == NoticeAction::Undo);
+  e.c.undo();
+  CHECK_FALSE(e.c.session()->issue(c1));
+  // プロジェクトを開き直しても有効
+  e.c.openProject(e.c.currentId());
+  CHECK(e.c.session()->issue(a));
+  const auto c2 = e.c.session()->addIssue(a, "");
+  CHECK(e.c.session()->issue(c2)->assignee == "山田");
+}
+
 TEST_CASE("controller: 画面の拡大縮小（段階・上下限・100%に戻す・保存）") {
   Env e;
   e.c.start();
@@ -364,4 +392,48 @@ TEST_CASE("controller: 選択を順につなぐ・外す（表示順・重複な
   CHECK(s->issue(b)->blocks.empty());
   e.c.undo();
   CHECK(s->issue(c)->blocks == std::vector<std::string>{b});
+}
+
+TEST_CASE("controller: 新しい課題の名前（アプリの設定。既定は今のまま）") {
+  Env e;
+  e.c.start();
+  e.c.createProject(SampleKind::Empty, "P", "dev");
+  // 既定: 今のまま
+  CHECK(e.c.prefs().newNameFormat == "keep");
+  const auto a = e.c.createIssue("", "");
+  REQUIRE_FALSE(a.empty());
+  CHECK(e.c.session()->issue(a)->summary == "新しい課題");
+  const auto a2 = e.c.createIssue(a, "");
+  CHECK(e.c.session()->issue(a2)->summary == "新しい課題");
+
+  // 親の名前＋連番（追加を続けても、消したあとでも重ならない）
+  e.c.session()->setName(a, "要件定義");
+  e.c.afterEdit();
+  e.c.prefs().newNameFormat = "parentSeq";
+  const auto b1 = e.c.createIssue(a, "");
+  const auto b2 = e.c.createIssue(a, b1);
+  CHECK(e.c.session()->issue(b1)->summary == "要件定義の子 2");  // 先に「新しい課題」の子が1件ある
+  CHECK(e.c.session()->issue(b2)->summary == "要件定義の子 3");
+  e.c.session()->deleteIssues({a2});
+  e.c.afterEdit();
+  const auto b3 = e.c.createIssue(a, "");
+  CHECK(e.c.session()->issue(b3)->summary == "要件定義の子 4");
+
+  // 最上位は「新しい課題 n」
+  const auto t = e.c.createIssue("", "");
+  CHECK(e.c.session()->issue(t)->summary == "新しい課題 2");  // 最上位に「要件定義」が1件ある
+
+  // 自由入力: 親の表示ID・日付（時計から）
+  e.c.prefs().newNameFormat = "custom";
+  e.c.prefs().newNameCustom = "{親ID}/{n} {日付}";
+  const auto c1 = e.c.createIssue(a, "");
+  CHECK(e.c.session()->issue(c1)->summary == "DEV-" + a + "/4 2026-10-19");
+
+  // 追加（addSibling / addChild）も同じ名前になる
+  e.c.prefs().newNameFormat = "parentDefault";
+  e.c.select(b1);
+  const auto s1 = e.c.addSibling();
+  CHECK(e.c.session()->issue(s1)->summary == "要件定義／新しい課題");
+  const auto s2 = e.c.addChild();
+  CHECK(e.c.session()->issue(s2)->summary == "要件定義／新しい課題／新しい課題");  // s1 の子（addSibling が選択を移した）
 }

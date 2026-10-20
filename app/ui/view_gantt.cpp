@@ -620,8 +620,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
       ImGui::BeginGroup();
       ImGui::TextDisabled("%s", S::kEmptyProject);
       if (iconTextButton(u, "first", "plus", S::kFirstIssue, true)) {
-        const std::string nid = s->addIssue("", "");
-        c.afterEdit();
+        const std::string nid = c.createIssue("", "");
         if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
       }
       ImGui::SameLine();

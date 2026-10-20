@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -50,6 +51,16 @@ std::string replaceAll(std::string s, std::string_view from, std::string_view to
 std::string join(const std::vector<std::string>& v, std::string_view sep);
 // 区切り文字の集合のどれかで分割（空のトークンは捨てる）。sepCps は区切りに使うコードポイント
 std::vector<std::string> splitAny(std::string_view s, std::u32string_view sepCps, bool alsoJsSpace);
+
+// 祖先の名前の並び（根 → 直近の親）を、幅 maxW に収まるよう真ん中を省略して並べる。
+// 残す名前の添字を返し、省いた区間は -1（「…」）で表す。収まらなくても、直近の親は必ず残す。
+// measure は結合した文字列の幅を返す（UI は画面の幅、テストは文字数など）。画面に依存しない純粋な関数
+std::vector<int> ancestorPath(const std::vector<std::string>& names,
+                              const std::function<float(const std::string&)>& measure, float maxW,
+                              std::string_view sep = " › ");
+// ancestorPath の結果を文字列にする（-1 は「…」）
+std::string ancestorPathText(const std::vector<std::string>& names, const std::vector<int>& kept,
+                             std::string_view sep = " › ");
 
 // JS の Math.round（0.5 は +∞ 方向）
 double jsRound(double x);

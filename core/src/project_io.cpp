@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "roadmap/engine.hpp"
+#include "roadmap/issue_name.hpp"
 #include "roadmap/text.hpp"
 
 namespace roadmap {
@@ -275,9 +276,24 @@ Prefs prefsFromJson(const Json& j) {
   clampInt("dimPercent", 10, 80, p.dimPercent);
   if (j.contains("confirmDelete") && j["confirmDelete"].is_boolean()) p.confirmDelete = j["confirmDelete"].get<bool>();
   if (j.contains("autoBaseToday") && j["autoBaseToday"].is_boolean()) p.autoBaseToday = j["autoBaseToday"].get<bool>();
+  if (hasStr(j, "newNameFormat")) p.newNameFormat = newNameModeKey(newNameModeFromKey(j["newNameFormat"].get<std::string>()));
+  if (hasStr(j, "newNameCustom")) p.newNameCustom = clampNewNameCustom(j["newNameCustom"].get<std::string>());
+  if (j.contains("inherit") && j["inherit"].is_object()) {
+    const auto& h = j["inherit"];
+    const auto gb = [&](const char* k, bool& out) {
+      if (h.contains(k) && h[k].is_boolean()) out = h[k].get<bool>();
+    };
+    gb("on", p.inherit.on);
+    gb("assignee", p.inherit.assignee);
+    gb("prio", p.inherit.prio);
+    gb("labels", p.inherit.labels);
+    gb("deadline", p.inherit.deadline);
+    gb("type", p.inherit.type);
+    gb("duration", p.inherit.duration);
+  }
   static const char* const known[] = {"theme",   "density", "me",         "currentProject", "templates",    "window",
                                       "hintDismissed", "dataDir", "uiScale", "dimPercent", "confirmDelete",
-                                      "autoBaseToday"};
+                                      "autoBaseToday", "newNameFormat", "newNameCustom", "inherit"};
   for (auto it = j.begin(); it != j.end(); ++it) {
     const std::string& k = it.key();
     if (std::find(std::begin(known), std::end(known), k) == std::end(known)) p.unknown[k] = it.value();
@@ -299,6 +315,11 @@ Json prefsToJson(const Prefs& p) {
   j["dimPercent"] = p.dimPercent;
   j["confirmDelete"] = p.confirmDelete;
   j["autoBaseToday"] = p.autoBaseToday;
+  j["newNameFormat"] = p.newNameFormat;
+  j["newNameCustom"] = p.newNameCustom;
+  j["inherit"] = Json{{"on", p.inherit.on},         {"assignee", p.inherit.assignee}, {"prio", p.inherit.prio},
+                      {"labels", p.inherit.labels}, {"deadline", p.inherit.deadline}, {"type", p.inherit.type},
+                      {"duration", p.inherit.duration}};
   if (p.unknown.is_object())
     for (auto it = p.unknown.begin(); it != p.unknown.end(); ++it) j[it.key()] = it.value();
   return j;
