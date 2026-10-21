@@ -452,7 +452,7 @@ int main(int argc, char** argv) {
           frames(2);
           io4.AddMousePosEvent(cx, cy);
           shot("28_link_" + nm + "_drag_ok_" + tag);
-          io4.AddMousePosEvent(isList ? 700 : 1100, 840);  // 相手のいない場所
+          io4.AddMousePosEvent(isList ? 700.f : 1100.f, 840.f);  // 相手のいない場所
           shot("28b_link_" + nm + "_drag_free_" + tag);
           key(ImGuiKey_Escape);
           io4.AddMouseButtonEvent(0, false);
