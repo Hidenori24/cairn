@@ -272,6 +272,73 @@ bool AppController::attachData(const std::string& issueId, const std::string& na
   return true;
 }
 
+bool AppController::attachClipboardImage(const std::string& issueId, const std::string& bmp) {
+  if (!canAttach()) {
+    toast(attachDisabledReason());
+    return false;
+  }
+  if (!session_->issue(issueId)) {
+    toast("添付する課題がありません");
+    return false;
+  }
+  // BMP のファイルとして最低限の形（"BM" + ヘッダ）。プラットフォームが作った値だが、壊れたものは付けない
+  if (bmp.size() < 26 || bmp.compare(0, 2, "BM") != 0) {
+    toast("クリップボードの画像を読めませんでした");
+    return false;
+  }
+  return attachData(issueId, "貼り付け-" + clock_.stamp() + ".bmp", bmp);
+}
+
+bool AppController::moveAttachment(const std::string& fromIssue, std::size_t index, const std::string& toIssue) {
+  if (!canAttach()) {
+    toast(attachDisabledReason());
+    return false;
+  }
+  if (!session_->issue(toIssue)) {
+    toast("移す先の課題がありません");
+    return false;
+  }
+  auto r = roadmap::moveAttachment(fs_, currentProjectDir(), session_->attachments(), fromIssue, index, toIssue);
+  if (!r) {
+    toast("添付を移せませんでした（" + r.error() + "）");
+    return false;
+  }
+  session_->touchAttachments();
+  flushNow();
+  toast("添付を別の課題へ移しました");
+  return true;
+}
+
+bool AppController::copyAttachment(const std::string& fromIssue, std::size_t index, const std::string& toIssue) {
+  if (!canAttach()) {
+    toast(attachDisabledReason());
+    return false;
+  }
+  if (!session_->issue(toIssue)) {
+    toast("コピー先の課題がありません");
+    return false;
+  }
+  auto r = roadmap::copyAttachment(fs_, clock_, currentProjectDir(), session_->attachments(), fromIssue, index, toIssue, prefs_.me);
+  if (!r) {
+    toast("添付をコピーできませんでした（" + r.error() + "）");
+    return false;
+  }
+  session_->touchAttachments();
+  flushNow();
+  toast("添付を別の課題へコピーしました");
+  return true;
+}
+
+bool AppController::reorderAttachment(const std::string& issueId, std::size_t from, std::size_t to) {
+  if (!session_) return false;
+  auto s = roadmap::reorderAttachment(session_->attachments(), issueId, from, to);
+  if (!s) return false;
+  if (from == to) return true;
+  session_->touchAttachments();
+  flushNow();
+  return true;
+}
+
 bool AppController::removeAttachment(const std::string& issueId, std::size_t index) {
   if (!session_) return false;
   auto s = roadmap::removeAttachment(fs_, currentProjectDir(), session_->attachments(), issueId, index);
@@ -746,7 +813,11 @@ std::string AppController::uiStr(const char* key, const std::string& def) const 
 int AppController::uiInt(const char* key, int def) const {
   if (!session_) return def;
   const Json& ui = session_->settings().ui;
-  if (ui.contains(key) && ui[key].is_number()) return static_cast<int>(ui[key].get<double>());
+  if (ui.contains(key) && ui[key].is_number()) {
+    const double d = ui[key].get<double>();
+    if (!(d >= -2147483648.0 && d <= 2147483647.0)) return def;  // 範囲外・NaN は int にキャストしない（未定義動作）
+    return static_cast<int>(d);
+  }
   return def;
 }
 bool AppController::uiBool(const char* key, const char* sub, bool def) const {

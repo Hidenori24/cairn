@@ -1227,6 +1227,12 @@ void handleKeys(Frame& f) {
   const bool modal = u.dlg != Dlg::None || u.paletteOpen || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
   if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !io.WantTextInput) {
     if (modal) return;  // ダイアログ・パレット・メニューはそれぞれで閉じる
+    if (u.attachDragEscFrame == ImGui::GetFrameCount()) return;  // 添付のドラッグを取り消した Esc（選択などは変えない）
+    if (u.attachDrag.active) {  // 添付のサムネイルのドラッグを取り消し
+      u.attachDrag = {};
+      u.attachDragCancelled = true;  // ボタンを離すまで、同じつかみ方から始め直さない
+      return;
+    }
     if (u.linkDrag.active) {  // バーの端からのドラッグ（依存をつなぐ）を取り消し
       u.linkDrag = {};
       return;
@@ -1254,9 +1260,9 @@ void handleKeys(Frame& f) {
     c.redo();
     return;
   }
-  // 入力欄の外の Ctrl+V: クリップボードの複数行を、選んだ課題の子としてまとめて作る
+  // 入力欄の外の Ctrl+V: クリップボードの複数行を、選んだ課題の子としてまとめて作る（テキストがなく画像があれば、その画像を添付）
   if (s && io.KeyCtrl && !io.KeyShift && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_V, false)) {
-    startPasteChildren(f);
+    pasteFromClipboard(f);
     return;
   }
   if (io.KeyCtrl || !s) return;
@@ -1381,6 +1387,7 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
     u.imageProject = c.currentId();
   }
   processDrop(f);  // エクスプローラーからのドロップ（前のフレームに描いたドロップ先と照らす）
+  processAttachDrag(f);  // 添付のサムネイルのドラッグ（離した位置を、同じく前のフレームのドロップ先と照らす）
   const ImGuiViewport* vp = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(vp->WorkPos);
   ImGui::SetNextWindowSize(vp->WorkSize);
@@ -1446,6 +1453,7 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
     ImGui::End();
   }
   drawToasts(f);
+  drawAttachDrag(f);  // ドラッグ中の添付をカーソルに付ける（いちばん手前）
   handleZoom(f);
   drawZoomHint(f);
   handleKeys(f);

@@ -15,6 +15,7 @@
 #include <imgui_internal.h>
 
 #include "app_controller.hpp"
+#include "roadmap/attachments.hpp"
 #include "roadmap/gen.hpp"
 #include "roadmap/link_candidates.hpp"
 #include "roadmap/schedule.hpp"
@@ -61,6 +62,15 @@ struct NullPlatform : ui::IPlatform {
   void releaseTexture(ImTextureID t) override {
     if (t) ++released;
   }
+  // 「ファイルを選んで追加」のダイアログの代わり（pickedFiles を返す。聞かれた回数は pickAsked）
+  std::vector<std::string> pickedFiles;
+  int pickAsked = 0;
+  std::vector<std::string> pickOpenFiles(const std::string&) override {
+    ++pickAsked;
+    return pickedFiles;
+  }
+  std::optional<std::string> clipImage;  // クリップボードの画像（BMP ファイルのバイト列）の代わり
+  std::optional<std::string> clipboardImage() override { return clipImage; }
   std::vector<std::string> opened;  // openFile で開いたパス
   void openFile(const std::string& path) override { opened.push_back(path); }
   std::map<std::string, std::string> texts;  // ドロップされた CSV の中身（パス → 本文）
@@ -1608,6 +1618,298 @@ int main() {
     h.c.deleteCurrentProject();
     h.frame(2);
     h.u.detailOpen = false;
+    h.frame(2);
+  }
+  // 添付のサムネイルのドラッグ: 別の課題へ移動・Ctrl でコピー・同じ課題の中で並べ替え・何もないところでは何もしない
+  {
+    const std::string png(reinterpret_cast<const char*>(kPng3x2), sizeof kPng3x2);
+    h.c.createProject(app::SampleKind::Hierarchy, "ドラッグの確認", "DRG");
+    h.c.setView(app::View::List);
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.frame(3);
+    check(h.u.dropTargets.size() >= 2, "行がドロップ先になる");
+    const std::string src = h.u.dropTargets[0].id, dst = h.u.dropTargets[1].id;
+    check(src != dst, "ドラッグの確認用に2つの課題がある");
+    h.fs.put("ext/一枚目.png", png);
+    h.fs.put("ext/二枚目.png", png);
+    h.fs.put("ext/三枚目.txt", "memo");
+    h.c.attachFiles(src, {"ext/一枚目.png", "ext/二枚目.png", "ext/三枚目.txt"});
+    h.c.select(src);
+    h.u.detailOpen = true;
+    h.u.detailTab = 3;
+    h.frame(8);
+    check(h.u.attachRows.size() == 3, "添付タブの行の範囲が分かる");
+    ImGuiIO& io = ImGui::GetIO();
+    const auto rowMid = [&](std::size_t k) {
+      const auto& r = h.u.attachRows[k];
+      return ImVec2(r.first.x + 100, (r.first.y + r.second.y) / 2);
+    };
+    const auto targetMid = [&](const std::string& id) {
+      for (const auto& t : h.u.dropTargets)
+        if (t.id == id) return ImVec2((t.a.x + t.b.x) / 2, (t.a.y + t.b.y) / 2);
+      return ImVec2(-1, -1);
+    };
+    // 押す → 動かす → 離す。途中の状態を返す
+    const auto dragTo = [&](ImVec2 from, ImVec2 to, bool ctrl, bool release = true) {
+      io.AddMousePosEvent(from.x, from.y);
+      h.frame();
+      io.AddMouseButtonEvent(0, true);
+      h.frame();
+      io.AddMousePosEvent(from.x + 12, from.y + 2);
+      h.frame();
+      io.AddMousePosEvent(to.x, to.y);
+      h.frame(2);
+      if (ctrl) io.AddKeyEvent(ImGuiMod_Ctrl, true);
+      h.frame();
+      if (release) {
+        io.AddMouseButtonEvent(0, false);
+        h.frame(2);
+        io.AddKeyEvent(ImGuiMod_Ctrl, false);
+        h.frame();
+      }
+    };
+    // 移動: 1つ目 → dst の行
+    dragTo(rowMid(0), targetMid(dst), false);
+    check(!h.u.attachDrag.active, "離したらドラッグは終わる");
+    check(h.c.attachmentCount(src) == 2 && h.c.attachmentCount(dst) == 1, "サムネイルを別の課題の行へ離すと移動する");
+    check(h.c.attachmentsOf(dst).size() == 1 && h.c.attachmentsOf(dst)[0].name == "一枚目.png", "移した添付の名前");
+    check(h.u.dlg == ui::Dlg::None, "つかんで動かしたときはプレビューを開かない");
+    check(h.fs.exists("data/ドラッグの確認/添付/" + dst + "/一枚目.png"), "本体も移る");
+    // コピー: Ctrl を押しながら
+    h.frame(3);
+    dragTo(rowMid(0), targetMid(dst), true);
+    check(h.c.attachmentCount(src) == 2 && h.c.attachmentCount(dst) == 2, "Ctrl を押して離すとコピーする（元は残る）");
+    // 何もないところ（上のバー）へ離しても何も起きない。CSV の取り込みも開かない
+    h.frame(3);
+    dragTo(rowMid(0), ImVec2(3, 3), false);
+    check(h.c.attachmentCount(src) == 2 && h.c.attachmentCount(dst) == 2, "ドロップ先がない場所では何もしない");
+    check(h.u.dlg == ui::Dlg::None, "ドロップ先がない場所で取り込みを開かない");
+    // 同じ課題の詳細パネルの、一覧の外では何もしない
+    dragTo(rowMid(0), ImVec2(h.u.attachRows[0].first.x + 100, h.u.attachRows[0].first.y - 150), false);
+    check(h.c.attachmentsOf(src)[0].name == "二枚目.png", "一覧の外では並べ替えない");
+    // 並べ替え: 先頭を最後の行の下へ
+    h.frame(3);
+    const std::string first = h.c.attachmentsOf(src)[0].name;
+    dragTo(rowMid(0), ImVec2(h.u.attachRows[1].first.x + 100, h.u.attachRows[1].second.y - 2), false);
+    check(h.c.attachmentsOf(src).size() == 2 && h.c.attachmentsOf(src)[1].name == first, "同じ課題の中でドラッグすると並べ替える");
+    // Esc で取り消し
+    h.frame(3);
+    dragTo(rowMid(0), targetMid(dst), false, false);
+    check(h.u.attachDrag.active, "つかんで動かすとドラッグが始まる");
+    h.key(ImGuiKey_Escape);
+    check(!h.u.attachDrag.active, "Esc で取り消す");
+    io.AddMouseButtonEvent(0, false);
+    h.frame(2);
+    check(h.c.attachmentCount(src) == 2 && h.c.attachmentCount(dst) == 2, "取り消したら動かさない");
+    // コマンドパレット（Ctrl+K）が開いたら取り消す。モーダルの裏で離しても動かさない
+    dragTo(rowMid(0), targetMid(dst), false, false);
+    check(h.u.attachDrag.active, "パレットのテスト: つかんでいる");
+    h.key(ImGuiKey_K, true);
+    check(h.u.paletteOpen && !h.u.attachDrag.active, "パレットを開くとドラッグを取り消す");
+    io.AddMouseButtonEvent(0, false);
+    h.frame(3);
+    check(h.c.attachmentCount(src) == 2 && h.c.attachmentCount(dst) == 2, "パレットの裏で離しても動かさない");
+    h.key(ImGuiKey_Escape);
+    check(!h.u.paletteOpen, "パレットを閉じる");
+    h.frame(3);
+    // Esc とボタンを離すのが同じフレームでも、動かさずに取り消す（Esc で選択も外さない）
+    h.c.select(src);
+    h.u.detailOpen = true;
+    h.frame(4);
+    dragTo(rowMid(0), targetMid(dst), false, false);
+    check(h.u.attachDrag.active, "Esc と同時のテスト: つかんでいる");
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    io.AddMouseButtonEvent(0, false);
+    h.frame();
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    h.frame(3);
+    check(h.c.attachmentCount(src) == 2 && h.c.attachmentCount(dst) == 2, "Esc と離すのが同じフレームなら動かさない");
+    check(!h.c.selection().empty() && h.u.detailOpen, "ドラッグを取り消した Esc は、選択や詳細パネルには効かない");
+    // 存在しない課題・自分自身へ（コントローラ側の確認。画面の途中で課題が消えても落ちない）
+    dragTo(rowMid(0), targetMid(dst), false, false);
+    h.c.session()->deleteIssues({dst});
+    h.c.afterEdit();
+    io.AddMouseButtonEvent(0, false);
+    h.frame(3);
+    check(!h.u.attachDrag.active, "ドラッグ中に先の課題が消えても落ちない");
+    // クリックだけ（動かさない）ならプレビューを開く
+    h.frame(3);
+    {
+      const auto& r = h.u.attachRows[1];  // 並べ替えたあとの2番目 = 二枚目.png
+      h.click(r.first.x + 2 + 18, (r.first.y + r.second.y) / 2);
+    }
+    check(h.u.dlg == ui::Dlg::AttachPreview, "動かさずにクリックするとプレビューを開く");
+    h.u.dlg = ui::Dlg::None;
+    h.frame(2);
+    // サムネイルの大きさのスライダー: 右端のほうを押すと大きくなり、プロジェクトの設定に覚える
+    {
+      const int before = h.c.uiInt("attachThumb", 36);
+      const auto& sl = h.u.attachSlider;
+      check(sl.second.x > sl.first.x, "スライダーがある");
+      const float rowH0 = h.u.attachRows[0].second.y - h.u.attachRows[0].first.y;
+      h.click(sl.first.x + 105, (sl.first.y + sl.second.y) / 2);
+      h.frame(3);
+      const int after = h.c.uiInt("attachThumb", 36);
+      check(after > before && after <= 160, "スライダーでサムネイルを大きくできる");
+      check(h.u.attachRows[0].second.y - h.u.attachRows[0].first.y > rowH0, "サムネイルの大きさに合わせて行が高くなる");
+      check(h.c.session()->settings().ui.contains("attachThumb"), "大きさはプロジェクトの ui 設定に覚える");
+      h.c.setUi("attachThumb", 99999);  // 範囲外の値が設定に入っていても落ちない（範囲に収める）
+      h.frame(3);
+      h.c.setUi("attachThumb", Json("壊れた値"));
+      h.frame(3);
+      check(h.c.uiInt("attachThumb", 36) == 36, "数値でない値は既定に戻る");
+    }
+    // 「ファイルを選んで追加」
+    {
+      h.fs.put("ext/選んだ.txt", "picked");
+      h.p.pickedFiles = {"ext/選んだ.txt"};
+      const int asked = h.p.pickAsked;
+      const std::size_t n0 = h.c.attachmentCount(src);
+      const auto& b = h.u.attachPickBtn;
+      check(b.second.x > b.first.x, "「ファイルを選んで追加」のボタンがある");
+      h.click((b.first.x + b.second.x) / 2, (b.first.y + b.second.y) / 2);
+      h.frame(2);
+      check(h.p.pickAsked == asked + 1, "ボタンでファイルを選ぶダイアログを開く");
+      check(h.c.attachmentCount(src) == n0 + 1, "選んだファイルが付く");
+      h.p.pickedFiles.clear();  // やめた
+      const std::size_t n1 = h.c.attachmentCount(src);
+      h.click((b.first.x + b.second.x) / 2, (b.first.y + b.second.y) / 2);
+      h.frame(2);
+      check(h.c.attachmentCount(src) == n1, "ダイアログをやめたら何も付けない");
+    }
+    h.u.detailOpen = false;
+    h.frame(2);
+  }
+  // 添付の並べ替え: スクロールで隠れた行（子ウィンドウのクリップの外）の上では、並べ替えない
+  {
+    h.c.createProject(app::SampleKind::Hierarchy, "スクロールの確認", "SCR");
+    h.c.setView(app::View::List);
+    h.u.editField = ui::EditField::None;
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.frame(3);
+    const std::string id = h.u.dropTargets.at(0).id;
+    std::vector<std::string> files;
+    for (int k = 0; k < 30; ++k) {
+      char nm[32];
+      std::snprintf(nm, sizeof nm, "ext/メモ%02d.txt", k);
+      h.fs.put(nm, "x");
+      files.push_back(nm);
+    }
+    h.c.attachFiles(id, files);
+    h.c.select(id);
+    h.u.detailOpen = true;
+    h.u.detailTab = 3;
+    h.frame(6);
+    ImGuiIO& io = ImGui::GetIO();
+    check(h.u.attachRows.size() == 30, "30 件の行の範囲が分かる");
+    const auto clip = [&] { return h.u.attachRowsClip; };
+    io.AddMousePosEvent(clip().first.x + 100, clip().first.y + 200);
+    for (int k = 0; k < 6; ++k) {  // 一覧を下へスクロール（上の行は子ウィンドウの外へ隠れる）
+      io.AddMouseWheelEvent(0, -3);
+      h.frame(2);
+    }
+    check(h.u.attachRows.size() == 30 && h.u.attachRows.front().first.y < clip().first.y, "スクロールすると、上の行が見える範囲の外へ出る");
+    // 見えている行を探す
+    std::size_t vis = 0;
+    for (std::size_t k = 0; k < h.u.attachRows.size(); ++k) {
+      const auto& r = h.u.attachRows[k];
+      if (r.first.y >= clip().first.y + 4 && r.second.y <= clip().second.y - 4) {
+        vis = k;
+        break;
+      }
+    }
+    check(vis > 0, "見えている行がある");
+    const std::string moving = h.c.attachmentsOf(id)[vis].name;
+    const auto rowMidAt = [&](std::size_t k) {
+      const auto& r = h.u.attachRows[k];
+      return ImVec2(r.first.x + 100, (r.first.y + r.second.y) / 2);
+    };
+    const auto drag = [&](ImVec2 from, ImVec2 to) {
+      io.AddMousePosEvent(from.x, from.y);
+      h.frame();
+      io.AddMouseButtonEvent(0, true);
+      h.frame();
+      io.AddMousePosEvent(from.x + 12, from.y + 2);
+      h.frame();
+      io.AddMousePosEvent(to.x, to.y);
+      h.frame(2);
+      io.AddMouseButtonEvent(0, false);
+      h.frame(3);
+    };
+    // 見える範囲のすぐ上（詳細パネルの見出し・タブ）。ここの下に、隠れた行の範囲が重なっている
+    drag(rowMidAt(vis), ImVec2(clip().first.x + 100, clip().first.y - 6));
+    check(h.c.attachmentsOf(id)[vis].name == moving && h.c.attachmentsOf(id)[0].name == "メモ00.txt", "隠れた行の上で離しても並べ替えない");
+    for (std::size_t k = 0; k < 30; ++k)
+      if (h.c.attachmentsOf(id)[k].name != [&] { char nm[32]; std::snprintf(nm, sizeof nm, "メモ%02d.txt", static_cast<int>(k)); return std::string(nm); }()) {
+        check(false, "並びが変わっていない");
+        break;
+      }
+    // 見える範囲の中なら今までどおり並べ替える（次の行の下半分へ）
+    const std::size_t next = vis + 1;
+    check(next < h.u.attachRows.size() && h.u.attachRows[next].second.y <= clip().second.y, "次の行も見えている");
+    drag(rowMidAt(vis), ImVec2(h.u.attachRows[next].first.x + 100, h.u.attachRows[next].second.y - 2));
+    check(h.c.attachmentsOf(id)[next].name == moving, "見える行の上では並べ替える");
+    h.u.detailOpen = false;
+    h.frame(2);
+  }
+  // クリップボードの画像の貼り付け（Ctrl+V）: 画像だけなら添付、テキストがあれば従来どおり子課題の貼り付け
+  {
+    const std::string bmp = makeBmp(40, 30);
+    h.c.createProject(app::SampleKind::Hierarchy, "貼り付けの確認", "PST");
+    h.c.setView(app::View::List);
+    h.u.editField = ui::EditField::None;
+    h.c.clearSelection();
+    h.u.detailOpen = false;
+    h.frame(3);
+    const std::string id = h.u.dropTargets.at(0).id;
+    h.p.clip = std::nullopt;
+    h.p.clipImage = bmp;
+    h.c.select(id);
+    h.frame(2);
+    h.key(ImGuiKey_V, true);
+    h.frame(2);
+    check(h.c.attachmentCount(id) == 1, "テキストがなく画像があるとき Ctrl+V で添付する");
+    check(h.c.attachmentsOf(id).at(0).name.rfind("貼り付け-", 0) == 0 && h.c.attachmentsOf(id)[0].name.find(".bmp") != std::string::npos,
+          "名前は 貼り付け-<日時>.bmp");
+    check(h.u.dlg == ui::Dlg::None, "画像の貼り付けでは子課題のダイアログを開かない");
+    h.frame(3);
+    h.u.detailOpen = true;
+    h.u.detailTab = 3;
+    const int createdBefore = h.p.created;
+    h.frame(8);  // 添付した画像のサムネイルも描ける（BMP としてデコードできる）
+    check(h.p.created > createdBefore, "貼り付けた画像のサムネイルを作る");
+    h.u.detailOpen = false;
+    // テキストもあれば、従来どおり子課題の貼り付けが先
+    h.p.clip = "子A\n子B";
+    h.key(ImGuiKey_V, true);
+    h.frame(2);
+    check(h.u.dlg == ui::Dlg::PasteChildren && h.c.attachmentCount(id) == 1, "テキストがあれば画像より先に子課題の貼り付け");
+    h.key(ImGuiKey_Escape);
+    h.u.dlg = ui::Dlg::None;
+    h.p.clip = std::nullopt;
+    h.frame(2);
+    // 課題を2つ選んでいる・選んでいないときは付けない
+    h.c.clearSelection();
+    h.frame(2);
+    h.key(ImGuiKey_V, true);
+    h.frame(2);
+    check(h.c.attachmentCount(id) == 1, "課題が選ばれていなければ画像は付けない");
+    h.u.dlg = ui::Dlg::None;
+    // 画像もテキストもなければ通知だけ
+    h.p.clipImage = std::nullopt;
+    h.c.select(id);
+    h.frame(2);
+    h.key(ImGuiKey_V, true);
+    h.frame(2);
+    check(h.c.attachmentCount(id) == 1, "クリップボードが空なら何も付けない");
+    // Windows の DIB（BMP ファイルのヘッダなし）から作った BMP も、サムネイルにできる
+    const auto fromDib = bmpFromDib(bmp.substr(14));
+    check(fromDib.ok() && *fromDib == bmp, "DIB に 14 バイトのヘッダを足すと元の BMP になる");
+    check(fromDib.ok() && ui::decodeImage(*fromDib, 160).has_value(), "DIB から作った BMP をデコードできる");
+    check(!bmpFromDib(bmp.substr(14, 20)).ok(), "途中で切れた DIB は断る");
+    h.u.dlg = ui::Dlg::None;
     h.frame(2);
   }
   // JIRA の Attachment 列: 添付タブにメタ情報として出し、書き出しでも戻す

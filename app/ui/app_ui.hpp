@@ -53,6 +53,15 @@ class IPlatform {
     return nullptr;
   }
   virtual void releaseTexture(ImTextureID tex) { (void)tex; }
+  // ファイルを選ぶダイアログ（複数選択。添付の「ファイルを選んで追加」）。選んだパス（UTF-8）を返す。やめた・開けないときは空。
+  // ファイル名は個人情報を含みうるので、ログには出さない
+  virtual std::vector<std::string> pickOpenFiles(const std::string& title) {
+    (void)title;
+    return {};
+  }
+  // クリップボードの画像を、BMP ファイルのバイト列（14 バイトのヘッダつき）で返す。画像がない・読めない・大きすぎる・
+  // ヘッダが壊れているときは nullopt（Win32 は CF_DIBV5 / CF_DIB を読んで core の bmpFromDib で包む）。内容はログに出さない
+  virtual std::optional<std::string> clipboardImage() { return std::nullopt; }
   // ドロップされた CSV / JSON を読んで UTF-8 にする（文字コードを判定する。読めなければ nullopt と理由）
   virtual std::optional<std::string> readTextFile(const std::string& path, std::string* error) {
     (void)path;
@@ -124,6 +133,25 @@ struct UiState {
   };
   std::vector<DropTarget> dropTargets, dropBuild;
   std::string attachWarnPath;  // 開く前に警告している添付の本体（Dlg::AttachOpenWarn）
+  // 添付のサムネイル（添付タブの行）をつかんで別の課題へ動かすドラッグ（離した位置のドロップ先は dropTargets で調べる）。
+  // 別の課題の上で離すと移動（Ctrl を押していればコピー）、同じ課題の添付の一覧の上なら並べ替え、何もないところなら何もしない。
+  // Esc・プロジェクトの切り替え・ダイアログを開いたときは取り消す
+  struct AttachDrag {
+    bool active = false;
+    std::string issueId;   // つかんだ添付の課題
+    std::size_t index = 0; // つかんだ添付の番号
+    std::string project;   // 始めたプロジェクト
+  } attachDrag;
+  int attachDragEscFrame = -10;      // 添付のドラッグを Esc で取り消したフレーム（そのフレームの Esc は、ほかの Esc の動作に使わない）
+  bool attachDragCancelled = false;  // 取り消したドラッグ。マウスのボタンを離すまで、つかみ直したことにしない
+  // 前のフレームの添付タブの行の範囲（画面の座標）。並べ替えの位置の判定と、煙テストの当たり位置に使う
+  std::vector<std::pair<ImVec2, ImVec2>> attachRows;
+  std::string attachRowsIssue;
+  int attachRowsFrame = -10;
+  // 添付タブの一覧（スクロールする子ウィンドウ）の見える範囲。この外では並べ替えの位置を出さない（隠れた行へ並べ替えない）
+  std::pair<ImVec2, ImVec2> attachRowsClip{{0, 0}, {0, 0}};
+  // 前のフレームの添付タブの「ファイルを選んで追加」ボタンとサムネイルの大きさのスライダーの範囲（画面の座標）。煙テストの当たり位置
+  std::pair<ImVec2, ImVec2> attachPickBtn{{0, 0}, {0, 0}}, attachSlider{{0, 0}, {0, 0}};
   // 添付の画像（サムネイル・プレビュー）のテクスチャ。キー = パス・大きさ・日時・縮小の上限。
   // 使わなくなったものは解放し、プロジェクトを切り替えたら全部解放する（releaseImages / trimImages）
   struct ImageTex {

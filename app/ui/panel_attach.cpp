@@ -17,6 +17,8 @@ std::string baseNameOf(const std::string& path) {
   return k == std::string::npos ? path : path.substr(k + 1);
 }
 constexpr int kThumbPx = 160;     // サムネイルの長辺（これより大きい画像は縮小して読む）
+constexpr int kThumbDefault = 36, kThumbMin = 24, kThumbMax = 160;  // 添付タブのサムネイルの大きさ（スライダー。論理 px）
+int thumbSize(const app::AppController& c) { return std::clamp(c.uiInt("attachThumb", kThumbDefault), kThumbMin, kThumbMax); }
 bool inside(const UiState::DropTarget& t, ImVec2 p) { return p.x >= t.a.x && p.x < t.b.x && p.y >= t.a.y && p.y < t.b.y; }
 }  // namespace
 
@@ -61,6 +63,141 @@ void processDrop(Frame& f) {
   u.dText = *text;
   u.importName = name;
   openDialog(f, Dlg::Import);
+}
+
+int attachReorderSlot(const UiState& u, const std::string& issueId, ImVec2 pos) {
+  if (u.attachRowsIssue != issueId || u.attachRows.empty() || ImGui::GetFrameCount() - u.attachRowsFrame > 1) return -1;
+  const auto& first = u.attachRows.front();
+  const auto& last = u.attachRows.back();
+  const float pad = (first.second.y - first.first.y) / 2;
+  // 一覧はスクロールする子ウィンドウの中にある。見える範囲の外（見出し・タブの上など）では、隠れた行の範囲が重なっていても
+  // 並べ替えの位置にしない（行の添字は全部持っているので、見える範囲の中の挿入位置はそのまま正しい）
+  const auto& clip = u.attachRowsClip;
+  if (pos.x < clip.first.x || pos.x >= clip.second.x || pos.y < clip.first.y || pos.y >= clip.second.y) return -1;
+  if (pos.x < first.first.x || pos.x >= first.second.x || pos.y < first.first.y - pad || pos.y >= last.second.y + pad) return -1;
+  int slot = 0;
+  for (const auto& r : u.attachRows)
+    if ((r.first.y + r.second.y) / 2 < pos.y) ++slot;
+  return slot;
+}
+
+namespace {
+// 位置 pos にあるドロップ先（あとから描いたものを優先。実在する課題だけ）
+const UiState::DropTarget* targetAt(Frame& f, ImVec2 pos) {
+  Session* s = f.c.session();
+  if (!s) return nullptr;
+  for (auto it = f.u.dropTargets.rbegin(); it != f.u.dropTargets.rend(); ++it)
+    if (inside(*it, pos) && s->issue(it->id)) return &*it;
+  return nullptr;
+}
+}  // namespace
+
+void processAttachDrag(Frame& f) {
+  UiState& u = f.u;
+  const ImGuiIO& io = ImGui::GetIO();
+  if (!io.MouseDown[0]) u.attachDragCancelled = false;
+  if (!u.attachDrag.active) return;
+  app::AppController& c = f.c;
+  const UiState::AttachDrag d = u.attachDrag;
+  // 続けられないとき（プロジェクトを切り替えた・ダイアログやコマンドパレット・ポップアップが開いた・つかんだ添付がなくなった）は、
+  // 離した位置を調べる前に取り消す（モーダルの裏で移動・コピーしない）
+  const bool modal = u.dlg != Dlg::None || u.paletteOpen || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+  if (!c.session() || modal || c.currentId() != d.project || d.index >= c.attachmentsOf(d.issueId).size()) {
+    u.attachDrag = {};
+    u.attachDragCancelled = true;
+    return;
+  }
+  // Esc は、ボタンを離すのと同じフレームでも先に見て取り消す（添付の移動は元に戻せない）。このフレームの Esc は handleKeys に渡さない
+  if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    u.attachDrag = {};
+    u.attachDragCancelled = true;
+    u.attachDragEscFrame = ImGui::GetFrameCount();
+    return;
+  }
+  if (io.MouseDown[0]) return;  // まだつかんでいる
+  u.attachDrag = {};
+  if (!ImGui::IsMouseReleased(ImGuiMouseButton_Left)) return;
+  // 離した位置のドロップ先。何もないところでは何もしない
+  const ImVec2 pos = io.MousePos;
+  const UiState::DropTarget* t = targetAt(f, pos);
+  if (!t) return;
+  if (t->id == d.issueId) {  // 同じ課題 = 添付の一覧の上なら並べ替え
+    const int slot = attachReorderSlot(u, d.issueId, pos);
+    if (slot < 0) return;
+    const std::size_t at = static_cast<std::size_t>(slot);
+    const std::size_t to = at > d.index ? at - 1 : at;
+    if (to != d.index) c.reorderAttachment(d.issueId, d.index, to);
+    return;
+  }
+  if (io.KeyCtrl) c.copyAttachment(d.issueId, d.index, t->id);
+  else c.moveAttachment(d.issueId, d.index, t->id);
+}
+
+void drawAttachDrag(Frame& f) {
+  UiState& u = f.u;
+  if (!u.attachDrag.active) return;
+  app::AppController& c = f.c;
+  Session* s = c.session();
+  const UiState::AttachDrag d = u.attachDrag;
+  if (!s || c.currentId() != d.project) return;
+  const auto& list = c.attachmentsOf(d.issueId);
+  if (d.index >= list.size()) return;
+  const ImGuiIO& io = ImGui::GetIO();
+  const ImVec2 pos = io.MousePos;
+  if (pos.x < -1e6f) return;  // マウスがウィンドウの外
+  ImDrawList* dl = ImGui::GetForegroundDrawList();
+  const bool copy = io.KeyCtrl;
+  const UiState::DropTarget* t = targetAt(f, pos);
+  const Issue* to = t && t->id != d.issueId ? s->issue(t->id) : nullptr;
+  std::string note;
+  if (to) {
+    // 受ける課題の範囲を縁取る
+    dl->AddRectFilled(t->a, t->b, withAlpha(u.t->accent, 0.14f));
+    dl->AddRect(t->a, t->b, u.t->accent, 0, 0, u.m.s(2));
+    note = std::string(copy ? "コピー: " : "移動: ") + ellipsize(to->summary, u.m.s(190));
+  } else if (t) {
+    const int slot = attachReorderSlot(u, d.issueId, pos);
+    if (slot >= 0) {
+      const std::size_t at = static_cast<std::size_t>(slot);
+      const std::size_t dest = at > d.index ? at - 1 : at;
+      if (dest != d.index && at < u.attachRows.size() + 1) {
+        float y = at == 0 ? u.attachRows.front().first.y : u.attachRows[at - 1].second.y;
+        y = std::clamp(y, u.attachRowsClip.first.y, u.attachRowsClip.second.y);  // 見える範囲の端まで
+        dl->AddLine(ImVec2(u.attachRows.front().first.x, y), ImVec2(u.attachRows.front().second.x, y), u.t->accent, u.m.s(3));
+        note = "ここへ並べ替え";
+      }
+    }
+  }
+  if (note.empty()) note = to || t ? "" : "課題の行・カードへドロップで移動（Ctrl でコピー）";
+  // カーソルに付くもの: サムネイル（画像のとき）と名前
+  const Attachment& a = list[d.index];
+  const float th = u.m.s(34);
+  const UiState::ImageTex* img = isImageFile(a.name) ? attachmentImage(f, d.issueId, d.index, kThumbPx) : nullptr;
+  const std::string name = ellipsize(a.name, u.m.s(190));
+  const float tw = std::max({ImGui::CalcTextSize(name.c_str()).x, ImGui::CalcTextSize(note.c_str()).x, u.m.s(60)});
+  const float w = th + u.m.s(8) + tw + u.m.s(14);
+  const float h = th + u.m.s(10);
+  ImVec2 p0(pos.x + u.m.s(14), pos.y + u.m.s(12));
+  p0.x = std::min(p0.x, std::max(0.f, io.DisplaySize.x - w - u.m.s(4)));
+  p0.y = std::min(p0.y, std::max(0.f, io.DisplaySize.y - h - u.m.s(4)));
+  const ImVec2 p1(p0.x + w, p0.y + h);
+  dl->AddRectFilled(p0, p1, withAlpha(u.t->surface, 0.94f), u.m.s(6));
+  dl->AddRect(p0, p1, u.t->accent, u.m.s(6));
+  const ImVec2 b0(p0.x + u.m.s(5), p0.y + u.m.s(5)), b1(b0.x + th, b0.y + th);
+  if (img && img->tex) {
+    const float sc = std::min(th / static_cast<float>(img->w), th / static_cast<float>(img->h));
+    const ImVec2 sz(static_cast<float>(img->w) * sc, static_cast<float>(img->h) * sc);
+    const ImVec2 q0(b0.x + (th - sz.x) / 2, b0.y + (th - sz.y) / 2);
+    dl->AddImage(img->tex, q0, ImVec2(q0.x + sz.x, q0.y + sz.y));
+  } else {
+    drawIcon(dl, isRiskyFile(a.name) ? "warn" : (isImageFile(a.name) ? "image" : "file"), ImVec2(b0.x + (th - u.m.s(18)) / 2, b0.y + (th - u.m.s(18)) / 2),
+             u.m.s(18), u.t->muted);
+  }
+  const float tx = b1.x + u.m.s(8);
+  const float lh = ImGui::GetTextLineHeight();
+  const float ty = p0.y + (h - (note.empty() ? lh : lh * 2 + u.m.s(2))) / 2;
+  dl->AddText(ImVec2(tx, ty), u.t->ink, name.c_str());
+  if (!note.empty()) dl->AddText(ImVec2(tx, ty + lh + u.m.s(2)), to ? u.t->accent : u.t->muted, note.c_str());
 }
 
 const UiState::ImageTex* attachmentImage(Frame& f, const std::string& issueId, std::size_t index, int maxDim) {
@@ -207,16 +344,18 @@ void drawAttachTab(Frame& f, int i) {
   // ドロップの案内（ここだけでなく、行・カード・この詳細パネルのどこへドロップしても付く）
   {
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float h = u.m.s(58);
+    const float h = u.m.s(76);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(p, ImVec2(p.x + W, p.y + h), u.t->surface2, u.m.s(6));
     dl->AddRect(p, ImVec2(p.x + W, p.y + h), u.t->line2, u.m.s(6));
     const char* l1 = "ここにファイルをドロップして添付";
     const char* l2 = "画像・PDF など何でも／フォルダは中のファイルを全部";
-    const ImVec2 s1 = ImGui::CalcTextSize(l1), s2 = ImGui::CalcTextSize(l2);
+    const char* l3 = "コピーした画像は、課題を選んで Ctrl+V でも付きます";
+    const ImVec2 s1 = ImGui::CalcTextSize(l1), s2 = ImGui::CalcTextSize(l2), s3 = ImGui::CalcTextSize(l3);
     drawIcon(dl, "paperclip", ImVec2(p.x + (W - s1.x) / 2 - u.m.s(20), p.y + u.m.s(10)), u.m.s(14), u.t->muted);
     dl->AddText(ImVec2(p.x + (W - s1.x) / 2, p.y + u.m.s(9)), u.t->ink, l1);
     dl->AddText(ImVec2(p.x + (W - s2.x) / 2, p.y + u.m.s(9) + s1.y + u.m.s(5)), u.t->muted, l2);
+    dl->AddText(ImVec2(p.x + (W - s3.x) / 2, p.y + u.m.s(9) + s1.y + s2.y + u.m.s(8)), u.t->muted, l3);
     ImGui::Dummy(ImVec2(W, h));
   }
   const auto& list = c.attachmentsOf(id);
@@ -227,33 +366,61 @@ void drawAttachTab(Frame& f, int i) {
                       formatBytes(total).c_str(), formatBytes(kMaxAttachProjectBytes).c_str(),
                       formatBytes(kMaxAttachFileBytes).c_str());
   ImGui::PopTextWrapPos();
+  ImGui::Spacing();
+  // 「ファイルを選んで追加」: ダイアログを開く間に描画中の参照が壊れないよう、フレームの終わりに行う
+  if (ImGui::Button("ファイルを選んで追加")) {
+    deferAfterFrame(f, [&f, id] {
+      const std::vector<std::string> picked = f.p.pickOpenFiles("添付するファイルを選ぶ");
+      if (!picked.empty() && f.c.session() && f.c.session()->issue(id)) f.c.attachFiles(id, picked);
+    });
+  }
+  u.attachPickBtn = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
   if (list.empty()) {
     ImGui::Spacing();
     ImGui::TextDisabled("添付はまだありません。");
     drawJiraAttachments(f, o);
     return;
   }
-  ImGui::Spacing();
+  ImGui::SameLine();
   if (ImGui::SmallButton("添付のフォルダを開く")) f.p.openFolder(paths::attachmentDir(c.currentProjectDir(), id));
+  {
+    int px = thumbSize(c);
+    ImGui::SetNextItemWidth(u.m.s(110));
+    if (ImGui::SliderInt("サムネイルの大きさ##thumbsz", &px, kThumbMin, kThumbMax, "%d")) c.setUi("attachThumb", px);
+    u.attachSlider = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
+  }
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextDisabled("サムネイルをつかんで、別の課題の行・カードへ離すと移動（Ctrl でコピー）。この一覧の中では並べ替え。");
+  ImGui::PopTextWrapPos();
   ImGui::Separator();
+  const float thumbBox = u.m.s(static_cast<float>(thumbSize(c)));
+  u.attachRows.clear();
+  u.attachRowsIssue = id;
+  u.attachRowsFrame = ImGui::GetFrameCount();
+  u.attachRowsClip = {ImGui::GetWindowDrawList()->GetClipRectMin(), ImGui::GetWindowDrawList()->GetClipRectMax()};
   std::size_t del = static_cast<std::size_t>(-1), open = static_cast<std::size_t>(-1), preview = static_cast<std::size_t>(-1);
   for (std::size_t k = 0; k < list.size(); ++k) {
     const Attachment& a = list[k];
     ImGui::PushID(static_cast<int>(k));
     const bool risky = isRiskyFile(a.name);
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float rowH = ImGui::GetTextLineHeight() * 2 + u.m.s(10);
+    const float textH = ImGui::GetTextLineHeight() * 2 + u.m.s(2);
+    const float rowH = std::max(textH + u.m.s(10), thumbBox + u.m.s(8));
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float btns = u.m.s(86);
-    // 行全体: ダブルクリックで開く
+    u.attachRows.emplace_back(p, ImVec2(p.x + W, p.y + rowH));
+    const float dragPx = u.m.s(5);
+    const bool beingDragged = u.attachDrag.active && u.attachDrag.issueId == id && u.attachDrag.index == k;
+    // 行全体: ダブルクリックで開く。つかんで動かすと、別の課題へ移す・コピーする（離したときに processAttachDrag が実行する）
     ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("##row", ImVec2(W - btns, rowH));
     const bool hov = ImGui::IsItemHovered();
+    bool grabbed = ImGui::IsItemActive();
     if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open = k;
-    if (hov) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + rowH), u.t->hover, u.m.s(4));
+    if (hov && !u.attachDrag.active) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + rowH), u.t->hover, u.m.s(4));
     // 左: 画像はサムネイル（クリックでプレビュー）、そのほかは種類のアイコン
-    const float box = rowH - u.m.s(8);
-    const ImVec2 b0(p.x + u.m.s(2), p.y + u.m.s(4)), b1(b0.x + box, b0.y + box);
+    const float box = thumbBox;
+    const ImVec2 b0(p.x + u.m.s(2), p.y + (rowH - box) / 2), b1(b0.x + box, b0.y + box);
     const bool isImg = isImageFile(a.name);
     const UiState::ImageTex* img = isImg ? attachmentImage(f, id, k, kThumbPx) : nullptr;
     if (img && img->tex) {
@@ -264,14 +431,16 @@ void drawAttachTab(Frame& f, int i) {
       dl->AddImage(img->tex, q0, ImVec2(q0.x + sz.x, q0.y + sz.y));
       dl->AddRect(b0, b1, u.t->line, u.m.s(3));
       ImGui::SetCursorScreenPos(b0);
-      ImGui::InvisibleButton("##thumb", ImVec2(box, box));
-      if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) preview = k;
-      if (ImGui::IsItemHovered()) {
+      // プレビューは「押して離した」ときだけ（つかんで動かしたときは開かない）
+      const bool released = ImGui::InvisibleButton("##thumb", ImVec2(box, box));
+      grabbed = grabbed || ImGui::IsItemActive();
+      if (released && ImGui::GetIO().MouseDragMaxDistanceSqr[0] < dragPx * dragPx) preview = k;
+      if (ImGui::IsItemHovered() && !u.attachDrag.active) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         ImGui::BeginTooltip();
         const float tsc = std::min(1.f, std::min(u.m.s(220) / static_cast<float>(img->w), u.m.s(220) / static_cast<float>(img->h)));
         ImGui::Image(img->tex, ImVec2(static_cast<float>(img->w) * tsc, static_cast<float>(img->h) * tsc));
-        ImGui::TextDisabled("クリックでプレビュー（%d × %d）", img->origW, img->origH);
+        ImGui::TextDisabled("クリックでプレビュー（%d × %d）／つかんで別の課題へ", img->origW, img->origH);
         ImGui::EndTooltip();
       }
     } else {
@@ -281,15 +450,23 @@ void drawAttachTab(Frame& f, int i) {
       if (img && img->failed && ImGui::IsMouseHoveringRect(b0, b1) && ImGui::IsWindowHovered())
         ImGui::SetTooltip("画像として読めません（壊れているか、対応していない形式です）");
     }
+    if (grabbed && !u.attachDrag.active && !u.attachDragCancelled && ImGui::IsMouseDragging(ImGuiMouseButton_Left, dragPx)) {
+      u.attachDrag.active = true;
+      u.attachDrag.issueId = id;
+      u.attachDrag.index = k;
+      u.attachDrag.project = c.currentId();
+    }
     const float tx = b1.x + u.m.s(8);
-    dl->AddText(ImVec2(tx, p.y + u.m.s(4)), u.t->ink, ellipsize(a.name, W - btns - box - u.m.s(12)).c_str());
+    const float ty = p.y + (rowH - textH) / 2;
+    dl->AddText(ImVec2(tx, ty), u.t->ink, ellipsize(a.name, W - btns - box - u.m.s(12)).c_str());
     std::string at = a.at;
     if (at.size() == 16) at[10] = ' ';
     std::string meta = formatBytes(a.size);
     if (!at.empty()) meta += "  " + at;
     if (!a.who.empty()) meta += "  " + a.who;
-    dl->AddText(ImVec2(tx, p.y + u.m.s(4) + ImGui::GetTextLineHeight() + u.m.s(2)), u.t->muted,
+    dl->AddText(ImVec2(tx, ty + ImGui::GetTextLineHeight() + u.m.s(2)), u.t->muted,
                 ellipsize(meta, W - btns - box - u.m.s(12)).c_str());
+    if (beingDragged) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + rowH), withAlpha(u.t->surface, 0.55f));  // つかんでいる行は薄く
     ImGui::SetCursorScreenPos(ImVec2(p.x + W - btns + u.m.s(4), p.y + (rowH - ImGui::GetFrameHeight()) / 2));
     if (ImGui::SmallButton("開く")) open = k;
     if (risky) tip("実行ファイルやスクリプトです。開く前に確認します");

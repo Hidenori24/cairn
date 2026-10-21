@@ -692,6 +692,43 @@ int main(int argc, char** argv) {
     shot("42_attach_empty");
     c.select("11");
     frames(2);
+    // サムネイルをつかんで別の課題の行へ（移動／Ctrl でコピー）と、サムネイルを大きくした一覧
+    {
+      c.setView(app::View::List);
+      c.select("11");
+      frames(4);
+      ImGuiIO& dio = ImGui::GetIO();
+      if (u.attachRows.size() > 1) {
+        const auto& r = u.attachRows[1];  // 画面キャプチャ.bmp
+        const ImVec2 from(r.first.x + 60, (r.first.y + r.second.y) / 2);
+        ImVec2 to(600, 300);
+        for (const auto& t : u.dropTargets)
+          if (t.id == "12") to = ImVec2((t.a.x + t.b.x) / 2, (t.a.y + t.b.y) / 2);
+        dio.AddMousePosEvent(from.x, from.y);
+        frames(2);
+        dio.AddMouseButtonEvent(0, true);
+        frames(2);
+        dio.AddMousePosEvent(from.x + 12, from.y + 4);
+        frames(2);
+        dio.AddMousePosEvent(to.x, to.y);
+        frames(2);
+        shot("46_attach_drag_move");
+        dio.AddKeyEvent(ImGuiMod_Ctrl, true);
+        shot("46b_attach_drag_copy");
+        dio.AddKeyEvent(ImGuiMod_Ctrl, false);
+        dio.AddMousePosEvent(900, 3);  // 何もないところ
+        shot("46c_attach_drag_nowhere");
+        dio.AddKeyEvent(ImGuiKey_Escape, true);
+        frames(2);
+        dio.AddKeyEvent(ImGuiKey_Escape, false);
+        dio.AddMouseButtonEvent(0, false);
+        frames(3);
+      }
+      c.setUi("attachThumb", 84);
+      shot("47_attach_big_thumb");
+      c.setUi("attachThumb", 36);
+      frames(2);
+    }
     ui::Frame fr{c, u, p};
     ui::openAttachment(fr, "11", 3);
     shot("43_attach_warn");

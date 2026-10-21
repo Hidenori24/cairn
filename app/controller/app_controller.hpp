@@ -170,6 +170,14 @@ class AppController {
   AttachOutcome attachFiles(const std::string& issueId, const std::vector<std::string>& files);
   // 中身を直接付ける（クリップボードの画像など）
   bool attachData(const std::string& issueId, const std::string& name, const std::string& data);
+  // クリップボードの画像（BMP ファイルのバイト列）を「貼り付け-<日時>.bmp」で付ける。断られたら false（通知を出す）
+  bool attachClipboardImage(const std::string& issueId, const std::string& bmp);
+  // 別の課題へ移す・コピーする（サムネイルのドラッグ）。先の課題が実在すること、自分自身でないこと、上限を見る。
+  // 移せなければ false（通知を出す。ファイルもメタ情報も元のまま）。成功したら通知にも出す。すぐ保存する
+  bool moveAttachment(const std::string& fromIssue, std::size_t index, const std::string& toIssue);
+  bool copyAttachment(const std::string& fromIssue, std::size_t index, const std::string& toIssue);
+  // 同じ課題の中で並べ替える（from を取り除いたあとの添字 to の位置へ）。保存する
+  bool reorderAttachment(const std::string& issueId, std::size_t from, std::size_t to);
   // _削除済み へ移して外す。移せなければ false（通知を出す）
   bool removeAttachment(const std::string& issueId, std::size_t index);
   // 本体のパス（開く・サムネイル用）。なければ空
