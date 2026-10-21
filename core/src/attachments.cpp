@@ -248,8 +248,8 @@ Result<std::string> bmpFromDib(const std::string& dib) {
   if (hdr == 40 && comp == 6) off += 16;
   std::uint64_t colors = 0;
   if (bpp <= 8) {
-    colors = clrUsed != 0 ? clrUsed : (1u << bpp);
-    if (colors > (1u << bpp)) return Error{"画像の色の数が正しくありません"};
+    colors = clrUsed != 0 ? clrUsed : (std::uint64_t{1} << bpp);
+    if (colors > (std::uint64_t{1} << bpp)) return Error{"画像の色の数が正しくありません"};
   } else if (clrUsed != 0) {
     if (clrUsed > 256) return Error{"画像の色の数が正しくありません"};
     colors = clrUsed;
