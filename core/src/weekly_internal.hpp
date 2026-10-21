@@ -22,7 +22,7 @@ std::string percent(double p);
 std::string deltaPt(double d);
 // 件数の増減 "+1" "-2" "±0"
 std::string deltaInt(int d);
-// 営業日の増減 "3 営業日遅くなった" "2 営業日早まった" "変わらず"
+// 営業日の増減 "3 営業日遅くなった" "2 営業日早まった" "営業日の差は 0（休業日・土日をまたいだ日付の違い）"
 std::string shiftText(int days);
 // 余裕 "余裕 5 営業日" / "遅れ 3 営業日" / 完了
 std::string floatPhrase(int floatDays);

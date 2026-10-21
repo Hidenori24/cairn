@@ -1017,3 +1017,123 @@ TEST_CASE("weekly: 文言の補助") {
   CHECK(has(md, "**遅れ** "));
   CHECK(has(md, "名前順です（順位ではありません）"));
 }
+
+// ---- Copilot の指摘への対応（#46） ----
+TEST_CASE("weekly: 所感の \\< は、直前のバックslash の数が偶数のときだけ打ち消す（奇数なら すでに打ち消されている）") {
+  Proj p = Proj::make(basic());
+  const auto notesOf = [&](const std::string& n) {
+    WeeklyOptions o;
+    o.notes = n;
+    const std::string md = weeklyMarkdown(p.report(o));
+    const std::size_t at = md.find("## 所感・課題・お願い");
+    REQUIRE(at != std::string::npos);
+    return md.substr(at);
+  };
+  // 打ち消されていない "<" が残らない（rawLt は直前の \ を 1 つ数えて飛ばす見方と同じ）
+  CHECK(rawLt(notesOf("<img src=x onerror=alert(1)>")) == 0);       // 0 個（偶数）→ 足す
+  CHECK(rawLt(notesOf("\\<img src=x onerror=alert(1)>")) == 0);     // 1 個（奇数）→ すでに打ち消し済み。足さない
+  CHECK(rawLt(notesOf("\\\\<img src=x onerror=alert(1)>")) == 0);   // 2 個（偶数）→ 足す
+  CHECK(rawLt(notesOf("\\\\\\<img src=x>")) == 0);                  // 3 個（奇数）
+  // 具体的な出力: 奇数ならそのまま、偶数なら 1 つ足す
+  CHECK(has(notesOf("\\<b>"), "\\<b>"));
+  CHECK_FALSE(has(notesOf("\\<b>"), "\\\\<b>"));
+  CHECK(has(notesOf("\\\\<b>"), "\\\\\\<b>"));
+}
+
+TEST_CASE("weekly: 最後の列（26 週より先をまとめたもの）は、来週の負荷として使わない") {
+  Proj p = Proj::make(basic());
+  LoadReport ld = p.load;
+  REQUIRE(ld.weekStarts.size() >= 2);
+  REQUIRE(ld.weekStarts[1] == D("2026-10-26"));  // 来週の月曜
+  ld.weekStarts.resize(2);                       // 今週と来週だけにして、最後（来週）の列を「まとめた列」にする
+  ld.lastFolded = true;
+  WeeklyInput in(p.comp.T, p.issues, p.comp.R, p.cal, p.stats, ld);
+  in.base = p.base;
+  const WeeklyReport r = buildWeeklyReport(in, WeeklyOptions{});
+  for (const auto& a : r.assignees) CHECK(a.loadNextPercent == -1);  // 不明（「-」）
+  // まとめていなければ、これまでどおり出る
+  ld.lastFolded = false;
+  WeeklyInput in2(p.comp.T, p.issues, p.comp.R, p.cal, p.stats, ld);
+  in2.base = p.base;
+  const WeeklyReport r2 = buildWeeklyReport(in2, WeeklyOptions{});
+  bool any = false;
+  for (const auto& a : r2.assignees) any = any || a.loadNextPercent >= 0;
+  CHECK(any);
+}
+
+TEST_CASE("weekly: 休業日の変更で見込みの完了日が動いても、営業日の差が 0 なら「変わらず」とは書かず、日付の変化を出す") {
+  std::vector<Spec> v;
+  v.push_back({"1", "全体", "", "To Do", "", "Epic", "", "", "2026-12-25", 1, {}});
+  v.push_back({"2", "A", "田中", "To Do", "1", "Task", "", "2026-10-26", "", 1, {}});  // 来週の月曜から
+  Proj p0 = Proj::make(v);
+  const WeeklySnapshot snap = makeWeeklySnapshot(p0.input());
+  // 前の週の記録の見込みの完了日を、いまの見込みの翌日（非営業日）にする: 日付は違うが営業日の差は 0
+  WeeklySnapshot prev = snap;
+  REQUIRE_FALSE(prev.items.empty());
+  Proj p1 = Proj::make(v);
+  const Day d = p1.row("2").asapFinish + 1;  // 完了日（金曜）の翌日（土曜）
+  REQUIRE_FALSE(p1.cal.isWork(d));
+  for (auto& it : prev.items)
+    if (it.finish) it.finish = d;
+  const WeeklyReport r = p1.report({}, &prev);
+  REQUIRE(r.changes.available);
+  bool found = false;
+  for (const WeeklyFinishMove& mv : r.changes.finishMoved)
+    if (mv.name == "A") {
+      found = true;
+      CHECK(mv.from != mv.to);
+      CHECK(mv.shiftDays == 0);  // 営業日の差は 0
+    }
+  CHECK(found);            // 日付が違うので、隠さず出す
+  CHECK(r.changes.finishMovedTotal >= 1);
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "A"));
+  CHECK_FALSE(has(md, "変わらず"));
+  CHECK_FALSE(has(weeklyHtml(r), "変わらず"));
+}
+
+TEST_CASE("weekly: Issue Id が長すぎて入らない課題があるときは、スナップショットを不完全にして、増えた作業を数えない") {
+  std::vector<Spec> v;
+  v.push_back({"1", "全体", "", "To Do", "", "Epic", "", "", "2026-12-25", 1, {}});
+  const std::string longId(kWeeklyMaxIdBytes + 10, 'x');
+  v.push_back({longId, "長い", "田中", "To Do", "1", "Task", "", "", "", 1, {}});
+  v.push_back({"3", "短い", "田中", "To Do", "1", "Task", "", "", "", 1, {}});
+  Proj p = Proj::make(v);
+  const WeeklySnapshot snap = makeWeeklySnapshot(p.input());
+  CHECK(snap.truncated);                          // 入らなかったので不完全
+  CHECK(snap.items.size() == 1);                  // 短い id のものだけ
+  // 変わっていないプロジェクトを比べても、長い id の課題が「増えた」にならない
+  const WeeklyReport r = p.report({}, &snap);
+  REQUIRE(r.changes.available);
+  CHECK(r.changes.added == 0);
+}
+
+TEST_CASE("weekly: 課題がないプロジェクトでも、所感を出す項目がオンなら、Markdown と HTML の両方に所感を入れる") {
+  Computed c;
+  auto t = buildTree({}, ProjectMeta{});
+  REQUIRE(t.ok());
+  c.T = std::move(t).value();
+  const std::vector<Issue> issues;
+  const std::vector<ScheduleRow> rows;
+  const Calendar cal;
+  const ProjectStats st = computeStats(c.T, issues, rows, D("2026-10-21"));
+  const LoadReport ld = computeLoad(c.T, issues, rows, cal, D("2026-10-21"), ResourceLimit{});
+  WeeklyInput in(c.T, issues, rows, cal, st, ld);
+  in.base = D("2026-10-21");
+  WeeklyOptions o;
+  o.notes = "来週は設計を始める";
+  const WeeklyReport r = buildWeeklyReport(in, o);
+  REQUIRE(r.empty);
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "課題がありません"));
+  CHECK(has(md, "## 所感・課題・お願い"));
+  CHECK(has(md, "来週は設計を始める"));
+  const std::string html = weeklyHtml(r);
+  CHECK(has(html, "課題がありません"));
+  CHECK(has(html, "来週は設計を始める"));
+  // 所感の項目をオフにしたら出ない
+  o.sections.notes = false;
+  const WeeklyReport off = buildWeeklyReport(in, o);
+  CHECK_FALSE(has(weeklyMarkdown(off), "来週は設計を始める"));
+  CHECK_FALSE(has(weeklyHtml(off), "来週は設計を始める"));
+}

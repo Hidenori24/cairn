@@ -68,9 +68,12 @@ using namespace weeklyfmt;
 // 所感: Markdown のまま入れる。"<"（生の HTML・自動リンク）だけ打ち消す。制御文字は weeklySanitizeNotes で除去済み
 std::string notesText(const std::string& notes) {
   std::string out;
+  std::size_t run = 0;  // 直前のバックスラッシュの連続の長さ（入力のまま）
   for (char c : weeklySanitizeNotes(notes)) {
-    if (c == '<') out += '\\';
+    // 奇数個の直前のバックスラッシュは、この "<" をすでに打ち消している。偶数個（0 を含む）のときだけ足す
+    if (c == '<' && run % 2 == 0) out += '\\';
     out += c;
+    run = c == '\\' ? run + 1 : 0;
   }
   return out;
 }
@@ -253,11 +256,17 @@ std::string weeklyMarkdown(const WeeklyReport& r) {
   m.line("期間: " + rangeText(r.range) + "（" + workdaysText(r.rangeWorkdays) + "） ／ 基準日: " + fmtLong(r.base));
   if (r.rangeCapped) m.line("（範囲が長すぎたため、先頭の " + std::to_string(kWeeklyMaxRangeDays) + " 日までにしました）");
   m.blank();
+  const WeeklySections& s = r.sections;
+  const auto notes = [&] {
+    m.heading(2, "所感・課題・お願い");
+    if (!r.notes.empty()) m.line(notesText(r.notes));
+  };
   if (r.empty) {
     m.line("課題がありません。");
+    if (s.notes) notes();  // 課題がなくても、所感は書ける
+    while (m.o.size() >= 2 && m.o[m.o.size() - 1] == '\n' && m.o[m.o.size() - 2] == '\n') m.o.pop_back();
     return m.o;
   }
-  const WeeklySections& s = r.sections;
   if (s.summary) renderSummary(m, r);
   if (s.done) renderDone(m, r);
   if (s.progress) renderProgress(m, r);
@@ -266,10 +275,7 @@ std::string weeklyMarkdown(const WeeklyReport& r) {
   if (s.milestones) renderMilestones(m, r);
   if (s.assignees) renderAssignees(m, r);
   if (s.changes && r.changes.available) renderChanges(m, r);
-  if (s.notes) {
-    m.heading(2, "所感・課題・お願い");
-    if (!r.notes.empty()) m.line(notesText(r.notes));
-  }
+  if (s.notes) notes();
   // 末尾は改行 1 つ
   while (m.o.size() >= 2 && m.o[m.o.size() - 1] == '\n' && m.o[m.o.size() - 2] == '\n') m.o.pop_back();
   return m.o;

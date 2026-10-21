@@ -214,8 +214,12 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
   // ---- 担当別（名前順。未割当は最後。順位にしない）----
   const auto weekIdx = [&]() -> int {
     const Day w = weeklyMondayOf(r.next.from);
-    for (std::size_t q = 0; q < in.load.weekStarts.size(); ++q)
-      if (in.load.weekStarts[q] == w) return static_cast<int>(q);
+    for (std::size_t q = 0; q < in.load.weekStarts.size(); ++q) {
+      if (in.load.weekStarts[q] != w) continue;
+      // 最後の列が 26 週より先をまとめたものなら、複数の週の平均なので、その週の負荷としては使わない（不明にする）
+      if (in.load.lastFolded && q + 1 == in.load.weekStarts.size()) return -1;
+      return static_cast<int>(q);
+    }
     return -1;
   }();
   std::vector<std::string> names;
@@ -285,11 +289,10 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
       }
       if (row.floatDays < 0 && !was.late) cLate.push_back({i, row.floatDays});
       if (was.st != 'd' && was.finish && *was.finish != row.asapFinish) {
+        // 日付が違えば出す。営業日の差が 0（休業日の変更で土日・休業日をまたいだだけ）でも隠さない
         const int shift = cal.floatDays(*was.finish, row.asapFinish);
-        if (shift != 0) {
-          const int mag = shift < 0 ? -shift : shift;
-          cMove.push_back({i, -static_cast<std::int64_t>(mag)});  // 動きの大きい順
-        }
+        const int mag = shift < 0 ? -shift : shift;
+        cMove.push_back({i, -static_cast<std::int64_t>(mag)});  // 動きの大きい順（差が 0 のものは最後）
       }
     }
     ch.added = prev->truncated ? 0 : added;
@@ -339,7 +342,10 @@ WeeklySnapshot makeWeeklySnapshot(const WeeklyInput& in) {
     if (i < 0 || static_cast<std::size_t>(i) >= n) continue;
     const std::size_t k = static_cast<std::size_t>(i);
     if (!T.kids[k].empty() || T.kind[k] == Kind::Ms) continue;
-    if (T.ids[k].empty() || T.ids[k].size() > kWeeklyMaxIdBytes) continue;
+    if (T.ids[k].empty() || T.ids[k].size() > kWeeklyMaxIdBytes) {
+      s.truncated = true;  // 入らなかった課題がある: 次の週に「増えた」と数え違えないよう、不完全の印を付ける
+      continue;
+    }
     if (s.items.size() >= kWeeklyMaxSnapshotItems) {
       s.truncated = true;
       break;
@@ -427,7 +433,7 @@ std::string deltaInt(int d) {
 }
 
 std::string shiftText(int days) {
-  if (days == 0) return "変わらず";
+  if (days == 0) return "営業日の差は 0（休業日・土日をまたいだ日付の違い）";
   const int a = days < 0 ? -days : days;
   return std::to_string(a) + " 営業日" + (days > 0 ? "遅くなった" : "早まった");
 }

@@ -301,6 +301,7 @@ std::string weeklyHtml(const WeeklyReport& r, const IClock* clock) {
   h += "</header>\n<main>\n";
   if (r.empty) {
     h += "<p class=\"empty\">課題がありません。</p>\n";
+    if (r.sections.notes) h += notesHtml(r);  // 課題がなくても、所感は書ける
   } else {
     const WeeklySections& s = r.sections;
     if (!s.any()) h += "<p class=\"empty\">出す項目が選ばれていません。</p>\n";
