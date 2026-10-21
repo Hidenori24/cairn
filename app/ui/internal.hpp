@@ -129,8 +129,9 @@ void openImagePreview(Frame& f, const std::string& issueId, std::size_t index);
 // テクスチャを解放する（releaseImages = 全部。trimImages = しばらく使っていないものだけ）
 void releaseImages(Frame& f);
 void trimImages(Frame& f);
-// 添付の数のバッジ（クリップのアイコンと数）を描く。幅を返す。クリックされたら clicked を true にする
-float drawAttachBadge(Frame& f, ImVec2 pos, float cy, int count, bool* clicked);
+// 添付の数のバッジ（クリップのアイコンと数）を描く。幅を返す。クリックされたら clicked を true にする。
+// マウスを載せる（少し待つ）と、課題 issueId の添付のサムネイルのツールチップを出す（SPEC 10.9。載せていないときは画像を読まない）
+float drawAttachBadge(Frame& f, const std::string& issueId, ImVec2 pos, float cy, int count, bool* clicked);
 
 // 件名セル（開閉・種別・表示ID・件名・コメント数・ホバー時の小ボタン）
 struct NameCellOpts {

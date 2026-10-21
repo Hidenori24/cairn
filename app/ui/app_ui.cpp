@@ -460,7 +460,7 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
   if (na) {
     bool clicked = false;
     ImGui::PushID(id.c_str());
-    x += drawAttachBadge(f, ImVec2(x, pos.y), cy, na, &clicked) + u.m.s(8);
+    x += drawAttachBadge(f, id, ImVec2(x, pos.y), cy, na, &clicked) + u.m.s(8);
     ImGui::PopID();
     if (clicked) openDetail(f, id, 3);
   }
@@ -1463,6 +1463,8 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
   trimImages(f);  // しばらく使っていない画像のテクスチャを解放する
   u.dropTargets = std::move(u.dropBuild);  // 次のフレームのドロップ判定に使う
   u.dropBuild.clear();
+  u.attachBadges = std::move(u.attachBadgeBuild);
+  u.attachBadgeBuild.clear();
   u.openColFilter.clear();  // 見出しが出ていない列の要求は捨てる
   c.afterEdit();
   c.releaseFrame();

@@ -1620,6 +1620,128 @@ int main() {
     h.u.detailOpen = false;
     h.frame(2);
   }
+  // 添付バッジのツールチップ: マウスを載せたときだけ、最初の 4 件ぶんの画像をテクスチャにして並べる（載せていないときは読まない）
+  {
+    const std::string png(reinterpret_cast<const char*>(kPng3x2), sizeof kPng3x2);
+    h.c.createProject(app::SampleKind::Hierarchy, "ホバーの確認", "HOV");
+    h.c.setView(app::View::List);
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.frame(3);
+    // 1 件目はテキスト、2〜6 件目は画像（4 件までしか読まない）。画像ごとにバイト列を変えて、キャッシュが共有されないようにする
+    h.fs.put("ext/memo.txt", "memo");
+    std::vector<std::string> files = {"ext/memo.txt"};
+    for (int k = 0; k < 5; ++k) {
+      const std::string name = "ext/p" + std::to_string(k) + ".bmp";
+      h.fs.put(name, makeBmp(20 + k, 10));
+      files.push_back(name);
+    }
+    h.c.attachFiles("11", files);
+    check(h.c.attachmentCount("11") == 6, "ツールチップの確認用に 6 件を付ける");
+    h.frame(30);
+    const int before = h.p.created;
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(700, 880);  // 何もないところ
+    h.frame(30);
+    check(h.p.created == before, "マウスを載せていないときは添付の画像を読まない");
+    const auto badge = [&](const std::string& id) {
+      for (const auto& b : h.u.attachBadges)
+        if (b.id == id) return b;
+      return ui::UiState::DropTarget{ImVec2(-1, -1), ImVec2(-1, -1), ""};
+    };
+    const auto tooltipOn = [&] {
+      ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+      return tip && tip->Active;
+    };
+    const auto b = badge("11");
+    check(!b.id.empty(), "バッジの位置が分かる");
+    const ImVec2 mid((b.a.x + b.b.x) / 2, (b.a.y + b.b.y) / 2);
+    io.AddMousePosEvent(mid.x, mid.y);
+    h.frame(30);
+    check(tooltipOn(), "バッジにマウスを載せるとツールチップが出る");
+    check(h.p.created - before == 3, "最初の 4 件のうち画像の 3 枚だけをテクスチャにする（5・6 件目は読まない）");
+    const int shown = h.p.created;
+    h.frame(10);
+    check(h.p.created == shown, "同じツールチップを出し続けても作り直さない");
+    io.AddMousePosEvent(700, 880);
+    h.frame(5);
+    check(!tooltipOn(), "マウスを外すとツールチップが消える");
+    // 添付タブの項目: マウスを載せると SHA-256 の短縮表示（先頭 12 文字）が出る。sha256 のない古いメタ情報には出ない
+    {
+      check(h.c.attachmentsOf("11")[0].sha256.size() == 64, "付けた添付は SHA-256 を持つ");
+      h.c.select("11");
+      h.u.detailOpen = true;
+      h.u.detailTab = 3;
+      io.AddMousePosEvent(700, 880);
+      h.frame(8);
+      check(h.u.attachRows.size() == 6, "添付タブの行が 6 つ");
+      if (h.u.attachRows.size() == 6) {
+        const auto& r = h.u.attachRows[0];  // memo.txt（画像でない）
+        io.AddMousePosEvent(r.first.x + 150, (r.first.y + r.second.y) / 2);
+        h.frame(30);
+        check(tooltipOn(), "項目にマウスを載せると詳細（SHA-256）のツールチップが出る");
+        io.AddMousePosEvent(700, 880);
+        h.frame(5);
+        h.c.session()->attachments()["11"][0].sha256.clear();  // 古いメタ情報
+        io.AddMousePosEvent(r.first.x + 150, (r.first.y + r.second.y) / 2);
+        h.frame(30);
+        check(!tooltipOn(), "sha256 がない古い項目には詳細を出さない");
+      }
+      // 読めない画像（壊れた PNG）のアイコンの上: エラーの説明は消えず、詳細（SHA-256）と 1 つのツールチップにまとまる
+      h.c.session()->attachments()["11"][0].sha256 = h.c.attachmentsOf("11")[1].sha256;  // 1 行目も詳細を持つ状態に戻す
+      h.fs.put("ext/bad.png", "壊れたファイル");
+      h.c.attachFiles("11", {"ext/bad.png"});
+      io.AddMousePosEvent(700, 880);
+      h.frame(12);  // デコードは 1 フレームに 1 枚。失敗の結果が出るまで待つ
+      check(h.u.attachRows.size() == 7, "壊れた画像を足した添付タブの行が 7 つ");
+      if (h.u.attachRows.size() == 7) {
+        const auto tipHeight = [&](ImVec2 pos) {
+          io.AddMousePosEvent(700, 880);
+          h.frame(5);
+          io.AddMousePosEvent(pos.x, pos.y);
+          h.frame(1);
+          ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+          const bool early = tip && tip->Active;  // 待つ前（エラーの説明だけがすぐ出る）
+          h.frame(30);
+          tip = ImGui::FindWindowByName("##Tooltip_00");
+          return std::pair<bool, float>(early, tip && tip->Active ? tip->Size.y : 0.f);
+        };
+        const auto& bad = h.u.attachRows[6];
+        const auto failed = tipHeight(ImVec2(bad.first.x + 20, (bad.first.y + bad.second.y) / 2));
+        const auto& plain = h.u.attachRows[0];  // 画像でない行（詳細だけの 1 行）
+        const auto hashOnly = tipHeight(ImVec2(plain.first.x + 150, (plain.first.y + plain.second.y) / 2));
+        check(failed.first, "読めない画像のアイコンでは、待たずにエラーの説明が出る");
+        check(!hashOnly.first, "詳細は少し待ってから出る");
+        check(hashOnly.second > 0.f && failed.second > hashOnly.second, "待ったあとも、エラーの説明が詳細に置き換わらず両方が出る");
+      }
+      io.AddMousePosEvent(700, 880);
+      h.u.detailOpen = false;
+      h.frame(5);
+    }
+    // ボード: 末端の課題のカードのバッジ（画像 1 枚だけ付けた課題で、載せたときに 1 枚だけ読む。画面に見えているカードを使う）
+    for (const char* id : {"4", "6", "7", "8"}) h.c.attachFiles(id, {"ext/p0.bmp"});
+    h.c.setView(app::View::Board);
+    io.AddMousePosEvent(700, 500);
+    for (int k = 0; k < 8; ++k) {  // 前の画面のスクロールが残っていることがあるので、いちばん上まで戻す
+      io.AddMouseWheelEvent(0, 10);
+      h.frame(2);
+    }
+    h.frame(30);
+    const int boardBefore = h.p.created;
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImVec2 at(-1, -1);
+    for (const auto& bb : h.u.attachBadges)
+      if (bb.a.y > 150 && bb.b.y < vp->Size.y - 50 && bb.a.x > 0 && bb.b.x < vp->Size.x) at = ImVec2((bb.a.x + bb.b.x) / 2, (bb.a.y + bb.b.y) / 2);
+    check(at.x >= 0, "ボードのカードのバッジの位置が分かる");
+    io.AddMousePosEvent(at.x, at.y);
+    h.frame(30);
+    check(tooltipOn(), "ボードのバッジでもツールチップが出る");
+    check(h.p.created == boardBefore + 1, "ボードでも載せたときだけ画像を読む");
+    io.AddMousePosEvent(700, 880);
+    h.frame(5);
+    h.c.deleteCurrentProject();
+    h.frame(2);
+  }
   // 添付のサムネイルのドラッグ: 別の課題へ移動・Ctrl でコピー・同じ課題の中で並べ替え・何もないところでは何もしない
   {
     const std::string png(reinterpret_cast<const char*>(kPng3x2), sizeof kPng3x2);

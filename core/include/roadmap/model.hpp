@@ -108,6 +108,7 @@ struct Attachment {
   std::uint64_t size = 0;   // バイト
   std::string at;           // 付けた日時 "YYYY-MM-DDTHH:MM"
   std::string who;          // 付けた人
+  std::string sha256;       // 本体の SHA-256（16進小文字 64 文字。古いメタ情報は空 = 不明）。追加（ドロップ・選択・貼り付け・コピー）時に計算し、移動は引き継ぐ
   bool operator==(const Attachment&) const = default;
 };
 // Issue Id → 添付（付けた順）。CSV の Issue Id で引く（表示 ID は階層で変わるため使わない）

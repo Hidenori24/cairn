@@ -4,6 +4,7 @@
 #include <imgui.h>
 
 #include "roadmap/attachments.hpp"
+#include "roadmap/sha256.hpp"
 #include "roadmap/text.hpp"
 #include "ui/icons.hpp"
 #include "ui/image_decode.hpp"
@@ -19,6 +20,11 @@ std::string baseNameOf(const std::string& path) {
 constexpr int kThumbPx = 160;     // サムネイルの長辺（これより大きい画像は縮小して読む）
 constexpr int kThumbDefault = 36, kThumbMin = 24, kThumbMax = 160;  // 添付タブのサムネイルの大きさ（スライダー。論理 px）
 int thumbSize(const app::AppController& c) { return std::clamp(c.uiInt("attachThumb", kThumbDefault), kThumbMin, kThumbMax); }
+// 項目の詳細に出す SHA-256 の短縮表示（先頭 12 文字）。メタ情報にない（古い添付）・壊れているときは空
+std::string shortHashLine(const Attachment& a) {
+  if (!isSha256Hex(a.sha256)) return "";
+  return "SHA-256: " + a.sha256.substr(0, 12) + "…";
+}
 bool inside(const UiState::DropTarget& t, ImVec2 p) { return p.x >= t.a.x && p.x < t.b.x && p.y >= t.a.y && p.y < t.b.y; }
 }  // namespace
 
@@ -284,17 +290,69 @@ void openAttachment(Frame& f, const std::string& issueId, std::size_t index) {
   f.p.openFile(path);
 }
 
-float drawAttachBadge(Frame& f, ImVec2 pos, float cy, int count, bool* clicked) {
+namespace {
+constexpr std::size_t kTipMaxItems = 4;  // バッジのツールチップに並べる添付の数（先頭から）
+
+// バッジのツールチップ: 先頭から 4 件ぶん。画像はサムネイルを横に並べ、画像でないものは名前だけ。残りは「ほか N 件」。
+// 画像は attachmentImage（デコードは 1 フレームに 1 枚まで。まだなら枠だけ）で読む。ツールチップを出すときだけ呼ぶ。
+// 描画中に添付の一覧が変わらないよう、先に名前だけ写してから描く
+void drawAttachTooltip(Frame& f, const std::string& issueId) {
+  UiState& u = f.u;
+  const auto& list = f.c.attachmentsOf(issueId);
+  if (list.empty()) return;
+  const std::size_t shown = std::min(list.size(), kTipMaxItems);
+  std::vector<std::string> names;
+  for (std::size_t k = 0; k < shown; ++k) names.push_back(list[k].name);
+  const std::size_t more = list.size() - shown;
+  const float box = u.m.s(64.f);
+  ImGui::BeginTooltip();
+  ImGui::Text("添付ファイル %d 件（クリックで一覧）", static_cast<int>(list.size()));
+  bool anyImage = false;
+  for (std::size_t k = 0; k < shown; ++k) {
+    if (!isImageFile(names[k])) continue;
+    if (anyImage) ImGui::SameLine(0.f, u.m.s(6.f));
+    anyImage = true;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(box, box));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 q1(p.x + box, p.y + box);
+    dl->AddRectFilled(p, q1, u.t->surface3, u.m.s(3.f));
+    const UiState::ImageTex* img = attachmentImage(f, issueId, k, kThumbPx);
+    if (img && img->tex) {
+      const float sc = std::min(box / static_cast<float>(img->w), box / static_cast<float>(img->h));
+      const ImVec2 sz(static_cast<float>(img->w) * sc, static_cast<float>(img->h) * sc);
+      const ImVec2 a(p.x + (box - sz.x) / 2, p.y + (box - sz.y) / 2);
+      dl->AddImage(img->tex, a, ImVec2(a.x + sz.x, a.y + sz.y));
+    } else {
+      // 読み込み中（次のフレーム以降に出る）か、読めない画像
+      const float ic = u.m.s(18.f);
+      drawIcon(dl, "image", ImVec2(p.x + (box - ic) / 2, p.y + (box - ic) / 2), ic, img && img->failed ? u.t->late : u.t->muted);
+    }
+    dl->AddRect(p, q1, u.t->line, u.m.s(3.f));
+  }
+  for (std::size_t k = 0; k < shown; ++k) {
+    if (isImageFile(names[k])) continue;
+    ImGui::TextUnformatted(ellipsize(names[k], u.m.s(260.f)).c_str());
+  }
+  if (more > 0) ImGui::TextDisabled("ほか %d 件", static_cast<int>(more));
+  ImGui::EndTooltip();
+}
+}  // namespace
+
+float drawAttachBadge(Frame& f, const std::string& issueId, ImVec2 pos, float cy, int count, bool* clicked) {
   UiState& u = f.u;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const std::string n = std::to_string(count);
   const float w = u.m.s(16) + ImGui::CalcTextSize(n.c_str()).x + u.m.s(8);
   bool hov = false;
   if (clicked) {
-    ImGui::SetCursorScreenPos(ImVec2(pos.x - u.m.s(2), cy - u.m.s(9)));
+    const ImVec2 b0(pos.x - u.m.s(2), cy - u.m.s(9));
+    ImGui::SetCursorScreenPos(b0);
     if (ImGui::InvisibleButton("##att", ImVec2(w, u.m.s(18)))) *clicked = true;
     hov = ImGui::IsItemHovered();
-    if (hov) tip("添付ファイル（クリックで一覧）");
+    u.attachBadgeBuild.push_back({b0, ImVec2(b0.x + w, b0.y + u.m.s(18)), issueId});
+    // つかんでいる最中（添付のドラッグ）は出さない。載せて少し待ったときだけ（それまで画像は読まない）
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && !u.attachDrag.active) drawAttachTooltip(f, issueId);
   }
   const ImU32 col = hov ? u.t->accent : u.t->muted;
   drawIcon(dl, "paperclip", ImVec2(pos.x, cy - u.m.s(6)), u.m.s(12), col);
@@ -415,6 +473,7 @@ void drawAttachTab(Frame& f, int i) {
     ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("##row", ImVec2(W - btns, rowH));
     const bool hov = ImGui::IsItemHovered();
+    const bool hovDetail = ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);  // 項目の詳細（SHA-256）を出す
     bool grabbed = ImGui::IsItemActive();
     if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open = k;
     if (hov && !u.attachDrag.active) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + rowH), u.t->hover, u.m.s(4));
@@ -422,6 +481,7 @@ void drawAttachTab(Frame& f, int i) {
     const float box = thumbBox;
     const ImVec2 b0(p.x + u.m.s(2), p.y + (rowH - box) / 2), b1(b0.x + box, b0.y + box);
     const bool isImg = isImageFile(a.name);
+    bool failedHover = false;  // 読めない画像のアイコンの上（エラーの説明を出す）
     const UiState::ImageTex* img = isImg ? attachmentImage(f, id, k, kThumbPx) : nullptr;
     if (img && img->tex) {
       dl->AddRectFilled(b0, b1, u.t->surface3, u.m.s(3));
@@ -441,14 +501,14 @@ void drawAttachTab(Frame& f, int i) {
         const float tsc = std::min(1.f, std::min(u.m.s(220) / static_cast<float>(img->w), u.m.s(220) / static_cast<float>(img->h)));
         ImGui::Image(img->tex, ImVec2(static_cast<float>(img->w) * tsc, static_cast<float>(img->h) * tsc));
         ImGui::TextDisabled("クリックでプレビュー（%d × %d）／つかんで別の課題へ", img->origW, img->origH);
+        if (const std::string h = shortHashLine(a); !h.empty()) ImGui::TextDisabled("%s", h.c_str());
         ImGui::EndTooltip();
       }
     } else {
+      failedHover = img && img->failed && ImGui::IsMouseHoveringRect(b0, b1) && ImGui::IsWindowHovered();
       const char* icon = risky ? "warn" : (isImg ? "image" : "file");
       const ImU32 col = risky ? u.t->tight : (img && img->failed ? u.t->late : u.t->muted);
       drawIcon(dl, icon, ImVec2(b0.x + (box - u.m.s(18)) / 2, b0.y + (box - u.m.s(18)) / 2), u.m.s(18), col);
-      if (img && img->failed && ImGui::IsMouseHoveringRect(b0, b1) && ImGui::IsWindowHovered())
-        ImGui::SetTooltip("画像として読めません（壊れているか、対応していない形式です）");
     }
     if (grabbed && !u.attachDrag.active && !u.attachDragCancelled && ImGui::IsMouseDragging(ImGuiMouseButton_Left, dragPx)) {
       u.attachDrag.active = true;
@@ -467,6 +527,17 @@ void drawAttachTab(Frame& f, int i) {
     dl->AddText(ImVec2(tx, ty + ImGui::GetTextLineHeight() + u.m.s(2)), u.t->muted,
                 ellipsize(meta, W - btns - box - u.m.s(12)).c_str());
     if (beingDragged) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + rowH), withAlpha(u.t->surface, 0.55f));  // つかんでいる行は薄く
+    // 行にマウスを載せたら詳細（本体の SHA-256 の先頭 12 文字。画像のサムネイルの上は、サムネイルのツールチップに含める）。
+    // 読めない画像のアイコンの上は、エラーの説明（すぐ出す）と詳細（待ってから足す）を 1 つのツールチップにまとめる
+    // （ツールチップを 2 回作ると、あとのもので説明が消える）
+    const std::string hashLine = shortHashLine(a);
+    const bool showHash = hovDetail && !u.attachDrag.active && !hashLine.empty();
+    if (failedHover || showHash) {
+      ImGui::BeginTooltip();
+      if (failedHover) ImGui::TextUnformatted("画像として読めません（壊れているか、対応していない形式です）");
+      if (showHash) ImGui::TextDisabled("%s", hashLine.c_str());
+      ImGui::EndTooltip();
+    }
     ImGui::SetCursorScreenPos(ImVec2(p.x + W - btns + u.m.s(4), p.y + (rowH - ImGui::GetFrameHeight()) / 2));
     if (ImGui::SmallButton("開く")) open = k;
     if (risky) tip("実行ファイルやスクリプトです。開く前に確認します");

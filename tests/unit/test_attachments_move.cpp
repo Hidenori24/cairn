@@ -49,7 +49,7 @@ TEST_CASE("moveAttachment: 先に同じ名前があれば連番（本体だけ�
   Env e;
   e.add("1", "a.txt", "one");
   e.add("2", "a.txt", "two");
-  e.meta["2"].push_back({"a-2.txt", 3, "", ""});  // 本体は無いがメタ情報にある
+  e.meta["2"].push_back({"a-2.txt", 3, "", "", ""});  // 本体は無いがメタ情報にある
   const auto r = moveAttachment(e.fs, kProj, e.meta, "1", 0, "2");
   REQUIRE(r.ok());
   CHECK(r->name == "a-3.txt");
@@ -398,7 +398,7 @@ TEST_CASE("controller: コピーが合計の上限を超えるときは断る") 
   e.fs.put("ext/大.bin", std::string(1024, 'x'));
   REQUIRE(e.c.attachFiles(a, {"ext/大.bin"}).added.size() == 1);
   // 合計の上限に近い状態にする（メタ情報だけの別の添付で、合計をかさ上げする）
-  e.c.session()->attachments()["other"].push_back({"pad.bin", kMaxAttachProjectBytes - 1024, "", ""});
+  e.c.session()->attachments()["other"].push_back({"pad.bin", kMaxAttachProjectBytes - 1024, "", "", ""});
   CHECK_FALSE(e.c.copyAttachment(a, 0, b));
   CHECK(e.c.attachmentCount(b) == 0);
   CHECK(e.lastToast().find("合計") != std::string::npos);
