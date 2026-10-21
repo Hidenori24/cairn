@@ -492,6 +492,76 @@ int main(int argc, char** argv) {
     ui::applyStyle(*u.t, u.m);
     frames(2);
   }
+  // 依存のドラッグ（Issue #8）: 空いた場所で離すと出るメニュー「新しい後続（先行）の課題を作ってつなぐ」を、ガント・一覧・ボードで
+  {
+    ImGuiIO& io5 = ImGui::GetIO();
+    const auto menuShots = [&](const std::string& tag) {
+      for (const app::View view : {app::View::Gantt, app::View::List, app::View::Board}) {
+        const std::string nm = view == app::View::Gantt ? "gantt" : view == app::View::List ? "list" : "board";
+        c.setView(view);
+        c.setUi("zoom", "week");
+        c.clearSelection();
+        u.detailOpen = false;
+        u.sortKey.clear();
+        u.sortDir = 0;
+        u.customPx = 0;
+        u.scrollToBase = true;
+        io5.AddMousePosEvent(-1, -1);
+        frames(3);
+        const Tree& T = *c.session()->tree();
+        // つかむハンドル（右）と離す場所
+        ImVec2 hp(-1, -1);
+        bool found = false;
+        if (view == app::View::Gantt) {
+          for (const auto& g : u.barGeom) {
+            const int i = T.find(g.id);
+            if (!found && i >= 0 && T.isLeaf(i) && g.xl > u.ganttLeft + 40 && g.xr < 1300 && g.cy > 220 && g.cy < 520 && g.xr - g.xl > 12)
+              hp = ImVec2(g.xr + u.m.s(10.f), g.cy), found = true;
+          }
+        } else {
+          for (const auto& sl : u.linkSlots)
+            if (!found && sl.idx >= 0 && T.isLeaf(sl.idx) && sl.a.y > 200 && sl.b.y < 520 && sl.a.x > 10 && sl.b.x < 1430)
+              hp = sl.hr, found = true;
+        }
+        if (!found) continue;
+        io5.AddMousePosEvent(hp.x, hp.y);
+        frames(2);
+        io5.AddMouseButtonEvent(0, true);
+        frames(2);
+        io5.AddMousePosEvent(view == app::View::Board ? 700.f : 900.f, view == app::View::Board ? 600.f : 835.f);  // 行・カードのない場所
+        shot("30a_link_" + nm + "_drag_empty_" + tag);  // 空き領域の上: 離すとメニューを出す、のツールチップ
+        io5.AddMouseButtonEvent(0, false);
+        frames(4);
+        shot("30b_link_" + nm + "_menu_" + tag);
+        // 「新しい後続の課題を作ってつなぐ」: 作った課題の件名をその場で編集している様子。取り消しは Undo 1回
+        {
+          const auto& it = u.linkMenu.succItem;
+          io5.AddMousePosEvent((it.first.x + it.second.x) / 2, (it.first.y + it.second.y) / 2);
+          frames(2);
+          io5.AddMouseButtonEvent(0, true);
+          frames(2);
+          io5.AddMouseButtonEvent(0, false);
+          frames(4);
+          shot("30c_link_" + nm + "_created_" + tag);
+        }
+        io5.AddKeyEvent(ImGuiKey_Escape, true);
+        frames(1);
+        io5.AddKeyEvent(ImGuiKey_Escape, false);
+        frames(2);
+        c.undo();
+        frames(2);
+        io5.AddMousePosEvent(-1, -1);
+        frames(2);
+      }
+    };
+    menuShots("light");
+    u.t = &ui::darkTokens();
+    ui::applyStyle(*u.t, u.m);
+    menuShots("dark");
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    frames(2);
+  }
   // 依存の矢印（Issue #10）: ホバー・つなぎ替え・外す・たどる・クリティカル・日付の衝突を、ライト・ダークで
   {
     using Geom = ui::UiState::BarGeom;

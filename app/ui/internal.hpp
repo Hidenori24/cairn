@@ -57,10 +57,17 @@ struct LinkEval {
   const LinkPreview* pv = nullptr;       // 日程の影響（つなげるときだけ。u.linkDrag の中を指す）
   bool ok = false, bad = false;          // つなげる / 相手がいるのにつなげない（赤）
   ImU32 lineCol = 0;                     // 線・強調の色
+  bool open = false;                     // 相手のいない空き領域の上（離すと新しい課題を作るメニューを出す。呼び出し側が決める）
 };
 LinkEval linkDragEval(Frame& f, int tgt);
-// 離したら確定する（相手がいなければ取り消し）。課題を変えるのは描画が終わってから
+// 離したら確定する。相手がいなければ、空き領域（e.open）ならメニュー（drawLinkMenu）を出し、そうでなければ取り消し。
+// 課題を変えるのは描画が終わってから
 void linkDragFinish(Frame& f, const LinkEval& e);
+// 空き領域で離したときのメニュー「新しい後続（先行）の課題を作ってつなぐ」を描く（オーバーレイで毎フレーム呼ぶ）
+void drawLinkMenu(Frame& f);
+// 起点 anchor の兄弟として新しい課題を作り、succ なら 起点 → 新しい課題、そうでなければ 新しい課題 → 起点 とつなぐ（全体で Undo 1回）。
+// sameStatus = 状況を起点に合わせる（ボード）。つなげなければ作った課題も戻す。成功すると件名のその場編集を始める
+bool createLinkedIssue(Frame& f, const std::string& anchor, bool succ, bool sameStatus);
 void drawLinkHandle(Frame& f, ImVec2 hc, bool hot, bool ok = true);
 // ゴムひも（p0 から p1 まで）。sameSide = p1 にも p0 と同じ側から入る（一覧の左右の余白の中を通す）。minBend = 曲がりの最小
 void drawLinkRubber(Frame& f, ImVec2 p0, ImVec2 p1, bool fromRight, bool sameSide, float minBend, ImU32 col);

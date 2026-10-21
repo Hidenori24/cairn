@@ -79,9 +79,16 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, const 
     floatChip(u, r);
   }
   y += lh + u.m.s(3);
-  dl->AddText(ImVec2(x0, y), u.t->ink, ellipsize(T.name[id], w - u.m.s(inCard ? 44.f : 20.f)).c_str());
+  const bool editName = editing(u, sid, EditField::Name);
+  if (editName) {
+    // 作った直後の課題の件名をその場で決める（Enter で確定・Esc でやめる）
+    ImGui::SetCursorScreenPos(ImVec2(x0, y - u.m.s(2)));
+    drawInlineEdit(f, w - u.m.s(20));
+  } else {
+    dl->AddText(ImVec2(x0, y), u.t->ink, ellipsize(T.name[id], w - u.m.s(inCard ? 44.f : 20.f)).c_str());
+  }
   bool del = false;
-  if (inCard) {
+  if (inCard && !editName) {
     // 削除（通知の「元に戻す」で戻せる）
     const ImVec2 b(q.x - u.m.s(28), y - u.m.s(3));
     ImGui::SetCursorScreenPos(b);

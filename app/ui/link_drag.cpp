@@ -13,7 +13,7 @@ namespace roadmap::ui {
 
 bool linkDragIdle(const UiState& u) {
   return !u.linkPick.active && !u.barDrag.active && !u.rowDrag.active && !u.colDrag.active && !u.linkDrag.active &&
-         !u.arrowDrag.pending && !u.arrowDrag.active && u.dlg == Dlg::None && !u.paletteOpen &&
+         !u.arrowDrag.pending && !u.arrowDrag.active && !u.linkMenu.active && u.dlg == Dlg::None && !u.paletteOpen &&
          u.editField == EditField::None;
 }
 
@@ -76,8 +76,21 @@ void linkDragFinish(Frame& f, const LinkEval& e) {
   const Tree& T = *f.c.session()->tree();
   const std::string src = u.linkDrag.id;
   const bool fromRight = u.linkDrag.fromRight;
+  const std::string project = u.linkDrag.project;
+  const app::View view = u.linkDrag.view;
   u.linkDrag = {};
-  if (e.tgt < 0 || e.tgt >= T.n) return;  // 相手がいなければ取り消し
+  if (e.tgt < 0 || e.tgt >= T.n) {
+    // 相手がいなければ取り消し。ただし空き領域で離したときは、新しい課題を作るメニューを出す（Esc・外のクリックで取り消し）
+    if (e.open && u.dlg == Dlg::None) {
+      u.linkMenu = {};
+      u.linkMenu.request = true;
+      u.linkMenu.id = src;
+      u.linkMenu.fromRight = fromRight;
+      u.linkMenu.project = project;
+      u.linkMenu.view = view;
+    }
+    return;
+  }
   const std::string other = T.ids[static_cast<std::size_t>(e.tgt)];
   // 課題を変えるのは描画が終わってから（つなげない相手のときは理由の通知が出る）
   deferAfterFrame(f, [&f, src, other, fromRight] { linkIssues(f, src, fromRight, other, true); });
@@ -116,7 +129,10 @@ void drawLinkTip(Frame& f, const LinkEval& e, const char* noun) {
   const std::string a = T.did[static_cast<std::size_t>(e.fromRight ? e.src : std::max(e.tgt, 0))];
   const std::string b = T.did[static_cast<std::size_t>(e.fromRight ? std::max(e.tgt, 0) : e.src)];
   ImGui::BeginTooltip();
-  if (e.tgt < 0) {
+  if (e.tgt < 0 && e.open) {
+    ImGui::TextUnformatted(e.fromRight ? "離すと、新しい後続の課題を作るメニューを出します" : "離すと、新しい先行の課題を作るメニューを出します");
+    ImGui::TextDisabled("%s", (std::string("既存の") + noun + "の上で離すとつなぎます（Esc で取り消し）").c_str());
+  } else if (e.tgt < 0) {
     ImGui::TextUnformatted((std::string("つなぐ相手の") + noun + "までドラッグ（Esc で取り消し）").c_str());
   } else if (e.bad) {
     ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
@@ -214,7 +230,9 @@ void drawLinkOverlay(Frame& f, app::View view, const LinkOverlayOpts& o) {
       if (sl.idx == si) srcSlot = &sl;
       else if (!tgtSlot && inRect(mp, o.clipMin, o.clipMax) && overSlot(sl, mp)) tgtSlot = &sl;
     }
-    const LinkEval e = linkDragEval(f, tgtSlot ? tgtSlot->idx : -1);
+    LinkEval e = linkDragEval(f, tgtSlot ? tgtSlot->idx : -1);
+    // 行・カードのない場所（つかんだ課題自身の上は「元の場所」で取り消し）なら、離したときに新しい課題を作るメニューを出す
+    e.open = !tgtSlot && inRect(mp, o.clipMin, o.clipMax) && !(srcSlot && overSlot(*srcSlot, mp));
     const bool fromRight = e.fromRight;
     // 同じ側の端どうしをつなぐか（一覧は常に。ボードは同じ列のとき）
     const bool same = tgtSlot && (o.sameSide || (o.sameColumn && srcSlot && std::abs(srcSlot->a.x - tgtSlot->a.x) < 1.f));
@@ -256,6 +274,72 @@ void drawLinkOverlay(Frame& f, app::View view, const LinkOverlayOpts& o) {
     }
   }
   dl->PopClipRect();
+}
+
+void drawLinkMenu(Frame& f) {
+  UiState& u = f.u;
+  UiState::LinkMenu& m = u.linkMenu;
+  Session* s = f.c.session();
+  const auto valid = [&] {
+    return s && s->tree() && s->tree()->find(m.id) >= 0 && f.c.currentId() == m.project && f.c.view() == m.view && u.dlg == Dlg::None &&
+           !u.paletteOpen;
+  };
+  if (m.request) {
+    m.request = false;
+    if (valid()) {
+      ImGui::OpenPopup("##linkmenu");
+      m.active = true;
+    } else {
+      m = {};
+    }
+  }
+  if (!m.active) return;
+  if (!ImGui::BeginPopup("##linkmenu")) {
+    // Esc などで閉じられた。同じ Esc でアプリ側が選択を外さないよう、閉じたフレームを覚える
+    const int esc = ImGui::IsKeyPressed(ImGuiKey_Escape, false) ? ImGui::GetFrameCount() : m.escFrame;
+    m = {};
+    m.escFrame = esc;
+    return;
+  }
+  if (!valid() || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) m.escFrame = ImGui::GetFrameCount();
+    ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+    m.active = false;
+    return;
+  }
+  const Tree& T = *s->tree();
+  ImGui::TextDisabled("%s", (T.did[static_cast<std::size_t>(T.find(m.id))] + " に新しい課題を作る").c_str());
+  ImGui::Separator();
+  int act = 0;  // 1 = 後続を作る 2 = 先行を作る 3 = 取り消し
+  const auto item = [&](const char* label, bool primary, int which, std::pair<ImVec2, ImVec2>& rect) {
+    if (primary) ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->accent));
+    if (ImGui::MenuItem(label)) act = which;
+    if (primary) ImGui::PopStyleColor();
+    rect = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
+  };
+  // ハンドルの向きで主になる項目（右 = 後続、左 = 先行）を先に並べる
+  const char* succLabel = "新しい後続の課題を作ってつなぐ";
+  const char* predLabel = "新しい先行の課題を作ってつなぐ";
+  if (m.fromRight) {
+    item(succLabel, true, 1, m.succItem);
+    item(predLabel, false, 2, m.predItem);
+  } else {
+    item(predLabel, true, 2, m.predItem);
+    item(succLabel, false, 1, m.succItem);
+  }
+  ImGui::Separator();
+  item("取り消し", false, 3, m.cancelItem);
+  ImGui::EndPopup();
+  if (act != 0) {
+    m.active = false;  // 選んだ時点でメニューは閉じている
+    if (act != 3) {
+      const std::string id = m.id;
+      const bool succ = act == 1, sameStatus = m.view == app::View::Board;
+      // 描画中に課題の数を変えない（描画が終わってから）
+      deferAfterFrame(f, [&f, id, succ, sameStatus] { createLinkedIssue(f, id, succ, sameStatus); });
+    }
+  }
 }
 
 }  // namespace roadmap::ui
