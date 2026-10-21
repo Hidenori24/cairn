@@ -1,79 +1,55 @@
 #include "ui/theme.hpp"
 
+#include "roadmap/theme_colors.hpp"
+
 namespace roadmap::ui {
 
 namespace {
 constexpr ImU32 rgb(unsigned v) { return IM_COL32((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF, 0xFF); }
-constexpr ImU32 rgba(int r, int g, int b, float a) { return IM_COL32(r, g, b, static_cast<int>(a * 255 + 0.5f)); }
+ImU32 rgba(const AlphaRgb& c) {
+  return IM_COL32((c.rgb >> 16) & 0xFF, (c.rgb >> 8) & 0xFF, c.rgb & 0xFF, static_cast<int>(c.a * 255 + 0.5f));
+}
+
+// 色の値は core/theme_colors（HTML への書き出しと共有）。ここでは ImU32 に直すだけ
+Tokens tokensFrom(const ThemeColors& k) {
+  Tokens x{};
+  x.bg = rgb(k.bg);
+  x.surface = rgb(k.surface);
+  x.surface2 = rgb(k.surface2);
+  x.surface3 = rgb(k.surface3);
+  x.ink = rgb(k.ink);
+  x.muted = rgb(k.muted);
+  x.line = rgb(k.line);
+  x.line2 = rgb(k.line2);
+  x.accent = rgb(k.accent);
+  x.accentInk = rgb(k.accentInk);
+  x.accentBg = rgb(k.accentBg);
+  x.late = rgb(k.late);
+  x.lateBg = rgb(k.lateBg);
+  x.tight = rgb(k.tight);
+  x.tightBg = rgb(k.tightBg);
+  x.tightEdge = rgb(k.tightEdge);
+  x.ok = rgb(k.ok);
+  x.okBg = rgb(k.okBg);
+  for (int i = 0; i < 8; ++i) x.c[i] = rgb(k.c[i]);
+  x.hover = rgba(k.hover);
+  x.selbg = rgba(k.selbg);
+  x.rowline = rgba(k.rowline);
+  x.wkend = rgba(k.wkend);
+  x.holbg = rgba(k.holbg);
+  x.arrow = rgb(k.arrow);
+  x.dark = k.dark;
+  return x;
+}
 }  // namespace
 
 const Tokens& lightTokens() {
-  static const Tokens t = [] {
-    Tokens x{};
-    x.bg = rgb(0xf5f6f8);
-    x.surface = rgb(0xffffff);
-    x.surface2 = rgb(0xf4f5f7);
-    x.surface3 = rgb(0xe9ecf0);
-    x.ink = rgb(0x1a2230);
-    x.muted = rgb(0x667085);
-    x.line = rgb(0xe4e7ec);
-    x.line2 = rgb(0xcfd4dc);
-    x.accent = rgb(0x2563eb);
-    x.accentInk = rgb(0xffffff);
-    x.accentBg = rgb(0xe8f0ff);
-    x.late = rgb(0xd92d20);
-    x.lateBg = rgb(0xfdecea);
-    x.tight = rgb(0xb54708);
-    x.tightBg = rgb(0xfff1dc);
-    x.tightEdge = rgb(0xe08a1e);
-    x.ok = rgb(0x12805c);
-    x.okBg = rgb(0xe3f5ec);
-    const unsigned c[8] = {0x7d8798, 0xb5667f, 0x5b86d6, 0x3f8f88, 0x8c78c6, 0xa38a4a, 0x4793b3, 0xa56db0};
-    for (int i = 0; i < 8; ++i) x.c[i] = rgb(c[i]);
-    x.hover = rgba(26, 34, 48, .04f);
-    x.selbg = rgba(37, 99, 235, .10f);
-    x.rowline = rgba(26, 34, 48, .06f);
-    x.wkend = rgba(26, 34, 48, .035f);
-    x.holbg = rgba(26, 34, 48, .06f);
-    x.arrow = rgb(0x98a2b3);
-    x.dark = false;
-    return x;
-  }();
+  static const Tokens t = tokensFrom(lightColors());
   return t;
 }
 
 const Tokens& darkTokens() {
-  static const Tokens t = [] {
-    Tokens x{};
-    x.bg = rgb(0x0e1116);
-    x.surface = rgb(0x161b22);
-    x.surface2 = rgb(0x1b222b);
-    x.surface3 = rgb(0x252d38);
-    x.ink = rgb(0xe6e9ee);
-    x.muted = rgb(0x8b95a5);
-    x.line = rgb(0x262e39);
-    x.line2 = rgb(0x37414e);
-    x.accent = rgb(0x6ea0ff);
-    x.accentInk = rgb(0x0b1220);
-    x.accentBg = rgb(0x1a2a48);
-    x.late = rgb(0xff7b6f);
-    x.lateBg = rgb(0x3a1d1b);
-    x.tight = rgb(0xf0b34a);
-    x.tightBg = rgb(0x382a10);
-    x.tightEdge = rgb(0xf0b34a);
-    x.ok = rgb(0x58c987);
-    x.okBg = rgb(0x16301f);
-    const unsigned c[8] = {0x8f9aae, 0xd0809b, 0x6c98ea, 0x4fb0a7, 0xa891e0, 0xc5a85c, 0x5db0d2, 0xc68bd0};
-    for (int i = 0; i < 8; ++i) x.c[i] = rgb(c[i]);
-    x.hover = rgba(230, 233, 238, .05f);
-    x.selbg = rgba(110, 160, 255, .16f);
-    x.rowline = rgba(230, 233, 238, .06f);
-    x.wkend = rgba(230, 233, 238, .035f);
-    x.holbg = rgba(230, 233, 238, .07f);
-    x.arrow = rgb(0x667085);
-    x.dark = true;
-    return x;
-  }();
+  static const Tokens t = tokensFrom(darkColors());
   return t;
 }
 

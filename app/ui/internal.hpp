@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "roadmap/commands.hpp"
+#include "roadmap/gantt_geom.hpp"
 #include "ui/app_ui.hpp"
 #include "ui/strings.hpp"
 #include "ui/widgets.hpp"
@@ -122,10 +123,7 @@ inline bool isDimmed(const UiState& u, const std::vector<char>& dim, int id, con
   return !dim.empty() && dim[id] && u.editId != sid;
 }
 
-// ルート課題の色番号（子を持つか Epic のルートだけ 1〜7、ほかは 0。JS版 rootIndexMap）
-std::vector<int> rootIndexMap(const Tree& T, const std::vector<Issue>& issues);
-// 担当者名のハッシュ（h = h*31 + ch を32bit符号なしで）
-unsigned nameHash(const std::string& s);
+// ルート課題の色番号 rootIndexMap と担当者名のハッシュ nameHash は core/gantt_geom（書き出しと共有）
 // ゴール（子を持たず、種別かラベルが Milestone）
 bool isGoal(const Tree& T, const std::vector<Issue>& issues, int id);
 // 世代名（最上位・子・孫・ひ孫・玄孫・第N世代）

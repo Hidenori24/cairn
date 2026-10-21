@@ -36,6 +36,7 @@ const char* titleOf(Dlg d) {
     case Dlg::PasteChildren: return "貼り付けた内容を子課題として追加";
     case Dlg::AttachOpenWarn: return "実行できるファイルです";
     case Dlg::AttachPreview: return "画像のプレビュー";
+    case Dlg::ExportHtml: return "HTML に書き出す";
     default: return "";
   }
 }
@@ -48,6 +49,7 @@ float widthOf(const UiState& u, Dlg d) {
     case Dlg::Conflict:
     case Dlg::ConfirmQuit: return u.m.s(460);
     case Dlg::Import:
+    case Dlg::ExportHtml:
     case Dlg::Export: return u.m.s(640);
     case Dlg::Folder: return u.m.s(600);
     case Dlg::Settings: return u.m.s(620);
@@ -68,7 +70,8 @@ void close(Frame& f) {
 }
 
 // 下端のボタン列（右寄せ。主ボタンは右端）。押されたボタンの番号（0 = 主ボタン）を返す。なければ -1
-int buttons(Frame& f, std::initializer_list<const char*> labels, bool danger = false) {
+// primaryEnabled = false のときは、主ボタンだけ押せない（副ボタンは押せる）
+int buttons(Frame& f, std::initializer_list<const char*> labels, bool danger = false, bool primaryEnabled = true) {
   UiState& u = f.u;
   ImGui::Spacing();
   ImGui::Separator();
@@ -85,7 +88,9 @@ int buttons(Frame& f, std::initializer_list<const char*> labels, bool danger = f
   ImGui::PushStyleColor(ImGuiCol_Button, v4(danger ? u.t->late : u.t->accent));
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered, v4(withAlpha(danger ? u.t->late : u.t->accent, 0.85f)));
   ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->accentInk));
-  if (ImGui::Button(v[0], ImVec2(ImGui::CalcTextSize(v[0]).x + u.m.s(28), 0))) pressed = 0;
+  if (!primaryEnabled) ImGui::BeginDisabled();
+  if (ImGui::Button(v[0], ImVec2(ImGui::CalcTextSize(v[0]).x + u.m.s(28), 0)) && primaryEnabled) pressed = 0;
+  if (!primaryEnabled) ImGui::EndDisabled();
   ImGui::PopStyleColor(3);
   return pressed;
 }
@@ -268,6 +273,105 @@ void dlgExport(Frame& f) {
   } else if (b == 2) {
     ImGui::SetClipboardText(text.c_str());
     f.c.toast("コピーしました");
+  } else if (b == 1) {
+    close(f);
+  }
+}
+
+// 報告（HTML）の書き出し（Issue #42）。内容・範囲・見た目を選び、「書き出す…」で保存先を選んで書く
+void dlgExportHtml(Frame& f) {
+  UiState& u = f.u;
+  app::AppController& c = f.c;
+  Session* s = c.session();
+  if (!s || !s->tree()) return close(f);
+  ExportOptions& r = u.rep;
+  if (ImGui::IsWindowAppearing()) {
+    // 画面の今の状態から始める（拡大率・色分け）。テーマは印刷向けのライトが既定
+    r = ExportOptions{};
+    const std::string z = c.uiStr("zoom", "week");
+    r.zoom = (z == "day" || z == "month" || z == "all") ? z : "week";
+    const std::string cb = c.uiStr("colorBy", "root");
+    r.colorBy = (cb == "float" || cb == "asg") ? cb : "root";
+    u.repScope = 0;
+  }
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextUnformatted("ガント・統計・リストを、ブラウザで開ける1つのHTMLファイルに書き出します。外部のファイルは読まず、印刷（PDFとして保存）にも使えます。");
+  ImGui::PopTextWrapPos();
+
+  ImGui::SeparatorText("書き出す内容");
+  ImGui::Checkbox("ガント", &r.gantt);
+  ImGui::SameLine(0, u.m.s(20));
+  ImGui::Checkbox("統計", &r.stats);
+  ImGui::SameLine(0, u.m.s(20));
+  ImGui::Checkbox("リスト", &r.list);
+
+  const bool sel1 = c.selection().size() == 1 && s->issue(c.selection()[0]) != nullptr;
+  if (r.gantt || r.list) {
+    ImGui::SeparatorText("ガントとリストの範囲");
+    ImGui::RadioButton("プロジェクト全体", &u.repScope, 0);
+    ImGui::SameLine(0, u.m.s(16));
+    ImGui::RadioButton("今の表示のまま（絞り込み・折りたたみ）", &u.repScope, 1);
+    if (!sel1 && u.repScope == 2) u.repScope = 0;
+    ImGui::BeginDisabled(!sel1);
+    ImGui::RadioButton("選んだ課題とその配下", &u.repScope, 2);
+    ImGui::EndDisabled();
+    if (!sel1) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("（課題を1つ選ぶと使えます）");
+    }
+  }
+  if (r.gantt) {
+    ImGui::SeparatorText("ガントの見た目");
+    ImGui::TextUnformatted("拡大率");
+    ImGui::SameLine();
+    for (const auto& [k, l] : {std::pair<const char*, const char*>{"day", "日"}, {"week", "週"}, {"month", "月"}, {"all", "全体"}}) {
+      if (ImGui::RadioButton(l, r.zoom == k)) r.zoom = k;
+      ImGui::SameLine();
+    }
+    ImGui::NewLine();
+    ImGui::TextUnformatted("色分け");
+    ImGui::SameLine();
+    for (const auto& [k, l] : {std::pair<const char*, const char*>{"root", "Epic"}, {"float", "余裕"}, {"asg", "担当者"}}) {
+      if (ImGui::RadioButton(l, r.colorBy == k)) r.colorBy = k;
+      ImGui::SameLine();
+    }
+    ImGui::NewLine();
+    ImGui::Checkbox("依存の矢印を出す", &r.showDeps);
+  }
+  ImGui::SeparatorText("色");
+  if (ImGui::RadioButton("ライト（印刷向け・既定）", !r.dark)) r.dark = false;
+  ImGui::SameLine(0, u.m.s(16));
+  if (ImGui::RadioButton("ダーク", r.dark)) r.dark = true;
+
+  // 個人情報の注意
+  ImGui::Spacing();
+  ImGui::PushTextWrapPos(0);
+  ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->tight));
+  ImGui::TextUnformatted("担当者名・件名がファイルに入ります。メールや共有フォルダに置く前に、内容を確かめてください。");
+  ImGui::PopStyleColor();
+  ImGui::PopTextWrapPos();
+  const std::size_t n = s->tree() ? static_cast<std::size_t>(s->tree()->n) : 0;
+  if (r.gantt && n > kReportMaxGanttRows)
+    ImGui::TextDisabled("課題が %zu 件あります。ガントは先頭の %zu 行までです（リストには全部出ます）。", n, kReportMaxGanttRows);
+  const bool any = r.gantt || r.stats || r.list;
+  if (!any) {
+    ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
+    ImGui::TextUnformatted("書き出す内容を1つ以上選んでください。");
+    ImGui::PopStyleColor();
+  }
+
+  const int b = buttons(f, {"書き出す…", "閉じる"}, false, any);
+  if (b == 0) {
+    ExportOptions opt = r;
+    opt.scope = u.repScope == 1 ? ReportScope::Current : u.repScope == 2 ? ReportScope::Subtree : ReportScope::All;
+    const std::string name = c.reportFileName();
+    close(f);
+    // ダイアログを閉じて、描画が終わってから保存先を選んで書く（OS の保存ダイアログが出る間、画面の参照を持たない）
+    deferAfterFrame(f, [&f, opt, name] {
+      const auto path = f.p.pickSaveFile(name, "html", "HTML ファイル");
+      if (!path) return;  // やめた
+      (void)f.c.exportReport(*path, opt);
+    });
   } else if (b == 1) {
     close(f);
   }
@@ -1040,6 +1144,7 @@ void drawDialogs(Frame& f) {
     case Dlg::PasteChildren: dlgPasteChildren(f); break;
     case Dlg::AttachOpenWarn: dlgAttachOpenWarn(f); break;
     case Dlg::AttachPreview: dlgAttachPreview(f); break;
+    case Dlg::ExportHtml: dlgExportHtml(f); break;
     default: close(f); break;
   }
   if (!open) close(f);

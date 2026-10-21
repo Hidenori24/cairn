@@ -12,6 +12,7 @@
 
 #include "roadmap/attachments.hpp"
 #include "roadmap/commands.hpp"
+#include "roadmap/report.hpp"
 #include "roadmap/store.hpp"
 
 namespace roadmap::app {
@@ -26,6 +27,7 @@ struct Toast {
   int id = 0;
   std::string text;
   NoticeAction action = NoticeAction::None;
+  std::string arg;  // 動作の引数（OpenFolder のフォルダ）
   std::int64_t expiresAt = 0;
 };
 
@@ -71,6 +73,15 @@ class AppController {
   bool confirmJsonImport(bool overwrite);
   std::string exportText(const std::string& kind) const;  // "jira" / "app" / "share" / "backup"
   std::string exportFileName(const std::string& kind) const;
+
+  // ---- 報告（HTML）の書き出し（Issue #42）----
+  // 既定のファイル名 "<プロジェクト名>_<今日>.html"
+  std::string reportFileName() const;
+  // 画面の状態（絞り込み・薄くする課題・選択・基準日）から HTML を組み立てる。ファイルには触れない。
+  // プロジェクトを開いていない・範囲が「選んだ課題の配下」なのに課題が 1 つだけ選ばれていないときはエラー
+  Result<std::string> buildReport(const ExportOptions& opt) const;
+  // 組み立てて path に書く。成功したら「フォルダを開く」つきの通知、失敗したら理由を通知する（例外は出さない）
+  Status exportReport(const std::string& path, const ExportOptions& opt);
 
   // ---- 表示状態（settings.ui。取り消しの対象外）----
   View view() const;
@@ -172,7 +183,7 @@ class AppController {
 
   // ---- 通知・保存状態 ----
   const std::vector<Toast>& toasts() const { return toasts_; }
-  void toast(const std::string& text, NoticeAction a = NoticeAction::None);
+  void toast(const std::string& text, NoticeAction a = NoticeAction::None, const std::string& arg = {});
   void dismissToast(int id);
   void runToastAction(int id);
   SaveState saveState() const { return saveState_; }

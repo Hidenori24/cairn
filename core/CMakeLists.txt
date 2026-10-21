@@ -30,6 +30,12 @@ add_library(roadmap_core STATIC
   src/jira_check.cpp
   src/stats.cpp
   src/load.cpp
+  src/theme_colors.cpp
+  src/gantt_geom.cpp
+  src/report.cpp
+  src/report_gantt.cpp
+  src/report_stats.cpp
+  src/report_list.cpp
   src/gen.cpp
   ${_gen}/sample_hierarchy.cpp
   ${_gen}/sample_leveling.cpp

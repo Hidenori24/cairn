@@ -26,6 +26,7 @@ class Win32Platform final : public ui::IPlatform {
   std::optional<std::pair<std::string, std::string>> openTextFile() override;
   bool saveTextFile(const std::string& suggestedName, const std::string& content) override;
   void openFolder(const std::string& path) override;
+  std::optional<std::string> pickSaveFile(const std::string& suggestedName, const std::string& ext, const std::string& typeLabel) override;
   void openFile(const std::string& path) override;
   ImTextureID createTexture(const unsigned char* rgba, int w, int h) override;
   void releaseTexture(ImTextureID tex) override;

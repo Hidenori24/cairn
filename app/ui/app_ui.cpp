@@ -18,20 +18,6 @@ using app::AppController;
 using app::View;
 
 // ---------------------------------------------------------------- 小道具
-std::vector<int> rootIndexMap(const Tree& T, const std::vector<Issue>& issues) {
-  std::vector<int> m(T.n, 0);
-  int n = 0;
-  for (int r : T.roots) m[r] = (!T.kids[r].empty() || isEpic(issues[r])) ? (n++ % 7) + 1 : 0;
-  for (int id : T.dfs) m[id] = m[T.rootOf[id]];
-  return m;
-}
-
-unsigned nameHash(const std::string& s) {
-  unsigned h = 0;
-  for (unsigned char ch : s) h = h * 31u + ch;
-  return h;
-}
-
 bool isGoal(const Tree& T, const std::vector<Issue>& issues, int id) {
   return T.kids[id].empty() && isMilestone(issues[id]);
 }
@@ -679,6 +665,8 @@ void drawTopBar(Frame& f) {
     if (ImGui::MenuItem("担当者の負荷", nullptr, false, s != nullptr)) openDialog(f, Dlg::Workload);
     if (ImGui::MenuItem("読み込み時の注意", nullptr, false, s != nullptr)) openDialog(f, Dlg::Warnings);
     ImGui::Separator();
+    if (ImGui::MenuItem("HTML に書き出す…", nullptr, false, s != nullptr && s->tree() != nullptr)) openDialog(f, Dlg::ExportHtml);
+    ImGui::Separator();
     ImGui::TextDisabled("テーマ");
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"auto", "自動"}, {"light", "ライト"}, {"dark", "ダーク"}})
       if (ImGui::MenuItem(l, nullptr, c.prefs().theme == k)) c.setTheme(k);
@@ -954,7 +942,12 @@ void drawToasts(Frame& f) {
   const auto toasts = c.toasts();
   for (auto it = toasts.rbegin(); it != toasts.rend(); ++it) {
     const auto& t = *it;
-    const float w = std::min(u.m.s(520), ImGui::CalcTextSize(t.text.c_str()).x + u.m.s(140));
+    // 「フォルダを開く」は「元に戻す」より幅が広いので、通知の幅とボタンの位置を広げる（元に戻す・動作なしの通知は変えない）
+    const bool openFolder = t.action == NoticeAction::OpenFolder && !t.arg.empty();
+    const char* const folderLabel = "フォルダを開く";
+    const float folderW = ImGui::CalcTextSize(folderLabel).x + u.m.s(20);
+    const float w = openFolder ? std::min(u.m.s(640), ImGui::CalcTextSize(t.text.c_str()).x + u.m.s(70) + folderW)
+                               : std::min(u.m.s(520), ImGui::CalcTextSize(t.text.c_str()).x + u.m.s(140));
     const float h = u.m.s(40);
     y -= h;
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + u.m.s(16), y));
@@ -967,12 +960,23 @@ void drawToasts(Frame& f) {
                      ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
     ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->dark ? u.t->ink : u.t->surface));
     ImGui::SetCursorPosY(u.m.s(10));
-    ImGui::TextUnformatted(ellipsize(t.text, w - u.m.s(130)).c_str());
+    ImGui::TextUnformatted(ellipsize(t.text, openFolder ? w - u.m.s(70) - folderW : w - u.m.s(130)).c_str());
     ImGui::PopStyleColor();
     if (t.action == NoticeAction::Undo) {
       ImGui::SameLine(w - u.m.s(120));
       ImGui::SetCursorPosY(u.m.s(6));
       if (ImGui::SmallButton(S::kUndo)) c.runToastAction(t.id);
+    } else if (openFolder) {
+      ImGui::SameLine(w - u.m.s(50) - folderW);
+      ImGui::SetCursorPosY(u.m.s(6));
+      if (ImGui::SmallButton(folderLabel)) {
+        const std::string folder = t.arg;
+        const int id = t.id;
+        deferAfterFrame(f, [&f, folder, id] {
+          f.p.openFolder(folder);
+          f.c.dismissToast(id);
+        });
+      }
     }
     ImGui::SameLine(w - u.m.s(36));
     ImGui::SetCursorPosY(u.m.s(6));

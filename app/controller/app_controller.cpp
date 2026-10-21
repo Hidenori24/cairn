@@ -600,6 +600,61 @@ std::string AppController::exportFileName(const std::string& kind) const {
   return name + ".csv";
 }
 
+// ---------------------------------------------------------------- 報告（HTML）の書き出し
+namespace {
+// パスの親のフォルダ（区切りは / か \\）。ファイル名だけなら空。ルート直下はルート自身
+std::string parentFolder(const std::string& path) {
+  const std::size_t p = path.find_last_of("/\\");
+  if (p == std::string::npos) return {};
+  if (p == 0) return path.substr(0, 1);
+  if (path[p - 1] == ':') return path.substr(0, p + 1);  // "C:\\x.html" → "C:\\"
+  return path.substr(0, p);
+}
+}  // namespace
+
+std::string AppController::reportFileName() const {
+  return roadmap::reportFileName(session_ ? session_->settings().name : std::string(), clock_.todayIso());
+}
+
+Result<std::string> AppController::buildReport(const ExportOptions& opt) const {
+  const Session* s = session_.get();
+  if (!s || !s->tree() || !s->rows()) return Error{"プロジェクトが開かれていません"};
+  ExportInput in(*s->tree(), s->viewIssues(), *s->rows(), s->calendar());
+  in.base = s->baseDay();
+  in.projectName = s->settings().name;
+  in.resource = s->settings().resource;
+  in.clock = &clock_;
+  if (opt.scope == ReportScope::Current) {
+    in.currentRows = visibleRows();
+    in.dimmed = dimmedSet();
+    in.dimAlpha = static_cast<float>(prefs_.dimPercent) / 100.f;
+    if (filterActive()) in.filterLabel = filterLabel();
+  } else if (opt.scope == ReportScope::Subtree) {
+    if (sel_.size() != 1) return Error{"配下を書き出すには、課題を1つだけ選んでください"};
+    in.subtreeRoot = s->tree()->find(sel_[0]);
+    if (in.subtreeRoot < 0) return Error{"選んだ課題が見つかりません"};
+  }
+  return exportHtml(in, opt);
+}
+
+Status AppController::exportReport(const std::string& path, const ExportOptions& opt) {
+  const auto html = buildReport(opt);
+  if (!html.ok()) {
+    toast("書き出せません: " + html.error());
+    return Error{html.error()};
+  }
+  const Status st = writeReport(fs_, path, html.value());
+  if (!st.ok()) {
+    toast("書き出せません: " + st.error());
+    return st;
+  }
+  const std::string folder = parentFolder(path);
+  const std::size_t slash = path.find_last_of("/\\");
+  const std::string file = slash == std::string::npos ? path : path.substr(slash + 1);
+  toast("書き出しました: " + file, folder.empty() ? NoticeAction::None : NoticeAction::OpenFolder, folder);
+  return okStatus();
+}
+
 void AppController::releaseFrame() {
   retiredSessions_.clear();
   if (session_) session_->releaseFrame();
@@ -946,11 +1001,12 @@ void AppController::dismissHint() {
   savePrefs();
 }
 
-void AppController::toast(const std::string& text, NoticeAction a) {
+void AppController::toast(const std::string& text, NoticeAction a, const std::string& arg) {
   Toast t;
   t.id = ++toastSeq_;
   t.text = text;
   t.action = a;
+  t.arg = arg;
   t.expiresAt = now() + (a == NoticeAction::None ? 3600 : 7000);
   toasts_.push_back(std::move(t));
   if (toasts_.size() > 6) toasts_.erase(toasts_.begin());

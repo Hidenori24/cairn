@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "app_controller.hpp"
+#include "roadmap/report.hpp"
 #include "roadmap/samples.hpp"
 
 using namespace roadmap;
@@ -480,4 +481,75 @@ TEST_CASE("controller: 平置きは自動では動かさず、知らせて、操
   CHECK(e.c.deleteCurrentProject());
   CHECK(e.fs.exists("data/_削除済み/古い.20261019-183600/project.csv"));
   CHECK_FALSE(e.fs.exists("data/古い/project.csv"));
+}
+
+TEST_CASE("controller: 報告（HTML）の書き出し — 範囲・既定のファイル名・保存・通知") {
+  Env e;
+  e.c.start();
+  // プロジェクトを開く前は組み立てられない（落ちない）
+  CHECK_FALSE(e.c.buildReport(ExportOptions{}).ok());
+  e.c.createProject(SampleKind::Hierarchy, "階層/デモ", "DEV");
+  REQUIRE(e.c.session());
+  // 既定のファイル名は <プロジェクト名>_<今日>.html（使えない文字は _）
+  CHECK(e.c.reportFileName() == "階層_デモ_2026-10-19.html");
+
+  ExportOptions all;
+  auto r = e.c.buildReport(all);
+  REQUIRE(r.ok());
+  CHECK(r.value().find("<h1>階層/デモ</h1>") != std::string::npos);
+  CHECK(r.value().find("出力 <b>2026/10/19 18:36</b>") != std::string::npos);  // 出力日時は IClock から
+  const std::size_t allRows = r.value().size();
+
+  // 今の絞り込みのまま: 絞り込みに合う行だけ（絞り込みの種類の名前は出るが、検索語は書かない）
+  e.c.filter().q = "ZZZ-存在しない-検索語";
+  ExportOptions cur;
+  cur.scope = ReportScope::Current;
+  auto rc = e.c.buildReport(cur);
+  REQUIRE(rc.ok());
+  CHECK(rc.value().find("表示範囲: 画面の表示のまま（絞り込み: 検索）") != std::string::npos);
+  CHECK(rc.value().find("ZZZ-存在しない-検索語") == std::string::npos);
+  CHECK(rc.value().find("表示する課題がありません") != std::string::npos);
+  CHECK(rc.value().size() < allRows);
+  e.c.clearFilter();
+
+  // 選んだ課題の配下: 1 つ選んでいないと断る
+  ExportOptions sub;
+  sub.scope = ReportScope::Subtree;
+  e.c.clearSelection();
+  auto none = e.c.buildReport(sub);
+  CHECK_FALSE(none.ok());
+  CHECK_FALSE(none.error().empty());
+  const std::string root = e.c.session()->tree()->ids[static_cast<std::size_t>(e.c.session()->tree()->roots[0])];
+  e.c.select(root);
+  auto rs = e.c.buildReport(sub);
+  REQUIRE(rs.ok());
+  CHECK(rs.value().find("とその配下") != std::string::npos);
+
+  // 保存: 書いて、「フォルダを開く」つきで通知する
+  CHECK(e.fs.makeDirs("out").ok());
+  auto st = e.c.exportReport("out/報告.html", all);
+  CHECK(st.ok());
+  REQUIRE(e.fs.exists("out/報告.html"));
+  CHECK(e.fs.content("out/報告.html").compare(0, 15, "<!doctype html>") == 0);
+  REQUIRE_FALSE(e.c.toasts().empty());
+  CHECK(e.c.toasts().back().action == NoticeAction::OpenFolder);
+  CHECK(e.c.toasts().back().arg == "out");
+  CHECK(e.c.toasts().back().text.find("書き出しました") == 0);
+
+  // 失敗は戻り値と通知で返す（落とさない・古いファイルを壊さない）
+  const std::string before = e.fs.content("out/報告.html");
+  e.fs.setFailWrites(true);
+  auto bad = e.c.exportReport("out/報告.html", all);
+  CHECK_FALSE(bad.ok());
+  CHECK(e.c.toasts().back().text.find("書き出せません") == 0);
+  CHECK(e.c.toasts().back().action == NoticeAction::None);
+  CHECK(e.fs.content("out/報告.html") == before);
+  e.fs.setFailWrites(false);
+  // 拡張子が違う保存先は断る
+  CHECK_FALSE(e.c.exportReport("out/報告.exe", all).ok());
+  CHECK_FALSE(e.fs.exists("out/報告.exe"));
+  CHECK(e.c.toasts().back().text.find("書き出せません") == 0);
+  // 通知から「フォルダを開く」は UI の役目。コントローラの runToastAction は何もしない（落ちない）
+  const int id = e.c.toasts().back().id;
+  e.c.runToastAction(id);
 }

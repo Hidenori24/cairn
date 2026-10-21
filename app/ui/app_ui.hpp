@@ -12,6 +12,7 @@
 #include <imgui.h>
 
 #include "app_controller.hpp"
+#include "roadmap/report.hpp"
 #include "ui/theme.hpp"
 
 namespace roadmap::ui {
@@ -25,6 +26,11 @@ class IPlatform {
   // 保存ダイアログ。成功したら true
   virtual bool saveTextFile(const std::string& suggestedName, const std::string& content) = 0;
   virtual void openFolder(const std::string& path) = 0;
+  // 保存先を選ぶ（名前を付けて保存）。suggestedName = 最初に入れる名前、ext = 既定の拡張子（"html"）、typeLabel = 種類の名前。
+  // 選んだパス（UTF-8）を返す。やめたら nullopt。既存のファイルの上書きは、このダイアログが確認する。書き込みは呼び出し側が
+  // IFileStore で行う
+  virtual std::optional<std::string> pickSaveFile(const std::string& suggestedName, const std::string& ext,
+                                                  const std::string& typeLabel) = 0;
   // フォルダを選ぶ（start = 最初に開く場所）。やめたら nullopt
   virtual std::optional<std::string> pickFolder(const std::string& start) = 0;
   virtual bool systemDark() = 0;
@@ -50,7 +56,8 @@ class IPlatform {
 
 enum class Dlg {
   None, NewProject, EditProject, ConfirmDelete, Import, Export, Folder, Settings, Workload, Warnings, Shortcuts,
-  TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete, PasteChildren, AttachOpenWarn, AttachPreview
+  TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete, PasteChildren, AttachOpenWarn, AttachPreview,
+  ExportHtml
 };
 
 enum class EditField { None, Name, Assignee, Dur, Pred };
@@ -142,6 +149,9 @@ struct UiState {
   int dChoice = 0, dChoice2 = 0;
   std::vector<std::string> dTargets;  // テンプレの追加先など
   std::string exportKind = "jira";
+  // 「HTML に書き出す」ダイアログの選択（開くたびに画面の状態から初期化する）
+  ExportOptions rep;
+  int repScope = 0;  // 0 = 全体 1 = 今の表示のまま 2 = 選んだ課題の配下
   std::string importName;
   bool importReplace = false;
   std::string importError;

@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include "app_controller.hpp"
 #include "roadmap/gen.hpp"
@@ -109,6 +110,8 @@ struct NullPlatform : ui::IPlatform {
   std::optional<std::pair<std::string, std::string>> openTextFile() override { return std::nullopt; }
   bool saveTextFile(const std::string&, const std::string&) override { return true; }
   void openFolder(const std::string&) override {}
+  std::optional<std::string> pickSaveFile(const std::string&, const std::string&, const std::string&) override { return savePath; }
+  std::optional<std::string> savePath;
   std::optional<std::string> pickFolder(const std::string&) override { return picked; }
   std::optional<std::string> picked;
   bool systemDark() override { return false; }
@@ -712,6 +715,115 @@ int main(int argc, char** argv) {
     c.session()->setResource({true, 1});
     c.afterEdit();
     statsShots("53_stats_load_hierarchy_light_resource");
+  }
+  // HTML に書き出す（Issue #42）: 「…」メニュー・ダイアログ・通知と、書き出した HTML（ブラウザで開いて確かめる）
+  {
+    const auto dumpHtml = [&](const std::string& file, ExportOptions opt) {
+      const auto html = c.buildReport(opt);
+      if (!html.ok()) {
+        std::fprintf(stderr, "報告を作れません: %s\n", html.error().c_str());
+        return;
+      }
+      std::ofstream o(out + "/" + file, std::ios::binary);
+      o << html.value();
+      std::printf("wrote %s/%s (%zu KB)\n", out.c_str(), file.c_str(), html.value().size() / 1024);
+    };
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    c.createProject(app::SampleKind::Hierarchy, "階層デモ（セキュアブート）", "DEV");
+    c.setView(app::View::Gantt);
+    c.setUi("zoom", "week");
+    c.setUi("colorBy", "root");
+    c.clearSelection();
+    c.select("11");
+    frames(3);
+    // 「…」メニュー（右上のボタンを探して押す）
+    {
+      ImGuiIO& mio = ImGui::GetIO();
+      ImGuiContext& g = *ImGui::GetCurrentContext();
+      for (float x = 1334; x < 1344 && g.OpenPopupStack.Size == 0; x += 4) {
+        mio.AddMousePosEvent(x, 24);
+        mio.AddMouseButtonEvent(0, true);
+        frames(1);
+        mio.AddMouseButtonEvent(0, false);
+        frames(1);
+      }
+      shot("60_more_menu");
+      mio.AddKeyEvent(ImGuiKey_Escape, true);
+      frames(1);
+      mio.AddKeyEvent(ImGuiKey_Escape, false);
+      frames(2);
+      mio.AddMousePosEvent(-1, -1);
+    }
+    u.dlg = ui::Dlg::ExportHtml;
+    u.dlgOpening = true;
+    shot("61_export_html_dialog");
+    u.rep.dark = true;
+    u.rep.zoom = "all";
+    u.repScope = 2;
+    shot("61b_export_html_dialog_options");
+    u.dlg = ui::Dlg::None;
+    frames(2);
+    // 通知（書き出しました + フォルダを開く）
+    {
+      ExportOptions o;
+      o.gantt = o.stats = o.list = true;
+      (void)fs.makeDirs("out");
+      (void)c.exportReport("out/階層デモ_2026-10-19.html", o);
+      shot("62_export_toast");
+      clk.advanceMs(15000);
+      frames(3);
+    }
+    // 書き出した HTML
+    ExportOptions o;
+    dumpHtml("html_hierarchy_light.html", o);
+    o.dark = true;
+    dumpHtml("html_hierarchy_dark.html", o);
+    o.dark = false;
+    o.zoom = "day";
+    o.colorBy = "float";
+    dumpHtml("html_hierarchy_day_float.html", o);
+    o.zoom = "all";
+    o.colorBy = "asg";
+    dumpHtml("html_hierarchy_all_asg.html", o);
+    o.zoom = "month";
+    o.scope = ReportScope::Subtree;
+    dumpHtml("html_hierarchy_subtree.html", o);
+    c.createProject(app::SampleKind::EmbeddedSw, "組込みソフトウェア開発", "DEV");
+    ExportOptions e;
+    dumpHtml("html_embedded_light.html", e);
+    e.dark = true;
+    dumpHtml("html_embedded_dark.html", e);
+    e.dark = false;
+    e.zoom = "all";
+    dumpHtml("html_embedded_all.html", e);
+    // 絞り込み（担当者）と、薄くする行
+    c.createProject(app::SampleKind::Hierarchy, "絞り込み", "DEV");
+    c.filter().flt = FltFilter::Open;
+    c.filter().q = "";
+    ExportOptions f;
+    f.scope = ReportScope::Current;
+    dumpHtml("html_hierarchy_current.html", f);
+    c.filter() = {};
+    // 大きなプロジェクトと、危険な文字を入れた件名
+    {
+      auto g = generateProject({5000, 7});
+      c.importText(exportAppCsv(g.issues, g.meta), "大きい", app::ImportMode::New);
+      ExportOptions big;
+      dumpHtml("html_big.html", big);
+      big.zoom = "day";
+      dumpHtml("html_big_day.html", big);
+    }
+    {
+      const std::string csv =
+          "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Duration (weeks),Deadline,Outward issue link (Blocks)\n"
+          "1,Epic,\"<script>alert(1)</script>\",,\"\"\"onmouseover=\"\"alert(2)\",,High,,,\n"
+          "2,Task,\"A & B <b>太字</b>\",1,\"田中 & 鈴木\",In Progress,High,2,2026-11-06,3\n"
+          "3,Task,\"'引用' \"\"二重\"\" </text><text>\",1,\"<img src=x onerror=alert(3)>\",To Do,Highest,3,,\n";
+      c.importText(csv, "<危険>&名前", app::ImportMode::New);
+      ExportOptions x;
+      dumpHtml("html_escape.html", x);
+    }
   }
   ImGui::DestroyContext();
   return 0;
