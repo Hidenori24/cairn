@@ -3,6 +3,7 @@
 #include <map>
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_stdlib.h>
 
 #include "roadmap/text.hpp"
@@ -12,6 +13,8 @@
 namespace roadmap::ui {
 
 namespace {
+constexpr float kListGutter = 20.f;  // 表の左右の余白（依存のハンドルを出す。拡大率をかける前）
+
 const char* colTitle(Col c) {
   switch (c) {
     case Col::Name: return "課題";
@@ -400,8 +403,11 @@ void drawListView(Frame& f, ImVec2 size) {
   if (c.uiBool("cols", "pred", false)) cols.insert(cols.begin() + 1, {Col::Pred, u.m.s(140)});  // 件名の次
   float fixed = 0;
   for (const auto& cd : cols) fixed += cd.w;
-  const float width = std::max(size.x - u.m.s(14), fixed + u.m.s(260));
-  cols[0].w = width - fixed;
+  // 表の左右には、依存をつなぐハンドルを出す余白を取る（行のボタンや開閉と重ならない）
+  const float gut = u.m.s(kListGutter);
+  const float width = std::max(size.x - u.m.s(14), fixed + u.m.s(260) + gut * 2);
+  const float rowW = width - gut * 2;  // 表そのものの幅
+  cols[0].w = rowW - fixed;
 
   // 行
   std::vector<VisibleRow> rows;
@@ -416,6 +422,14 @@ void drawListView(Frame& f, ImVec2 size) {
   u.order.clear();
   for (const auto& r : rows) u.order.push_back(T.ids[r.id]);
 
+  // 依存をつなぐドラッグ（ハンドルは行の左右の余白。ゴムひもは同じ側の余白の中を通す）
+  LinkOverlayOpts linkOpts;
+  linkOpts.noun = "行";
+  linkOpts.sameSide = true;
+  linkOpts.hitR = kListGutter / 2;  // 余白の幅にちょうど収まる
+  linkOpts.bend = kListGutter / 2;
+  linkOpts.round = 0;
+  linkOpts.horizontalScroll = true;
   ImGui::BeginChild("##list", size, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
   const ImVec2 origin = ImGui::GetCursorScreenPos();
   const float noteH = sorting ? u.m.s(26) : 0;
@@ -423,7 +437,7 @@ void drawListView(Frame& f, ImVec2 size) {
   const float scrollY = ImGui::GetScrollY();
   ImGui::Dummy(ImVec2(width, headH + noteH + h * static_cast<float>(rows.size())));
   if (rows.empty()) {
-    ImGui::SetCursorScreenPos(ImVec2(origin.x + u.m.s(24), origin.y + headH + noteH + u.m.s(24)));
+    ImGui::SetCursorScreenPos(ImVec2(origin.x + gut + u.m.s(24), origin.y + headH + noteH + u.m.s(24)));
     ImGui::TextDisabled("%s", s->viewIssues().empty() ? S::kEmptyProject : S::kNoMatch);
   }
   // 見える範囲の行だけを描く（仮想化）
@@ -435,20 +449,37 @@ void drawListView(Frame& f, ImVec2 size) {
     // 見出しの下だけに描く（見出しに隠れた行がクリックを取らないように）
     const ImVec2 wp = ImGui::GetWindowPos();
     ImGui::PushClipRect(ImVec2(wp.x, wp.y + top), ImVec2(wp.x + ImGui::GetWindowWidth(), wp.y + viewH), true);
+    u.linkSlots.clear();
+    const ImRect inner = ImGui::GetCurrentWindow()->InnerRect;  // スクロールバーを除いた、見えている範囲
+    linkOpts.clipMin = ImVec2(inner.Min.x, std::max(inner.Min.y, origin.y + scrollY + top));
+    linkOpts.clipMax = inner.Max;
+    const float hr = u.m.s(kLinkHandleR);
     for (int i = first; i < last; ++i) {
-      const ImVec2 p(origin.x, origin.y + top + h * static_cast<float>(i));
+      const ImVec2 p(origin.x + gut, origin.y + top + h * static_cast<float>(i));
       const std::string& sid = T.ids[rows[i].id];
       FadeScope fade(ImGui::GetWindowDrawList(), isDimmed(u, dim, rows[i].id, sid), dimAlpha(c));
-      drawTableRow(f, rows[i], p, width, cols, sorting, sid == c.cursor());
+      drawTableRow(f, rows[i], p, rowW, cols, sorting, sid == c.cursor());
+      // 依存をつなぐ: 行の左右の余白にハンドル（右 → 後続、左 → 先行）
+      UiState::LinkSlot sl;
+      sl.idx = rows[i].id;
+      sl.a = p;
+      sl.b = ImVec2(p.x + rowW, p.y + h);
+      sl.padX = gut;
+      sl.hl = ImVec2(origin.x + gut / 2, p.y + h / 2);
+      sl.hr = ImVec2(origin.x + width - gut / 2, p.y + h / 2);
+      sl.sameL = ImVec2(sl.hl.x - hr, sl.hl.y);  // ゴムひもは左右の余白の中を通り、相手のハンドルの外側に付く
+      sl.sameR = ImVec2(sl.hr.x + hr, sl.hr.y);
+      linkSlotAdd(f, sl, linkOpts);
     }
     ImGui::PopClipRect();
   }
+  drawLinkOverlay(f, app::View::List, linkOpts);
   // 見出し（最後に描いて前面に）
-  const ImVec2 hp(origin.x, origin.y + scrollY);
-  drawTableHeader(f, hp, width, headH, cols, true);
+  const ImVec2 hp(origin.x + gut, origin.y + scrollY);
+  drawTableHeader(f, hp, rowW, headH, cols, true);
   if (sorting) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(ImVec2(hp.x, hp.y + headH), ImVec2(hp.x + width, hp.y + headH + noteH), u.t->accentBg);
+    dl->AddRectFilled(ImVec2(hp.x, hp.y + headH), ImVec2(hp.x + rowW, hp.y + headH + noteH), u.t->accentBg);
     dl->AddText(ImVec2(hp.x + u.m.s(10), hp.y + headH + u.m.s(5)), u.t->accent, S::kSortNote);
   }
   // 行のドロップ（並べ替え）はガントと同じ

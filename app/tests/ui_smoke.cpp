@@ -914,6 +914,269 @@ int main() {
     io.AddMousePosEvent(900, 800);
     h.frame(2);
   }
+  // 依存のドラッグ（Issue #8）: 一覧の行・ボードのカードの左右のハンドルから別の行・カードへ（ガントと同じ操作）
+  for (const app::View view : {app::View::List, app::View::Board}) {
+    const bool isList = view == app::View::List;
+    const std::string nm = isList ? "一覧: " : "ボード: ";
+    const auto ck = [&](bool ok, const char* what) { check(ok, (nm + what).c_str()); };
+    h.c.setView(view);
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.u.sortKey.clear();
+    h.u.sortDir = 0;
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(900, 880);
+    h.frame(3);
+    Session* s = h.c.session();
+    const auto tree = [&]() -> const Tree& { return *h.c.session()->tree(); };
+    using Slot = ui::UiState::LinkSlot;
+    const auto slotOf = [&](const std::string& id) -> const Slot* {
+      const int i = tree().find(id);
+      for (const auto& sl : h.u.linkSlots)
+        if (sl.idx == i) return &sl;
+      return nullptr;
+    };
+    const auto linked = [&](const std::string& from, const std::string& to) {
+      const Issue* o = h.c.session()->issue(from);
+      return o && std::find(o->blocks.begin(), o->blocks.end(), to) != o->blocks.end();
+    };
+    const auto visible = [&](const Slot& sl) { return sl.a.y > 150 && sl.b.y < 700 && sl.a.x > 10 && sl.b.x < 1420; };
+    // 画面に見えていて、どちら向きにもつなげる葉の組 A, B（B の方が下）を探す
+    std::string idA, idB;
+    for (const auto& sa : h.u.linkSlots)
+      for (const auto& sb : h.u.linkSlots) {
+        const Tree& T = tree();
+        const int a = sa.idx, b = sb.idx;
+        if (idA.empty() && a != b && a >= 0 && b >= 0 && sb.a.y > sa.a.y && visible(sa) && visible(sb) && T.isLeaf(a) && T.isLeaf(b) &&
+            T.kind[a] == Kind::Task && T.kind[b] == Kind::Task && checkLink(T, s->viewIssues(), a, b) == LinkBlock::None &&
+            checkLink(T, s->viewIssues(), b, a) == LinkBlock::None)
+          idA = T.ids[a], idB = T.ids[b];
+      }
+    ck(!idA.empty() && slotOf(idA) && slotOf(idB), "ドラッグのテスト用の行・カードが見えている");
+    if (idA.empty() || !slotOf(idA) || !slotOf(idB)) continue;
+    const auto move = [&](float x, float y, int n = 2) {
+      io.AddMousePosEvent(x, y);
+      h.frame(n);
+    };
+    const auto down = [&] {
+      io.AddMouseButtonEvent(0, true);
+      h.frame(2);
+    };
+    const auto up = [&] {
+      io.AddMouseButtonEvent(0, false);
+      h.frame(3);  // 確定は描画が終わってから
+    };
+    const auto center = [&](const std::string& id, float& x, float& y) {
+      const Slot* sl = slotOf(id);
+      x = (sl->a.x + sl->b.x) / 2, y = (sl->a.y + sl->b.y) / 2;
+    };
+    const std::size_t undo0 = s->undoSize();
+    float bx, by;
+    ck(h.u.linkSlots.size() >= 2, "行・カードの位置を登録している");
+    // 右のハンドル → 別の行・カード: A が先行・B が後続。Undo 1回で戻る。行・カードは選択されない
+    move(slotOf(idA)->hr.x, slotOf(idA)->hr.y);
+    down();
+    ck(h.u.linkDrag.active && h.u.linkDrag.fromRight && h.u.linkDrag.id == idA && h.u.linkDrag.view == view,
+       "右のハンドルを押すとドラッグが始まる");
+    ck(h.c.selection().empty(), "ハンドルを押しても選択されない");
+    center(idB, bx, by);
+    move(bx, by);
+    ck(h.u.linkDrag.active && !h.u.linkDrag.previewKey.empty() && h.u.linkDrag.preview.ok, "相手に載せると日程の影響を計算する");
+    ck(!linked(idA, idB), "離すまでは変わらない");
+    up();
+    ck(!h.u.linkDrag.active && linked(idA, idB), "右のハンドルから別の行・カードへ離すと A → B がつながる");
+    ck(s->undoSize() == undo0 + 1, "つなぐのは Undo 1回分");
+    ck(h.c.selection().empty(), "つないでも選択は変わらない");
+    h.c.undo();
+    h.frame(2);
+    ck(!linked(idA, idB), "Undo 1回で戻る");
+    // 左のハンドル → 別の行・カード: つかんだ B が後続、相手 A が先行になる
+    move(slotOf(idB)->hl.x, slotOf(idB)->hl.y);
+    down();
+    ck(h.u.linkDrag.active && !h.u.linkDrag.fromRight && h.u.linkDrag.id == idB, "左のハンドルを押すとドラッグが始まる");
+    center(idA, bx, by);
+    move(bx, by);
+    up();
+    ck(linked(idA, idB), "左のハンドルから別の行・カードへ離すと、つかんだ方が後続になる");
+    // つなげない相手（循環・重複）にはつなげない。理由を通知する
+    const std::size_t undo1 = s->undoSize();
+    const auto tryDrag = [&](const std::string& from, bool right, const std::string& to) {
+      const Slot* g = slotOf(from);
+      move(right ? g->hr.x : g->hl.x, right ? g->hr.y : g->hl.y);
+      down();
+      float tx, ty;
+      center(to, tx, ty);
+      move(tx, ty);
+      const bool active = h.u.linkDrag.active;
+      up();
+      return active;
+    };
+    const auto lastToast = [&] { return h.c.toasts().empty() ? 0 : h.c.toasts().back().id; };
+    const int toast1 = lastToast();
+    ck(tryDrag(idB, true, idA), "循環になる相手にもドラッグはできる（赤で示す）");
+    ck(!linked(idB, idA) && s->undoSize() == undo1, "循環になる相手にはつなげない");
+    ck(lastToast() != toast1, "つなげない理由を通知する");
+    tryDrag(idA, true, idB);  // すでにつながっている
+    ck(s->undoSize() == undo1, "重複はつなげない");
+    // 元の場所で離すと取り消し
+    {
+      const Slot* g = slotOf(idA);
+      move(g->hr.x, g->hr.y);
+      down();
+      move(g->hr.x + 40, g->hr.y + 2);
+      move(g->hr.x, g->hr.y);
+      up();
+      ck(!h.u.linkDrag.active && s->undoSize() == undo1, "元の場所で離すと取り消し");
+      ck(h.c.selection().empty(), "取り消しても選択されない");
+    }
+    // 自分自身の行・カードの上で離しても取り消し
+    {
+      const Slot* g = slotOf(idA);
+      move(g->hr.x, g->hr.y);
+      down();
+      center(idA, bx, by);
+      move(bx, by);
+      up();
+      ck(s->undoSize() == undo1, "自分自身の上で離すと取り消し");
+    }
+    // 何もないところで離すと取り消し
+    {
+      const Slot* g = slotOf(idA);
+      move(g->hr.x, g->hr.y);
+      down();
+      move(700, 880);
+      up();
+      ck(s->undoSize() == undo1 && !h.u.linkDrag.active, "何もないところで離すと取り消し");
+    }
+    // Esc で取り消し（途中でマウスを離しても確定しない）
+    h.c.undo();
+    h.frame(2);
+    ck(!linked(idA, idB), "Undo で A → B を外す");
+    {
+      const std::size_t undo2 = s->undoSize();
+      move(slotOf(idA)->hr.x, slotOf(idA)->hr.y);
+      down();
+      center(idB, bx, by);
+      move(bx, by);
+      ck(h.u.linkDrag.active, "Esc のテスト: ドラッグ中");
+      h.key(ImGuiKey_Escape);
+      ck(!h.u.linkDrag.active, "Esc でドラッグを取り消す");
+      up();
+      ck(!linked(idA, idB) && s->undoSize() == undo2, "Esc の後に離しても確定しない");
+    }
+    // 行・カードの本体のクリックは選択（ハンドルと混ざらない）。本体のドラッグはハンドルのドラッグにならない
+    {
+      center(idA, bx, by);
+      if (isList) bx = slotOf(idA)->a.x + 150;  // 件名の列（状況の列などは別の操作になる）
+      move(bx, by);
+      down();
+      up();
+      ck(!h.u.linkDrag.active && h.c.isSelected(idA), "本体をクリックすると選択される");
+      move(bx, by);
+      down();
+      move(bx + 30, by + 2, 3);
+      ck(!h.u.linkDrag.active, "本体を押してもハンドルのドラッグにならない");
+      up();
+      h.c.clearSelection();
+      h.frame(2);
+    }
+    if (!isList) {
+      // ボードのカードの移動（状況の列の変更）はハンドルから始まらない: 別の列の空いたところへ離しても状況は変わらない
+      const std::string st0 = h.c.session()->issue(idA)->status;
+      const std::size_t undo3 = s->undoSize();
+      move(slotOf(idA)->hr.x, slotOf(idA)->hr.y);
+      down();
+      move(slotOf(idA)->hr.x + 300, 690, 3);
+      up();
+      ck(h.c.session()->issue(idA)->status == st0 && s->undoSize() == undo3, "ハンドルのドラッグで状況の列は変わらない");
+    }
+    // 選択モード（Issue #6）の間はハンドルを出さない・押してもドラッグにならない
+    {
+      ui::Frame fr{h.c, h.u, h.p};
+      ui::beginLinkPick(fr, idB, true);
+      h.frame(2);
+      if (slotOf(idA)) {
+        move(slotOf(idA)->hr.x, slotOf(idA)->hr.y);
+        down();
+        ck(!h.u.linkDrag.active, "選択モードの間はハンドルのドラッグを始めない");
+        up();
+      }
+      ui::cancelLinkPick(fr);
+      h.frame(2);
+    }
+    // ドラッグ中にビューを切り替えても残らない
+    const std::size_t undo4 = s->undoSize();
+    move(slotOf(idA)->hr.x, slotOf(idA)->hr.y);
+    down();
+    ck(h.u.linkDrag.active, "ビュー切り替えのテスト: ドラッグ中");
+    h.c.setView(isList ? app::View::Board : app::View::List);
+    h.frame(2);
+    ck(!h.u.linkDrag.active, "別のビューに切り替えたらドラッグは終わる");
+    up();
+    ck(s->undoSize() == undo4, "切り替えのあとに離しても確定しない");
+    h.c.setView(view);
+    h.frame(3);
+    // ダイアログが開いている間は出さない
+    {
+      ui::Frame fr{h.c, h.u, h.p};
+      ui::openDialog(fr, ui::Dlg::Export);
+      h.frame(2);
+      move(slotOf(idA)->hr.x, slotOf(idA)->hr.y);
+      down();
+      ck(!h.u.linkDrag.active, "ダイアログの間はハンドルのドラッグを始めない");
+      up();
+      h.key(ImGuiKey_Escape);
+      h.frame(2);
+    }
+    io.AddMousePosEvent(900, 880);
+    h.frame(2);
+  }
+  // 依存のドラッグ中、見えている範囲の端へマウスを近づけると自動でスクロールする（課題が多いとき。一覧・ボード）
+  {
+    const std::string prevProject = h.c.currentId();
+    auto g = generateProject({150, 11});
+    check(h.c.importText(exportAppCsv(g.issues, g.meta), "スクロール確認", app::ImportMode::New).ok, "ドラッグのスクロール確認用の取り込み");
+    ImGuiIO& io = ImGui::GetIO();
+    for (const app::View view : {app::View::List, app::View::Board}) {
+      h.c.setView(view);
+      h.c.clearSelection();
+      h.u.sortKey.clear();
+      h.u.sortDir = 0;
+      io.AddMousePosEvent(900, 880);
+      h.frame(3);
+      const std::size_t undo0 = h.c.session()->undoSize();
+      const ui::UiState::LinkSlot* first = nullptr;
+      for (const auto& sl : h.u.linkSlots)
+        if (sl.a.y > 200 && sl.b.y < 600 && (!first || sl.a.y < first->a.y)) first = &sl;
+      const bool okFirst = first != nullptr;
+      check(okFirst, "スクロール確認: 行・カードが見えている");
+      if (!okFirst) continue;
+      const int firstIdx = first->idx;
+      const float y0 = first->a.y;
+      const float hx = first->hr.x;
+      io.AddMousePosEvent(hx, first->hr.y);
+      h.frame(2);
+      io.AddMouseButtonEvent(0, true);
+      h.frame(2);
+      check(h.u.linkDrag.active, "スクロール確認: ドラッグ中");
+      io.AddMousePosEvent(hx, 895);  // 下の端
+      h.frame(30);
+      bool found = false;
+      float y1 = y0;
+      for (const auto& sl : h.u.linkSlots)
+        if (sl.idx == firstIdx) found = true, y1 = sl.a.y;
+      check(!h.u.linkSlots.empty() && (!found || y1 < y0 - 20.f), "下の端へ近づくと自動でスクロールする（元の行が上へ動くか、見えなくなる）");
+      h.key(ImGuiKey_Escape);
+      io.AddMouseButtonEvent(0, false);
+      h.frame(3);
+      check(!h.u.linkDrag.active && h.c.session()->undoSize() == undo0, "スクロールしたあと Esc で取り消せる");
+    }
+    h.c.openProject(prevProject);
+    h.c.setView(app::View::Gantt);
+    h.frame(3);
+    io.AddMousePosEvent(900, 800);
+    h.frame(2);
+  }
   // 依存の矢印（Issue #10）: ホバー・つかんで付け替え・削除・たどる・クリティカル
   {
     h.c.setView(app::View::Gantt);
