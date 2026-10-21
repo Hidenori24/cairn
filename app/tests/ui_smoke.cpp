@@ -1439,6 +1439,30 @@ int main() {
     io.AddMouseButtonEvent(0, false);
     h.frame(2);
     check(h.c.attachmentCount(src) == 2 && h.c.attachmentCount(dst) == 2, "取り消したら動かさない");
+    // コマンドパレット（Ctrl+K）が開いたら取り消す。モーダルの裏で離しても動かさない
+    dragTo(rowMid(0), targetMid(dst), false, false);
+    check(h.u.attachDrag.active, "パレットのテスト: つかんでいる");
+    h.key(ImGuiKey_K, true);
+    check(h.u.paletteOpen && !h.u.attachDrag.active, "パレットを開くとドラッグを取り消す");
+    io.AddMouseButtonEvent(0, false);
+    h.frame(3);
+    check(h.c.attachmentCount(src) == 2 && h.c.attachmentCount(dst) == 2, "パレットの裏で離しても動かさない");
+    h.key(ImGuiKey_Escape);
+    check(!h.u.paletteOpen, "パレットを閉じる");
+    h.frame(3);
+    // Esc とボタンを離すのが同じフレームでも、動かさずに取り消す（Esc で選択も外さない）
+    h.c.select(src);
+    h.u.detailOpen = true;
+    h.frame(4);
+    dragTo(rowMid(0), targetMid(dst), false, false);
+    check(h.u.attachDrag.active, "Esc と同時のテスト: つかんでいる");
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    io.AddMouseButtonEvent(0, false);
+    h.frame();
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    h.frame(3);
+    check(h.c.attachmentCount(src) == 2 && h.c.attachmentCount(dst) == 2, "Esc と離すのが同じフレームなら動かさない");
+    check(!h.c.selection().empty() && h.u.detailOpen, "ドラッグを取り消した Esc は、選択や詳細パネルには効かない");
     // 存在しない課題・自分自身へ（コントローラ側の確認。画面の途中で課題が消えても落ちない）
     dragTo(rowMid(0), targetMid(dst), false, false);
     h.c.session()->deleteIssues({dst});
@@ -1491,6 +1515,79 @@ int main() {
       h.frame(2);
       check(h.c.attachmentCount(src) == n1, "ダイアログをやめたら何も付けない");
     }
+    h.u.detailOpen = false;
+    h.frame(2);
+  }
+  // 添付の並べ替え: スクロールで隠れた行（子ウィンドウのクリップの外）の上では、並べ替えない
+  {
+    h.c.createProject(app::SampleKind::Hierarchy, "スクロールの確認", "SCR");
+    h.c.setView(app::View::List);
+    h.u.editField = ui::EditField::None;
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.frame(3);
+    const std::string id = h.u.dropTargets.at(0).id;
+    std::vector<std::string> files;
+    for (int k = 0; k < 30; ++k) {
+      char nm[32];
+      std::snprintf(nm, sizeof nm, "ext/メモ%02d.txt", k);
+      h.fs.put(nm, "x");
+      files.push_back(nm);
+    }
+    h.c.attachFiles(id, files);
+    h.c.select(id);
+    h.u.detailOpen = true;
+    h.u.detailTab = 3;
+    h.frame(6);
+    ImGuiIO& io = ImGui::GetIO();
+    check(h.u.attachRows.size() == 30, "30 件の行の範囲が分かる");
+    const auto clip = [&] { return h.u.attachRowsClip; };
+    io.AddMousePosEvent(clip().first.x + 100, clip().first.y + 200);
+    for (int k = 0; k < 6; ++k) {  // 一覧を下へスクロール（上の行は子ウィンドウの外へ隠れる）
+      io.AddMouseWheelEvent(0, -3);
+      h.frame(2);
+    }
+    check(h.u.attachRows.size() == 30 && h.u.attachRows.front().first.y < clip().first.y, "スクロールすると、上の行が見える範囲の外へ出る");
+    // 見えている行を探す
+    std::size_t vis = 0;
+    for (std::size_t k = 0; k < h.u.attachRows.size(); ++k) {
+      const auto& r = h.u.attachRows[k];
+      if (r.first.y >= clip().first.y + 4 && r.second.y <= clip().second.y - 4) {
+        vis = k;
+        break;
+      }
+    }
+    check(vis > 0, "見えている行がある");
+    const std::string moving = h.c.attachmentsOf(id)[vis].name;
+    const auto rowMidAt = [&](std::size_t k) {
+      const auto& r = h.u.attachRows[k];
+      return ImVec2(r.first.x + 100, (r.first.y + r.second.y) / 2);
+    };
+    const auto drag = [&](ImVec2 from, ImVec2 to) {
+      io.AddMousePosEvent(from.x, from.y);
+      h.frame();
+      io.AddMouseButtonEvent(0, true);
+      h.frame();
+      io.AddMousePosEvent(from.x + 12, from.y + 2);
+      h.frame();
+      io.AddMousePosEvent(to.x, to.y);
+      h.frame(2);
+      io.AddMouseButtonEvent(0, false);
+      h.frame(3);
+    };
+    // 見える範囲のすぐ上（詳細パネルの見出し・タブ）。ここの下に、隠れた行の範囲が重なっている
+    drag(rowMidAt(vis), ImVec2(clip().first.x + 100, clip().first.y - 6));
+    check(h.c.attachmentsOf(id)[vis].name == moving && h.c.attachmentsOf(id)[0].name == "メモ00.txt", "隠れた行の上で離しても並べ替えない");
+    for (std::size_t k = 0; k < 30; ++k)
+      if (h.c.attachmentsOf(id)[k].name != [&] { char nm[32]; std::snprintf(nm, sizeof nm, "メモ%02d.txt", static_cast<int>(k)); return std::string(nm); }()) {
+        check(false, "並びが変わっていない");
+        break;
+      }
+    // 見える範囲の中なら今までどおり並べ替える（次の行の下半分へ）
+    const std::size_t next = vis + 1;
+    check(next < h.u.attachRows.size() && h.u.attachRows[next].second.y <= clip().second.y, "次の行も見えている");
+    drag(rowMidAt(vis), ImVec2(h.u.attachRows[next].first.x + 100, h.u.attachRows[next].second.y - 2));
+    check(h.c.attachmentsOf(id)[next].name == moving, "見える行の上では並べ替える");
     h.u.detailOpen = false;
     h.frame(2);
   }

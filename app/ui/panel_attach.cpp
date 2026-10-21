@@ -70,6 +70,10 @@ int attachReorderSlot(const UiState& u, const std::string& issueId, ImVec2 pos) 
   const auto& first = u.attachRows.front();
   const auto& last = u.attachRows.back();
   const float pad = (first.second.y - first.first.y) / 2;
+  // 一覧はスクロールする子ウィンドウの中にある。見える範囲の外（見出し・タブの上など）では、隠れた行の範囲が重なっていても
+  // 並べ替えの位置にしない（行の添字は全部持っているので、見える範囲の中の挿入位置はそのまま正しい）
+  const auto& clip = u.attachRowsClip;
+  if (pos.x < clip.first.x || pos.x >= clip.second.x || pos.y < clip.first.y || pos.y >= clip.second.y) return -1;
   if (pos.x < first.first.x || pos.x >= first.second.x || pos.y < first.first.y - pad || pos.y >= last.second.y + pad) return -1;
   int slot = 0;
   for (const auto& r : u.attachRows)
@@ -95,10 +99,19 @@ void processAttachDrag(Frame& f) {
   if (!u.attachDrag.active) return;
   app::AppController& c = f.c;
   const UiState::AttachDrag d = u.attachDrag;
-  // 続けられないとき（プロジェクトを切り替えた・ダイアログが開いた・つかんだ添付がなくなった）は取り消す
-  if (!c.session() || u.dlg != Dlg::None || c.currentId() != d.project || d.index >= c.attachmentsOf(d.issueId).size()) {
+  // 続けられないとき（プロジェクトを切り替えた・ダイアログやコマンドパレット・ポップアップが開いた・つかんだ添付がなくなった）は、
+  // 離した位置を調べる前に取り消す（モーダルの裏で移動・コピーしない）
+  const bool modal = u.dlg != Dlg::None || u.paletteOpen || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+  if (!c.session() || modal || c.currentId() != d.project || d.index >= c.attachmentsOf(d.issueId).size()) {
     u.attachDrag = {};
     u.attachDragCancelled = true;
+    return;
+  }
+  // Esc は、ボタンを離すのと同じフレームでも先に見て取り消す（添付の移動は元に戻せない）。このフレームの Esc は handleKeys に渡さない
+  if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    u.attachDrag = {};
+    u.attachDragCancelled = true;
+    u.attachDragEscFrame = ImGui::GetFrameCount();
     return;
   }
   if (io.MouseDown[0]) return;  // まだつかんでいる
@@ -148,7 +161,8 @@ void drawAttachDrag(Frame& f) {
       const std::size_t at = static_cast<std::size_t>(slot);
       const std::size_t dest = at > d.index ? at - 1 : at;
       if (dest != d.index && at < u.attachRows.size() + 1) {
-        const float y = at == 0 ? u.attachRows.front().first.y : u.attachRows[at - 1].second.y;
+        float y = at == 0 ? u.attachRows.front().first.y : u.attachRows[at - 1].second.y;
+        y = std::clamp(y, u.attachRowsClip.first.y, u.attachRowsClip.second.y);  // 見える範囲の端まで
         dl->AddLine(ImVec2(u.attachRows.front().first.x, y), ImVec2(u.attachRows.front().second.x, y), u.t->accent, u.m.s(3));
         note = "ここへ並べ替え";
       }
@@ -383,6 +397,7 @@ void drawAttachTab(Frame& f, int i) {
   u.attachRows.clear();
   u.attachRowsIssue = id;
   u.attachRowsFrame = ImGui::GetFrameCount();
+  u.attachRowsClip = {ImGui::GetWindowDrawList()->GetClipRectMin(), ImGui::GetWindowDrawList()->GetClipRectMax()};
   std::size_t del = static_cast<std::size_t>(-1), open = static_cast<std::size_t>(-1), preview = static_cast<std::size_t>(-1);
   for (std::size_t k = 0; k < list.size(); ++k) {
     const Attachment& a = list[k];

@@ -142,11 +142,14 @@ struct UiState {
     std::size_t index = 0; // つかんだ添付の番号
     std::string project;   // 始めたプロジェクト
   } attachDrag;
+  int attachDragEscFrame = -10;      // 添付のドラッグを Esc で取り消したフレーム（そのフレームの Esc は、ほかの Esc の動作に使わない）
   bool attachDragCancelled = false;  // 取り消したドラッグ。マウスのボタンを離すまで、つかみ直したことにしない
   // 前のフレームの添付タブの行の範囲（画面の座標）。並べ替えの位置の判定と、煙テストの当たり位置に使う
   std::vector<std::pair<ImVec2, ImVec2>> attachRows;
   std::string attachRowsIssue;
   int attachRowsFrame = -10;
+  // 添付タブの一覧（スクロールする子ウィンドウ）の見える範囲。この外では並べ替えの位置を出さない（隠れた行へ並べ替えない）
+  std::pair<ImVec2, ImVec2> attachRowsClip{{0, 0}, {0, 0}};
   // 前のフレームの添付タブの「ファイルを選んで追加」ボタンとサムネイルの大きさのスライダーの範囲（画面の座標）。煙テストの当たり位置
   std::pair<ImVec2, ImVec2> attachPickBtn{{0, 0}, {0, 0}}, attachSlider{{0, 0}, {0, 0}};
   // 添付の画像（サムネイル・プレビュー）のテクスチャ。キー = パス・大きさ・日時・縮小の上限。

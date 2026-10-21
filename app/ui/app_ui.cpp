@@ -1227,6 +1227,7 @@ void handleKeys(Frame& f) {
   const bool modal = u.dlg != Dlg::None || u.paletteOpen || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
   if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !io.WantTextInput) {
     if (modal) return;  // ダイアログ・パレット・メニューはそれぞれで閉じる
+    if (u.attachDragEscFrame == ImGui::GetFrameCount()) return;  // 添付のドラッグを取り消した Esc（選択などは変えない）
     if (u.attachDrag.active) {  // 添付のサムネイルのドラッグを取り消し
       u.attachDrag = {};
       u.attachDragCancelled = true;  // ボタンを離すまで、同じつかみ方から始め直さない

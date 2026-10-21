@@ -160,6 +160,8 @@ Result<SourceAttach> findSource(IFileStore& fs, const std::string& projectDir, c
                                 std::size_t index, const std::string& toIssue) {
   if (projectDir.empty()) return Error{"このプロジェクトには添付を置く場所がありません"};
   if (toIssue.empty()) return Error{"移す先の課題がありません"};
+  // 設定 JSON に保存して読み直したとき（attachmentsFromJson）に消えない ID だけ。ファイルを動かす前に断る
+  if (!isSafePathComponent(toIssue)) return Error{"この課題には添付を移せません（課題の ID にフォルダ名に使えない文字が含まれています）"};
   if (fromIssue == toIssue) return Error{"同じ課題です"};
   const auto it = meta.find(fromIssue);
   if (it == meta.end() || index >= it->second.size()) return Error{"その添付はありません"};
@@ -234,18 +236,18 @@ Result<std::string> bmpFromDib(const std::string& dib) {
   if (dib.size() < hdr) return Error{"画像のヘッダが途中で切れています"};
   const std::int64_t w = i32(4);
   const std::int64_t h = i32(8);
-  const std::uint32_t planes = u16(12), bpp = u16(14), comp = u32(16), sizeImage = u32(20), clrUsed = u32(32);
+  const std::uint32_t planes = u16(12), bpp = u16(14), comp = u32(16), clrUsed = u32(32);
   if (planes != 1) return Error{"画像のヘッダが壊れています"};
   if (bpp != 1 && bpp != 4 && bpp != 8 && bpp != 16 && bpp != 24 && bpp != 32) return Error{"対応していない形式の画像です"};
   if (w <= 0 || h == 0) return Error{"画像の大きさが正しくありません"};
   const std::int64_t absH = h < 0 ? -h : h;
   if (w > kMaxSide || absH > kMaxSide || w * absH > kMaxPixels) return Error{"画像が大きすぎます"};
-  const bool plain = comp == 0 || comp == 3 || comp == 6;  // BI_RGB / BI_BITFIELDS / BI_ALPHABITFIELDS
-  if (!plain && !(comp == 1 && bpp == 8) && !(comp == 2 && bpp == 4)) return Error{"対応していない形式の画像です"};
-  if ((comp == 3 || comp == 6) && bpp != 16 && bpp != 32) return Error{"画像のヘッダが壊れています"};
+  // サムネイル・プレビューに使う stb_image が読める形式（BI_RGB と BI_BITFIELDS）だけ通す。RLE・BI_ALPHABITFIELDS などは、
+  // 貼り付けが成功したのに画像が出ないことになるので、ここで断る
+  if (comp != 0 && comp != 3) return Error{"対応していない形式の画像です（圧縮された BMP には対応していません）"};
+  if (comp == 3 && bpp != 16 && bpp != 32) return Error{"画像のヘッダが壊れています"};
   std::uint64_t off = hdr;
   if (hdr == 40 && comp == 3) off += 12;  // BITMAPINFOHEADER の直後にマスク 3 つ（V3 以降はヘッダの中）
-  if (hdr == 40 && comp == 6) off += 16;
   std::uint64_t colors = 0;
   if (bpp <= 8) {
     colors = clrUsed != 0 ? clrUsed : (std::uint64_t{1} << bpp);
@@ -257,12 +259,8 @@ Result<std::string> bmpFromDib(const std::string& dib) {
   off += colors * 4;
   if (off > dib.size()) return Error{"画像が途中で切れています"};
   const std::uint64_t avail = dib.size() - off;
-  if (plain) {
-    const std::uint64_t rowBytes = ((static_cast<std::uint64_t>(w) * bpp + 31) / 32) * 4;
-    if (rowBytes * static_cast<std::uint64_t>(absH) > avail) return Error{"画像のデータが足りません（途中で切れています）"};
-  } else if (sizeImage == 0 || sizeImage > avail) {
-    return Error{"画像のデータが足りません（途中で切れています）"};
-  }
+  const std::uint64_t rowBytes = ((static_cast<std::uint64_t>(w) * bpp + 31) / 32) * 4;
+  if (rowBytes * static_cast<std::uint64_t>(absH) > avail) return Error{"画像のデータが足りません（途中で切れています）"};
   const std::uint64_t total = static_cast<std::uint64_t>(dib.size()) + 14;
   if (total > 0xffffffffull) return Error{"画像が大きすぎます"};
   std::string out;

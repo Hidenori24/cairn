@@ -107,26 +107,35 @@ TEST_CASE("moveAttachment: 移せなかったら元のまま（ファイルも�
   CHECK(e.fs.exists(e.path("1", "a.txt")));
 }
 
-TEST_CASE("moveAttachment: 先の Issue Id がパスの区切りや .. を含んでも、添付フォルダの外へは置かない") {
+TEST_CASE("moveAttachment・copyAttachment: 設定 JSON の往復で通らない課題 ID へは、ファイルを動かす前に断る") {
   Env e;
   e.add("1", "a.txt", "A");
-  const auto r = moveAttachment(e.fs, kProj, e.meta, "1", 0, "../../evil");
-  REQUIRE(r.ok());
-  for (const auto& p : e.fs.paths()) {
-    std::size_t from = 0;
-    while (from <= p.size()) {  // どの部品も「.」「..」ではない（フォルダ名の中の .. は、ただの文字）
-      const auto k = p.find('/', from);
-      const std::string part = p.substr(from, k == std::string::npos ? std::string::npos : k - from);
-      CHECK(part != "..");
-      CHECK(part != ".");
-      if (k == std::string::npos) break;
-      from = k + 1;
-    }
-    CHECK((p.rfind("ext/", 0) == 0 || p.rfind(kProj + "/添付/", 0) == 0));
+  const AttachmentMap before = e.meta;
+  const auto filesBefore = e.fs.paths();
+  for (const char* bad : {"../../evil", "a/b", "a\\b", "..", ".", "x ", " x", "x.", "a:b", "a*b", "a\"b"}) {
+    CHECK_FALSE(moveAttachment(e.fs, kProj, e.meta, "1", 0, bad).ok());
+    CHECK_FALSE(copyAttachment(e.fs, clk, kProj, e.meta, "1", 0, bad, "山田").ok());
+    CHECK(e.meta == before);  // メタ情報も本体も動かさない（移動で孤児にしない）
+    CHECK(e.fs.paths() == filesBefore);
   }
-  const std::string dest = attachmentPath(kProj, "../../evil", *r);
-  CHECK(dest.rfind(kProj + "/添付/", 0) == 0);
-  CHECK(e.fs.exists(dest));
+  CHECK(e.fs.exists(e.path("1", "a.txt")));
+  const auto r = moveAttachment(e.fs, kProj, e.meta, "1", 0, "../../evil");
+  REQUIRE_FALSE(r.ok());
+  CHECK(r.error().find("課題") != std::string::npos);
+}
+
+TEST_CASE("moveAttachment・copyAttachment: 動かしたあとのメタ情報は、保存して読み直しても残る") {
+  Env e;
+  e.add("1", "a.txt", "A");
+  e.add("1", "b.txt", "B");
+  REQUIRE(moveAttachment(e.fs, kProj, e.meta, "1", 0, "PRJ-2").ok());
+  REQUIRE(copyAttachment(e.fs, clk, kProj, e.meta, "1", 0, "3 件目", "山田").ok());
+  const AttachmentMap reloaded = attachmentsFromJson(attachmentsToJson(e.meta));
+  CHECK(reloaded == e.meta);
+  CHECK(reloaded.count("PRJ-2") == 1);
+  CHECK(reloaded.count("3 件目") == 1);
+  for (const auto& [id, list] : reloaded)
+    for (const auto& a : list) CHECK(e.fs.exists(attachmentPath(kProj, id, a)));
 }
 
 TEST_CASE("copyAttachment: 本体を複製して先に付ける（元は残る。日時と作成者はいまのもの）") {
@@ -292,6 +301,14 @@ TEST_CASE("bmpFromDib: 壊れたヘッダ・極端な大きさ・画素が足り
   CHECK_FALSE(bmpFromDib(makeDib(40, 1000000, 1000000, 24, 0, 0, "", 48)).ok());        // 極端に大きい
   CHECK_FALSE(bmpFromDib(makeDib(40, 4, 4, 7, 0, 0, "", 48)).ok());                     // 知らない bit 数
   CHECK_FALSE(bmpFromDib(makeDib(40, 4, 4, 24, 9, 0, "", 48)).ok());                    // 知らない圧縮
+  // stb_image が読めない形式は、貼り付けが成功したのにサムネイルが出ないことになるので、先に断る（理由つき）
+  for (std::uint32_t comp : {1u, 2u, 4u, 5u, 6u}) {
+    const auto r = bmpFromDib(makeDib(40, 4, 4, comp == 2 ? 4 : 8, comp, 0, std::string(comp == 2 ? 64 : 1024, 'c'), 16));
+    CHECK_FALSE(r.ok());
+    if (!r.ok()) CHECK(r.error().find("対応していない") != std::string::npos);
+  }
+  CHECK_FALSE(bmpFromDib(makeDib(40, 2, 2, 32, 6, 0, std::string(16, 'm'), 16)).ok());  // BI_ALPHABITFIELDS
+  CHECK_FALSE(bmpFromDib(makeDib(108, 2, 2, 32, 6, 0, "", 16)).ok());
   CHECK_FALSE(bmpFromDib(makeDib(40, 4, 4, 24, 0, 0, "", 20)).ok());                    // 画素が足りない（BI_RGB は計算で分かる）
   CHECK_FALSE(bmpFromDib(makeDib(40, 4, 4, 8, 0, 0, std::string(100, 'c'), 16)).ok());  // 色表が途中で切れている
   CHECK_FALSE(bmpFromDib(makeDib(40, 4, 4, 8, 0, 999, "", 16)).ok());                   // 色の数が多すぎる

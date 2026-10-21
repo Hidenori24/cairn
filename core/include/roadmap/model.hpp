@@ -112,6 +112,10 @@ struct Attachment {
 };
 // Issue Id → 添付（付けた順）。CSV の Issue Id で引く（表示 ID は階層で変わるため使わない）
 using AttachmentMap = std::map<std::string, std::vector<Attachment>>;
+// フォルダ名・ファイル名として、添付フォルダの外を指さない1つの部品か（区切り / \\・「.」「..」・制御文字・Windows の予約文字・
+// 先頭や末尾の空白・末尾の「.」を拒否）。settings.json の "attachments" の読み込みと、移動・コピー先の課題 ID の検査で共通に使う
+// （保存して読み直したときに消えるメタ情報を作らないため）
+bool isSafePathComponent(std::string_view name);
 // settings.json の "attachments" との変換。壊れた値は読み飛ばす
 Json attachmentsToJson(const AttachmentMap& m);
 AttachmentMap attachmentsFromJson(const Json& j);

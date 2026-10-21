@@ -17,7 +17,6 @@ Json attachmentsToJson(const AttachmentMap& m) {
   return o;
 }
 
-namespace {
 // 設定 JSON から読んだ名前（課題の Issue Id のフォルダ名・ファイル名）が、添付フォルダの外を指さないか。
 // 区切り（/ \）・「.」「..」・制御文字（NUL を含む）・Windows の予約文字（: * ? " < > |）・先頭や末尾の空白・末尾の「.」を拒否する
 bool isSafePathComponent(std::string_view n) {
@@ -30,7 +29,6 @@ bool isSafePathComponent(std::string_view n) {
   }
   return true;
 }
-}  // namespace
 
 AttachmentMap attachmentsFromJson(const Json& j) {
   AttachmentMap m;
