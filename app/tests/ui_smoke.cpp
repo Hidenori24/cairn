@@ -1046,7 +1046,9 @@ int main() {
       down();
       move(700, 880);
       up();
-      ck(s->undoSize() == undo1 && !h.u.linkDrag.active, "何もないところで離すと取り消し");
+      ck(s->undoSize() == undo1 && !h.u.linkDrag.active, "何もないところで離しても課題は変わらない（新しい課題のメニューが出るだけ）");
+      if (h.u.linkMenu.active) h.key(ImGuiKey_Escape);  // 閉じる（メニューの操作は次のテスト）
+      ck(!h.u.linkMenu.active, "メニューは Esc で閉じる");
     }
     // Esc で取り消し（途中でマウスを離しても確定しない）
     h.c.undo();
@@ -1128,6 +1130,317 @@ int main() {
       h.key(ImGuiKey_Escape);
       h.frame(2);
     }
+    io.AddMousePosEvent(900, 880);
+    h.frame(2);
+  }
+  // 依存のドラッグ（Issue #8）: 空いた場所で離すと「新しい後続（先行）の課題を作ってつなぐ」メニューが出る（ガント・一覧・ボード）
+  for (const app::View view : {app::View::Gantt, app::View::List, app::View::Board}) {
+    const std::string nm = view == app::View::Gantt ? "ガント: " : view == app::View::List ? "一覧: " : "ボード: ";
+    const auto ck = [&](bool ok, const char* what) { check(ok, (nm + "空き領域のメニュー: " + what).c_str()); };
+    h.c.setView(view);
+    h.c.setUi("zoom", "week");
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.u.sortKey.clear();
+    h.u.sortDir = 0;
+    h.u.customPx = 0;
+    h.u.scrollToBase = true;
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(900, 880);
+    h.frame(3);
+    Session* s = h.c.session();
+    const auto tree = [&]() -> const Tree& { return *h.c.session()->tree(); };
+    const auto linked = [&](const std::string& from, const std::string& to) {
+      const Issue* o = h.c.session()->issue(from);
+      return o && std::find(o->blocks.begin(), o->blocks.end(), to) != o->blocks.end();
+    };
+    const float hd = h.u.m.s(10.f);
+    // 課題 id のハンドルの中心（見えていなければ false）
+    const auto handle = [&](const std::string& id, bool right, ImVec2& out) {
+      if (view == app::View::Gantt) {
+        for (const auto& g : h.u.barGeom)
+          if (g.id == id && g.xl > h.u.ganttLeft + 30 && g.xr < 1380 && g.cy > 160 && g.cy < 600 && g.xr - g.xl > 12) {
+            out = ImVec2(right ? g.xr + hd : g.xl - hd, g.cy);
+            return true;
+          }
+        return false;
+      }
+      const int i = tree().find(id);
+      for (const auto& sl : h.u.linkSlots)
+        if (sl.idx == i && sl.a.y > 110 && sl.b.y < 700 && sl.a.x > 10 && sl.b.x < 1420) {
+          out = right ? sl.hr : sl.hl;
+          return true;
+        }
+      return false;
+    };
+    std::string idA;
+    for (int i = 0; i < tree().n && idA.empty(); ++i) {
+      ImVec2 pt;
+      if (tree().isLeaf(i) && tree().kind[static_cast<std::size_t>(i)] == Kind::Task && handle(tree().ids[static_cast<std::size_t>(i)], true, pt))
+        idA = tree().ids[static_cast<std::size_t>(i)];
+    }
+    ck(!idA.empty(), "テスト用の課題が見えている");
+    if (idA.empty()) continue;
+    // ボードでは、起点が To Do 以外の列にあるときに、作る課題が同じ列に入ることを確かめる
+    const std::string statusOrig = s->issue(idA)->status;
+    if (view == app::View::Board) {
+      s->setStatus(idA, "In Progress");
+      h.frame(3);
+    }
+    const ImVec2 empty(800.f, 760.f);  // 行・カードのない場所
+    const auto move = [&](float x, float y, int n = 2) {
+      io.AddMousePosEvent(x, y);
+      h.frame(n);
+    };
+    // ハンドルを押して空き領域まで動かし、離す
+    const auto dragToEmpty = [&](bool right) {
+      ImVec2 pt;
+      if (!handle(idA, right, pt)) return false;
+      move(pt.x, pt.y);
+      io.AddMouseButtonEvent(0, true);
+      h.frame(2);
+      move(empty.x, empty.y);
+      io.AddMouseButtonEvent(0, false);
+      h.frame(3);
+      return true;
+    };
+    const auto center = [](const std::pair<ImVec2, ImVec2>& r) { return ImVec2((r.first.x + r.second.x) / 2, (r.first.y + r.second.y) / 2); };
+    const auto count = [&] { return h.c.session()->issues().size(); };
+    const std::size_t undo0 = s->undoSize(), n0 = count();
+    const std::string parentA = s->issue(idA)->parent, statusA = s->issue(idA)->status;
+    const std::string expectName = h.c.newIssueName(parentA);
+    // ボードの列（状況。大文字小文字を無視し、空は先頭の To Do）
+    const auto colOf = [](std::string st) {
+      if (st.empty()) st = "To Do";
+      for (char& ch : st) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+      return st;
+    };
+
+    // 右のハンドルから空き領域: メニューが出る。何も変わらない。主になる項目は「後続」（先に並ぶ）
+    ck(dragToEmpty(true), "右のハンドルを空き領域まで動かせる");
+    ck(h.u.linkMenu.active && h.u.linkMenu.id == idA && h.u.linkMenu.fromRight && !h.u.linkDrag.active, "離すとメニューが出る");
+    ck(count() == n0 && s->undoSize() == undo0, "メニューの間は何も変えない");
+    ck(h.u.linkMenu.succItem.first.y < h.u.linkMenu.predItem.first.y && h.u.linkMenu.predItem.first.y < h.u.linkMenu.cancelItem.first.y,
+       "右のハンドルでは「後続」が先に並ぶ");
+    ck(ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), "メニューはポップアップ");
+    // Esc: 何も変えない（選択も残る）
+    h.c.select(idA);
+    h.frame(2);
+    h.key(ImGuiKey_Escape);
+    ck(!h.u.linkMenu.active && count() == n0 && s->undoSize() == undo0, "Esc でメニューが閉じ、何も変わらない");
+    ck(h.c.isSelected(idA), "Esc でメニューを閉じても選択は外れない");
+    h.c.clearSelection();
+    h.frame(2);
+    // メニューの外をクリック: 閉じるだけ
+    ck(dragToEmpty(true) && h.u.linkMenu.active, "もう一度メニューを出す");
+    h.click(300, 780);
+    h.frame(2);
+    ck(!h.u.linkMenu.active && count() == n0 && s->undoSize() == undo0, "メニューの外をクリックすると閉じ、何も変わらない");
+    ck(h.c.selection().empty(), "外のクリックは選択にならない");
+    // 「取り消し」
+    ck(dragToEmpty(true) && h.u.linkMenu.active, "メニューを出す（取り消し用）");
+    {
+      const ImVec2 c = center(h.u.linkMenu.cancelItem);
+      h.click(c.x, c.y);
+      h.frame(2);
+    }
+    ck(!h.u.linkMenu.active && count() == n0 && s->undoSize() == undo0, "「取り消し」で何も変わらない");
+
+    // 新しい後続を作ってつなぐ
+    ck(dragToEmpty(true) && h.u.linkMenu.active, "メニューを出す（後続）");
+    {
+      const ImVec2 c = center(h.u.linkMenu.succItem);
+      h.click(c.x, c.y);
+      h.frame(3);
+    }
+    ck(!h.u.linkMenu.active && count() == n0 + 1, "「後続」を選ぶと課題が1つ増える");
+    std::string nid;
+    {
+      // 作った課題は起点（葉）の直後にある
+      const auto& iss = h.c.session()->issues();
+      std::size_t ia = 0;
+      for (std::size_t i = 0; i < iss.size(); ++i)
+        if (iss[i].id == idA) ia = i;
+      nid = ia + 1 < iss.size() ? iss[ia + 1].id : std::string();
+    }
+    ck(!nid.empty() && h.c.session()->issue(nid) && h.c.session()->issue(nid)->parent == parentA, "作った課題は起点の兄弟（親が同じ）");
+    ck(!nid.empty() && linked(idA, nid), "起点 → 新しい課題 の順につながる");
+    ck(!nid.empty() && (expectName.empty() ? !h.c.session()->issue(nid)->summary.empty() : h.c.session()->issue(nid)->summary == expectName),
+       "名前は新規課題の名前の規則どおり");
+    if (view == app::View::Board)
+      ck(!nid.empty() && colOf(h.c.session()->issue(nid)->status) == colOf(statusA) && colOf(statusA) == "in progress", "ボードでは作る課題の状況（列）は起点と同じ");
+    ck(s->undoSize() == undo0 + 1, "作成とつなぎは Undo 1回分");
+    ck(!nid.empty() && h.u.editField == ui::EditField::Name && h.u.editId == nid, "作ったあと件名のその場編集を始める");
+    ck(!nid.empty() && h.c.isSelected(nid), "作った課題が選択される");
+    h.key(ImGuiKey_Escape);  // その場編集を終える
+    ck(h.u.editField == ui::EditField::None, "Esc でその場編集を終える");
+    h.c.undo();
+    h.frame(3);
+    ck(count() == n0 && !h.c.session()->issue(nid) && !linked(idA, nid) && s->undoSize() == undo0, "Undo 1回で課題ごと戻る");
+
+    // 左のハンドル: 主になるのは「先行」。新しい先行を作ってつなぐ（新しい課題 → 起点）
+    ck(dragToEmpty(false) && h.u.linkMenu.active && !h.u.linkMenu.fromRight, "左のハンドルから空き領域でメニューが出る");
+    ck(h.u.linkMenu.predItem.first.y < h.u.linkMenu.succItem.first.y, "左のハンドルでは「先行」が先に並ぶ");
+    {
+      const ImVec2 c = center(h.u.linkMenu.predItem);
+      h.click(c.x, c.y);
+      h.frame(3);
+    }
+    ck(count() == n0 + 1 && s->undoSize() == undo0 + 1, "「先行」を選ぶと課題が1つ増え、Undo 1回分");
+    {
+      const auto& iss = h.c.session()->issues();
+      std::size_t ia = 0;
+      for (std::size_t i = 0; i < iss.size(); ++i)
+        if (iss[i].id == idA) ia = i;
+      nid = ia + 1 < iss.size() ? iss[ia + 1].id : std::string();
+    }
+    ck(!nid.empty() && nid != idA && linked(nid, idA) && !linked(idA, nid), "新しい課題 → 起点 の順につながる");
+    ck(!nid.empty() && h.c.session()->issue(nid)->parent == parentA, "新しい先行も起点の兄弟");
+    if (view == app::View::Board)
+      ck(!nid.empty() && colOf(h.c.session()->issue(nid)->status) == colOf(statusA), "ボードでは新しい先行の状況（列）も起点と同じ");
+    ck(!nid.empty() && h.u.editField == ui::EditField::Name && h.u.editId == nid, "新しい先行でも件名のその場編集を始める");
+    h.key(ImGuiKey_Escape);
+    h.c.undo();
+    h.frame(3);
+    ck(count() == n0 && !linked(nid, idA) && s->undoSize() == undo0, "新しい先行も Undo 1回で課題ごと戻る");
+
+    // 相手のいる行・カードの上で離すときは、今までどおりつなぐ（メニューは出ない）
+    // 元の場所で離す・メニューの出ない場所（ビューの外）で離すと取り消し
+    {
+      ImVec2 pt;
+      ck(handle(idA, true, pt), "ハンドルが見えている");
+      move(pt.x, pt.y);
+      io.AddMouseButtonEvent(0, true);
+      h.frame(2);
+      move(pt.x + 30, pt.y + 2);
+      move(pt.x, pt.y);
+      io.AddMouseButtonEvent(0, false);
+      h.frame(3);
+      ck(!h.u.linkMenu.active && !h.u.linkDrag.active && s->undoSize() == undo0, "元の場所で離すとメニューは出ず、取り消し");
+      move(pt.x, pt.y);
+      io.AddMouseButtonEvent(0, true);
+      h.frame(2);
+      move(700, 20);  // 上のバー（ビューの外）
+      io.AddMouseButtonEvent(0, false);
+      h.frame(3);
+      ck(!h.u.linkMenu.active && !h.u.linkDrag.active && s->undoSize() == undo0, "ビューの外で離してもメニューは出ない");
+    }
+    // ダイアログが開いている間は出ない
+    {
+      ui::Frame fr{h.c, h.u, h.p};
+      ui::openDialog(fr, ui::Dlg::Export);
+      h.frame(2);
+      ck(!dragToEmpty(true) || (!h.u.linkMenu.active && !h.u.linkDrag.active), "ダイアログの間はドラッグもメニューも出ない");
+      h.key(ImGuiKey_Escape);
+      h.frame(2);
+    }
+    if (view == app::View::Board) {
+      s->setStatus(idA, statusOrig.empty() ? "To Do" : statusOrig);
+      h.frame(2);
+    }
+    io.AddMousePosEvent(900, 880);
+    h.frame(2);
+  }
+  // 件名のその場編集で Enter（確定して次の兄弟を足す）・Ctrl+Enter（続けて足す）: 課題の追加は描画が終わってから行い、
+  // そのフレームの描画が1つの計算結果に揃っている（カードの重複・脱落がない）こと（ガント・一覧・ボード）
+  for (const app::View view : {app::View::Gantt, app::View::List, app::View::Board}) {
+    const std::string nm = view == app::View::Gantt ? "ガント: " : view == app::View::List ? "一覧: " : "ボード: ";
+    const auto ck = [&](bool ok, const char* what) { check(ok, (nm + "Enter で続けて追加: " + what).c_str()); };
+    h.c.setView(view);
+    h.c.setUi("zoom", "week");
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.u.sortKey.clear();
+    h.u.sortDir = 0;
+    h.u.customPx = 0;
+    h.u.scrollToBase = true;
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(900, 880);
+    h.frame(3);
+    Session* s = h.c.session();
+    // このフレームに描かれた課題 id（描いた時点の計算結果での id）
+    const auto drawn = [&] {
+      std::vector<std::string> v;
+      if (view == app::View::Gantt) {
+        for (const auto& g : h.u.barGeom) v.push_back(g.id);
+      } else {
+        for (const auto& sl : h.u.linkSlots) v.push_back(sl.id);
+      }
+      std::sort(v.begin(), v.end());
+      return v;
+    };
+    const auto issueIds = [&] {
+      std::vector<std::string> v;
+      for (const Issue& o : h.c.session()->issues()) v.push_back(o.id);
+      std::sort(v.begin(), v.end());
+      return v;
+    };
+    // 1フレームごとに、描かれた課題 id の集合を覚える。追加の前の集合 S か、追加した課題を足した集合 S+新しい課題 のどちらかで、
+    // 重複も脱落もないこと（追加が描画の途中で起きると、前半は古い計算結果・後半は新しい計算結果で描かれて崩れる）
+    std::vector<std::vector<std::string>> frames;
+    bool dup = false;
+    const auto watch = [&](int n) {
+      for (int i = 0; i < n; ++i) {
+        h.frame(1);
+        const auto d = drawn();
+        if (std::adjacent_find(d.begin(), d.end()) != d.end()) dup = true;
+        frames.push_back(d);
+      }
+    };
+    const auto exact = [&](const std::vector<std::string>& base, const std::string& added) {
+      std::vector<std::string> plus = base;
+      plus.push_back(added);
+      std::sort(plus.begin(), plus.end());
+      for (const auto& d : frames)
+        if (d != base && d != plus) return false;
+      return true;
+    };
+    // 追加の元（葉）: 画面に見えている最初の葉
+    std::string idA;
+    for (int i = 0; i < h.c.session()->tree()->n && idA.empty(); ++i)
+      if (h.c.session()->tree()->isLeaf(i) && h.c.session()->tree()->kind[static_cast<std::size_t>(i)] == Kind::Task) {
+        const std::string id = h.c.session()->tree()->ids[static_cast<std::size_t>(i)];
+        const auto d = drawn();
+        if (std::binary_search(d.begin(), d.end(), id)) idA = id;
+      }
+    ck(!idA.empty(), "テスト用の課題が見えている");
+    if (idA.empty()) continue;
+    const std::size_t n0 = h.c.session()->issues().size(), undo0 = s->undoSize();
+    ui::Frame fr{h.c, h.u, h.p};
+    ui::beginEdit(fr, idA, ui::EditField::Name, true);  // 追加した直後の編集
+    h.frame(3);
+    ck(h.u.editField == ui::EditField::Name && h.u.editId == idA, "件名の編集が始まる");
+    const std::vector<std::string> s0 = drawn();
+    // Enter: 確定して、兄弟を足してその編集を始める
+    io.AddKeyEvent(ImGuiKey_Enter, true);
+    watch(1);
+    io.AddKeyEvent(ImGuiKey_Enter, false);
+    watch(3);
+    ck(h.c.session()->issues().size() == n0 + 1, "Enter で兄弟が1つ増える");
+    ck(h.u.editField == ui::EditField::Name && h.u.editId != idA && !h.u.editId.empty(), "増えた課題の件名の編集が始まる");
+    const std::string id2 = h.u.editId;
+    const auto after1 = issueIds();
+    ck(!dup && exact(s0, id2), "Enter のフレームの描画に重複・脱落がない");
+    frames.clear();
+    const std::vector<std::string> s1 = drawn();
+    // Ctrl+Enter: 続けて足す
+    io.AddKeyEvent(ImGuiMod_Ctrl, true);
+    io.AddKeyEvent(ImGuiKey_Enter, true);
+    watch(1);
+    io.AddKeyEvent(ImGuiKey_Enter, false);
+    io.AddKeyEvent(ImGuiMod_Ctrl, false);
+    watch(3);
+    ck(h.c.session()->issues().size() == n0 + 2, "Ctrl+Enter でさらに1つ増える");
+    ck(h.u.editField == ui::EditField::Name && h.u.editId != id2 && h.u.editId != idA, "続けて足した課題の編集が始まる");
+    ck(!dup && exact(s1, h.u.editId), "Ctrl+Enter のフレームの描画に重複・脱落がない");
+    ck(h.c.session()->issues().size() == after1.size() + 1, "件数の確認");
+    h.key(ImGuiKey_Escape);
+    ck(h.u.editField == ui::EditField::None, "Esc で編集を終える");
+    // 戻す（足した 2 件）
+    h.c.undo();
+    h.c.undo();
+    h.frame(3);
+    ck(h.c.session()->issues().size() == n0 && s->undoSize() == undo0, "Undo で足した課題が戻る");
     io.AddMousePosEvent(900, 880);
     h.frame(2);
   }

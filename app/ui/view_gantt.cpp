@@ -888,12 +888,15 @@ void drawGanttView(Frame& f, ImVec2 size) {
     const int si = T.find(u.linkDrag.id);
     const ImVec2 mp = ImGui::GetMousePos();
     int tgtRow = -1;
+    bool emptySpot = false;  // 行のない場所（最後の行より下）。離すと新しい課題を作るメニューを出す
     if (mp.x >= wp.x && mp.x < wp.x + viewW && mp.y >= bodyTop && mp.y < wp.y + viewH) {
       const int ri = static_cast<int>(std::floor((mp.y - bodyTop + sy) / RH));
       if (ri >= 0 && ri < static_cast<int>(rows.size()) && rows[static_cast<std::size_t>(ri)].id != si) tgtRow = ri;
+      emptySpot = ri >= static_cast<int>(rows.size());
     }
     // 循環・重複・親子は赤（つなげない）。日程の影響は相手が変わったときだけ計算し直す（共有: link_drag.cpp）
-    const LinkEval e = linkDragEval(f, tgtRow >= 0 ? rows[static_cast<std::size_t>(tgtRow)].id : -1);
+    LinkEval e = linkDragEval(f, tgtRow >= 0 ? rows[static_cast<std::size_t>(tgtRow)].id : -1);
+    e.open = emptySpot;
     const bool fromRight = e.fromRight;
 
     // つなぐ相手の行とバーを強調（つなげないときは赤）、日程への影響のプレビュー、ゴムひも

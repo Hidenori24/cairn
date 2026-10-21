@@ -99,6 +99,29 @@ bool linkIssues(Frame& f, const std::string& anchor, bool anchorIsPred, const st
   return true;
 }
 
+bool createLinkedIssue(Frame& f, const std::string& anchor, bool succ, bool sameStatus) {
+  Session* s = f.c.session();
+  const Issue* a = s ? s->issue(anchor) : nullptr;
+  if (!a) return false;
+  const std::string parent = a->parent, status = a->status;  // 課題を足すと a は無効になる
+  // 作成・状況・つなぎを Undo 1回にまとめる。途中で失敗したら作った課題も戻す（何も残さない）
+  s->beginBatch();
+  const std::string nid = f.c.createIssue(parent, anchor);
+  bool ok = !nid.empty();
+  if (ok && sameStatus && !status.empty() && s->issue(nid) && s->issue(nid)->status != status) s->setStatus(nid, status);
+  if (ok) ok = linkIssues(f, anchor, succ, nid, false);
+  if (!ok && !nid.empty()) s->deleteIssues({nid});
+  s->endBatch();
+  f.c.afterEdit();
+  if (!ok) return false;
+  if (const Tree* T = s->tree(); T && T->find(anchor) >= 0 && T->find(nid) >= 0) {
+    const std::string ad = T->did[static_cast<std::size_t>(T->find(anchor))], nd = T->did[static_cast<std::size_t>(T->find(nid))];
+    f.c.toast(succ ? ad + " → " + nd + " を作ってつなぎました" : nd + " → " + ad + " を作ってつなぎました", NoticeAction::Undo);
+  }
+  beginEdit(f, nid, EditField::Name, true);  // 件名をその場で決める
+  return true;
+}
+
 void rowClick(Frame& f, const std::string& id) {
   if (f.u.linkPick.active) {  // 相手を選ぶモード: つなげたら抜ける。つなげないときは理由を出して続ける
     // 行・カードを描いている途中で課題を変えない（描画が終わってから）
@@ -316,11 +339,15 @@ bool drawInlineEdit(Frame& f, float w) {
     commitEdit(f);
     endEdit(u);
     if (field == EditField::Name && (io.KeyShift || io.KeyCtrl || fresh)) {
-      const Issue* o = s->issue(id);
-      std::string nid;
-      if (io.KeyShift) nid = f.c.createIssue(id, "");
-      else if (o) nid = f.c.createIssue(o->parent, id);
-      if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
+      // 続けて課題を足す（Shift = 子、それ以外 = 兄弟）。行・カードを描いている途中で課題の数を変えない（描画が終わってから）
+      const bool asChild = io.KeyShift;
+      deferAfterFrame(f, [&f, id, asChild] {
+        const Session* ss = f.c.session();
+        const Issue* o = ss ? ss->issue(id) : nullptr;
+        if (!o) return;
+        const std::string nid = asChild ? f.c.createIssue(id, "") : f.c.createIssue(o->parent, id);
+        if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
+      });
     }
     return false;
   }
@@ -1227,6 +1254,7 @@ void handleKeys(Frame& f) {
   const bool modal = u.dlg != Dlg::None || u.paletteOpen || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
   if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !io.WantTextInput) {
     if (modal) return;  // ダイアログ・パレット・メニューはそれぞれで閉じる
+    if (u.linkMenu.escFrame == ImGui::GetFrameCount()) return;  // 依存のメニューを閉じた Esc（選択などは変えない）
     if (u.attachDragEscFrame == ImGui::GetFrameCount()) return;  // 添付のドラッグを取り消した Esc（選択などは変えない）
     if (u.attachDrag.active) {  // 添付のサムネイルのドラッグを取り消し
       u.attachDrag = {};
@@ -1448,6 +1476,7 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
     drawContextMenu(f);
     drawStatusMenu(f);
+    drawLinkMenu(f);
     drawDialogs(f);
     drawPalette(f);
     ImGui::End();

@@ -225,10 +225,24 @@ struct UiState {
     std::uint64_t previewVer = 0;
     LinkPreview preview;
   } linkDrag;
+  // 依存のドラッグを空いた場所で離したときのメニュー「新しい後続（先行）の課題を作ってつなぐ」（Issue #8）。
+  // 離したフレームに request を立て、オーバーレイで開く。Esc・メニューの外のクリックで閉じる（何も変えない）
+  struct LinkMenu {
+    bool request = false;     // 開く要求（次に描くときに OpenPopup する）
+    bool active = false;      // 開いている（ほかのドラッグ・ハンドルを出さない）
+    std::string id;           // 起点の課題
+    bool fromRight = true;    // つかんだハンドル（右 = 主になる項目は「後続」。左なら「先行」）
+    std::string project;      // 開いたプロジェクト（切り替わったら閉じる）
+    app::View view = app::View::Gantt;  // 開いたビュー（ボードは作る課題の状況を起点に合わせる）
+    int escFrame = -1;        // Esc で閉じたフレーム（同じ Esc で選択を外さない）
+    // 前のフレームの項目の位置（画面の座標。煙テストが押す位置を知るために使う）
+    std::pair<ImVec2, ImVec2> succItem{{0, 0}, {0, 0}}, predItem{{0, 0}, {0, 0}}, cancelItem{{0, 0}, {0, 0}};
+  } linkMenu;
   // 一覧の行・ボードのカードの、依存のドラッグ用の位置（画面の座標。このフレームに描いた見えているものだけ。
   // 描き始めに clear し、linkSlotAdd で足す。煙テストが当たり位置を知るためにも使う）
   struct LinkSlot {
     int idx = -1;                 // 課題の添字（tree()）
+    std::string id;               // 描いた時点の tree() での課題 id（煙テストが、同じフレームの描画が1つの計算結果に揃っているかを見る）
     ImVec2 a{0, 0}, b{0, 0};      // 行・カードの枠（相手に選んだとき強調する範囲）
     float padX = 0;               // 相手に選べる範囲を、左右にここまで広げる（ハンドルのある余白）
     ImVec2 hl{0, 0}, hr{0, 0};    // 左右のハンドルの中心
