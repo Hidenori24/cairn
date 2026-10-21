@@ -1341,6 +1341,109 @@ int main() {
     io.AddMousePosEvent(900, 880);
     h.frame(2);
   }
+  // 件名のその場編集で Enter（確定して次の兄弟を足す）・Ctrl+Enter（続けて足す）: 課題の追加は描画が終わってから行い、
+  // そのフレームの描画が1つの計算結果に揃っている（カードの重複・脱落がない）こと（ガント・一覧・ボード）
+  for (const app::View view : {app::View::Gantt, app::View::List, app::View::Board}) {
+    const std::string nm = view == app::View::Gantt ? "ガント: " : view == app::View::List ? "一覧: " : "ボード: ";
+    const auto ck = [&](bool ok, const char* what) { check(ok, (nm + "Enter で続けて追加: " + what).c_str()); };
+    h.c.setView(view);
+    h.c.setUi("zoom", "week");
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.u.sortKey.clear();
+    h.u.sortDir = 0;
+    h.u.customPx = 0;
+    h.u.scrollToBase = true;
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(900, 880);
+    h.frame(3);
+    Session* s = h.c.session();
+    // このフレームに描かれた課題 id（描いた時点の計算結果での id）
+    const auto drawn = [&] {
+      std::vector<std::string> v;
+      if (view == app::View::Gantt) {
+        for (const auto& g : h.u.barGeom) v.push_back(g.id);
+      } else {
+        for (const auto& sl : h.u.linkSlots) v.push_back(sl.id);
+      }
+      std::sort(v.begin(), v.end());
+      return v;
+    };
+    const auto issueIds = [&] {
+      std::vector<std::string> v;
+      for (const Issue& o : h.c.session()->issues()) v.push_back(o.id);
+      std::sort(v.begin(), v.end());
+      return v;
+    };
+    // 1フレームごとに、描かれた課題 id の集合を覚える。追加の前の集合 S か、追加した課題を足した集合 S+新しい課題 のどちらかで、
+    // 重複も脱落もないこと（追加が描画の途中で起きると、前半は古い計算結果・後半は新しい計算結果で描かれて崩れる）
+    std::vector<std::vector<std::string>> frames;
+    bool dup = false;
+    const auto watch = [&](int n) {
+      for (int i = 0; i < n; ++i) {
+        h.frame(1);
+        const auto d = drawn();
+        if (std::adjacent_find(d.begin(), d.end()) != d.end()) dup = true;
+        frames.push_back(d);
+      }
+    };
+    const auto exact = [&](const std::vector<std::string>& base, const std::string& added) {
+      std::vector<std::string> plus = base;
+      plus.push_back(added);
+      std::sort(plus.begin(), plus.end());
+      for (const auto& d : frames)
+        if (d != base && d != plus) return false;
+      return true;
+    };
+    // 追加の元（葉）: 画面に見えている最初の葉
+    std::string idA;
+    for (int i = 0; i < h.c.session()->tree()->n && idA.empty(); ++i)
+      if (h.c.session()->tree()->isLeaf(i) && h.c.session()->tree()->kind[static_cast<std::size_t>(i)] == Kind::Task) {
+        const std::string id = h.c.session()->tree()->ids[static_cast<std::size_t>(i)];
+        const auto d = drawn();
+        if (std::binary_search(d.begin(), d.end(), id)) idA = id;
+      }
+    ck(!idA.empty(), "テスト用の課題が見えている");
+    if (idA.empty()) continue;
+    const std::size_t n0 = h.c.session()->issues().size(), undo0 = s->undoSize();
+    ui::Frame fr{h.c, h.u, h.p};
+    ui::beginEdit(fr, idA, ui::EditField::Name, true);  // 追加した直後の編集
+    h.frame(3);
+    ck(h.u.editField == ui::EditField::Name && h.u.editId == idA, "件名の編集が始まる");
+    const std::vector<std::string> s0 = drawn();
+    // Enter: 確定して、兄弟を足してその編集を始める
+    io.AddKeyEvent(ImGuiKey_Enter, true);
+    watch(1);
+    io.AddKeyEvent(ImGuiKey_Enter, false);
+    watch(3);
+    ck(h.c.session()->issues().size() == n0 + 1, "Enter で兄弟が1つ増える");
+    ck(h.u.editField == ui::EditField::Name && h.u.editId != idA && !h.u.editId.empty(), "増えた課題の件名の編集が始まる");
+    const std::string id2 = h.u.editId;
+    const auto after1 = issueIds();
+    ck(!dup && exact(s0, id2), "Enter のフレームの描画に重複・脱落がない");
+    frames.clear();
+    const std::vector<std::string> s1 = drawn();
+    // Ctrl+Enter: 続けて足す
+    io.AddKeyEvent(ImGuiMod_Ctrl, true);
+    io.AddKeyEvent(ImGuiKey_Enter, true);
+    watch(1);
+    io.AddKeyEvent(ImGuiKey_Enter, false);
+    io.AddKeyEvent(ImGuiMod_Ctrl, false);
+    watch(3);
+    ck(h.c.session()->issues().size() == n0 + 2, "Ctrl+Enter でさらに1つ増える");
+    ck(h.u.editField == ui::EditField::Name && h.u.editId != id2 && h.u.editId != idA, "続けて足した課題の編集が始まる");
+    ck(!dup && exact(s1, h.u.editId), "Ctrl+Enter のフレームの描画に重複・脱落がない");
+    ck(h.c.session()->issues().size() == after1.size() + 1, "件数の確認");
+    h.key(ImGuiKey_Escape);
+    ck(h.u.editField == ui::EditField::None, "Esc で編集を終える");
+    // 戻す（足した 2 件）
+    h.c.undo();
+    h.c.undo();
+    h.frame(3);
+    ck(h.c.session()->issues().size() == n0 && s->undoSize() == undo0, "Undo で足した課題が戻る");
+    io.AddMousePosEvent(900, 880);
+    h.frame(2);
+  }
   // 依存のドラッグ中、見えている範囲の端へマウスを近づけると自動でスクロールする（課題が多いとき。一覧・ボード）
   {
     const std::string prevProject = h.c.currentId();

@@ -202,6 +202,8 @@ bool overSlot(const UiState::LinkSlot& sl, ImVec2 mp) {
 int linkSlotAdd(Frame& f, const UiState::LinkSlot& slot, const LinkOverlayOpts& o) {
   UiState& u = f.u;
   u.linkSlots.push_back(slot);
+  if (const Tree* T = f.c.session() ? f.c.session()->tree() : nullptr; T && slot.idx >= 0 && slot.idx < T->n)
+    u.linkSlots.back().id = T->ids[static_cast<std::size_t>(slot.idx)];
   if (o.busy || !linkDragIdle(u) || !ImGui::IsWindowHovered()) return 0;
   const ImVec2 mp = ImGui::GetMousePos();
   if (!inRect(mp, o.clipMin, o.clipMax)) return 0;

@@ -240,6 +240,7 @@ struct UiState {
   // 描き始めに clear し、linkSlotAdd で足す。煙テストが当たり位置を知るためにも使う）
   struct LinkSlot {
     int idx = -1;                 // 課題の添字（tree()）
+    std::string id;               // 描いた時点の tree() での課題 id（煙テストが、同じフレームの描画が1つの計算結果に揃っているかを見る）
     ImVec2 a{0, 0}, b{0, 0};      // 行・カードの枠（相手に選んだとき強調する範囲）
     float padX = 0;               // 相手に選べる範囲を、左右にここまで広げる（ハンドルのある余白）
     ImVec2 hl{0, 0}, hr{0, 0};    // 左右のハンドルの中心

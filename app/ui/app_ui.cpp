@@ -339,11 +339,15 @@ bool drawInlineEdit(Frame& f, float w) {
     commitEdit(f);
     endEdit(u);
     if (field == EditField::Name && (io.KeyShift || io.KeyCtrl || fresh)) {
-      const Issue* o = s->issue(id);
-      std::string nid;
-      if (io.KeyShift) nid = f.c.createIssue(id, "");
-      else if (o) nid = f.c.createIssue(o->parent, id);
-      if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
+      // 続けて課題を足す（Shift = 子、それ以外 = 兄弟）。行・カードを描いている途中で課題の数を変えない（描画が終わってから）
+      const bool asChild = io.KeyShift;
+      deferAfterFrame(f, [&f, id, asChild] {
+        const Session* ss = f.c.session();
+        const Issue* o = ss ? ss->issue(id) : nullptr;
+        if (!o) return;
+        const std::string nid = asChild ? f.c.createIssue(id, "") : f.c.createIssue(o->parent, id);
+        if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
+      });
     }
     return false;
   }
