@@ -1414,7 +1414,7 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
       default: drawGanttView(f, mainSize); break;
     }
   }
-  if (u.linkDrag.active && (!s || c.view() != View::Gantt)) u.linkDrag = {};  // ガントが描かれない間にドラッグを残さない
+  if (u.linkDrag.active && (!s || c.view() != u.linkDrag.view)) u.linkDrag = {};  // 始めたビューが描かれない間にドラッグを残さない
   if ((u.arrowDrag.pending || u.arrowDrag.active) && (!s || c.view() != View::Gantt)) u.arrowDrag = {};
   ImGui::EndChild();
   if (detailW > 0) {

@@ -188,12 +188,26 @@ struct UiState {
     std::string id;           // つかんだバーの課題
     bool fromRight = true;    // 右のハンドル = つかんだバーが先行（相手が後続）。左なら逆
     std::string project;      // 始めたプロジェクト
-    ImVec2 start{0, 0};       // 押した位置（つかんだバーが画面にないときの線の始点）
+    app::View view = app::View::Gantt;  // 始めたビュー（ガント・一覧・ボード。切り替わったら終わる）
+    ImVec2 start{0, 0};       // 押した位置（つかんだバー・行・カードが画面にないときの線の始点）
     // つなぐ前の日程の影響（相手が変わったときだけ計算し直す）
     std::string previewKey;
     std::uint64_t previewVer = 0;
     LinkPreview preview;
   } linkDrag;
+  // 一覧の行・ボードのカードの、依存のドラッグ用の位置（画面の座標。このフレームに描いた見えているものだけ。
+  // 描き始めに clear し、linkSlotAdd で足す。煙テストが当たり位置を知るためにも使う）
+  struct LinkSlot {
+    int idx = -1;                 // 課題の添字（tree()）
+    ImVec2 a{0, 0}, b{0, 0};      // 行・カードの枠（相手に選んだとき強調する範囲）
+    float padX = 0;               // 相手に選べる範囲を、左右にここまで広げる（ハンドルのある余白）
+    ImVec2 hl{0, 0}, hr{0, 0};    // 左右のハンドルの中心
+    // 相手にしたとき、ゴムひもの先が付く点。左のハンドルで来た線 / 右のハンドルで来た線（landL, landR = 反対側の端へ）と、
+    // 同じ側の端へ回り込む線（sameL, sameR = 一覧、ボードの同じ列）
+    ImVec2 landL{0, 0}, landR{0, 0};
+    ImVec2 sameL{0, 0}, sameR{0, 0};
+  };
+  std::vector<LinkSlot> linkSlots;
   // 依存の矢印をつかんで付け替え・削除するドラッグ（矢印の上で押して動かす。Esc・元の場所で離す・タイムライン外で離すと取り消し）
   struct ArrowDrag {
     bool pending = false;     // 矢印の上で押した（まだ動いていない。付け替えできない矢印のときはそのまま）

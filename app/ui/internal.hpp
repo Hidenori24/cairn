@@ -7,6 +7,7 @@
 
 #include "roadmap/commands.hpp"
 #include "roadmap/gantt_geom.hpp"
+#include "roadmap/link_candidates.hpp"
 #include "ui/app_ui.hpp"
 #include "ui/strings.hpp"
 #include "ui/widgets.hpp"
@@ -39,6 +40,51 @@ void cancelLinkPick(Frame& f);
 // 起点と相手をつなぐ。つなげない相手（循環など）は理由を通知して false。成功すると Undo 1回で戻せる。
 // announce = 成功を通知する（元に戻すボタンつき）
 bool linkIssues(Frame& f, const std::string& anchor, bool anchorIsPred, const std::string& other, bool announce);
+// ---- 依存をつなぐドラッグ（ガント・一覧・ボードで共有。app/ui/link_drag.cpp）----
+inline constexpr float kLinkHandleR = 6.f;    // ハンドルの半径（拡大率をかける前）
+inline constexpr float kLinkHandleGap = 4.f;  // ガントのバーの端からハンドルまでのすきま
+// ほかのドラッグ・選択モード・ダイアログ・入力がなく、ハンドルを出して押してよいか
+bool linkDragIdle(const UiState& u);
+// issue（tree() の添字）のハンドルからドラッグを始める。fromRight = 右のハンドル（つかんだ課題が先行）
+void linkDragBegin(Frame& f, int issue, bool fromRight, ImVec2 mouse);
+// ビュー v を描いているときのドラッグとして有効か。課題が消えた・プロジェクトやビューが変わったなら捨てて false
+bool linkDragValid(Frame& f, app::View v);
+// つなぐ相手 tgt（なければ -1。つかんだ課題自身も相手なし）を調べた結果
+struct LinkEval {
+  int src = -1, tgt = -1;
+  bool fromRight = true;
+  LinkBlock blk = LinkBlock::None;       // 循環・重複・親子など
+  const LinkPreview* pv = nullptr;       // 日程の影響（つなげるときだけ。u.linkDrag の中を指す）
+  bool ok = false, bad = false;          // つなげる / 相手がいるのにつなげない（赤）
+  ImU32 lineCol = 0;                     // 線・強調の色
+};
+LinkEval linkDragEval(Frame& f, int tgt);
+// 離したら確定する（相手がいなければ取り消し）。課題を変えるのは描画が終わってから
+void linkDragFinish(Frame& f, const LinkEval& e);
+void drawLinkHandle(Frame& f, ImVec2 hc, bool hot, bool ok = true);
+// ゴムひも（p0 から p1 まで）。sameSide = p1 にも p0 と同じ側から入る（一覧の左右の余白の中を通す）。minBend = 曲がりの最小
+void drawLinkRubber(Frame& f, ImVec2 p0, ImVec2 p1, bool fromRight, bool sameSide, float minBend, ImU32 col);
+// カーソルの横に出す理由・日程の影響（noun = 「バー」「行」「カード」）
+void drawLinkTip(Frame& f, const LinkEval& e, const char* noun);
+// ドラッグ中、マウスが見えている範囲の端に近いと描いているウィンドウをスクロールする
+void linkDragAutoScroll(Frame& f, ImVec2 mouse, ImVec2 clipMin, ImVec2 clipMax, bool horizontal);
+// 一覧とボードの設定
+struct LinkOverlayOpts {
+  ImVec2 clipMin{0, 0}, clipMax{0, 0};  // 見えている範囲（この外ではハンドルを出さず、当たり判定もしない）
+  const char* noun = "行";               // 「つなぐ相手の○までドラッグ」
+  bool sameSide = false;                 // 相手の同じ側の端に付ける（一覧）
+  bool sameColumn = false;               // 同じ列の相手には同じ側の端に付ける（ボード。遠くの列へは反対側の端）
+  float hitR = 10.f;                     // ハンドルの当たり半径（拡大率をかける前）
+  float bend = 24.f;                     // ゴムひもの曲がりの最小（拡大率をかける前）
+  float round = 4.f;                     // 強調の角の丸み（拡大率をかける前）
+  bool busy = false;                     // そのビュー固有のドラッグ中（ボードのカードの移動）はハンドルを出さない
+  bool horizontalScroll = false;         // 横にもスクロールできる
+};
+// 行・カードを登録する。ハンドルの上にマウスがあれば 1（左）か 2（右）を返し、押されたらドラッグを始める
+// （返り値が 0 でないときは、その行・カードのクリックやドラッグにしない）。描く前にこのフレームの先頭で linkSlots を clear しておく
+int linkSlotAdd(Frame& f, const UiState::LinkSlot& slot, const LinkOverlayOpts& o);
+// 登録した行・カードの上のハンドル・ドラッグ中のゴムひも・相手の強調・確定をまとめて描く（行・カードを描いたあとに1回）
+void drawLinkOverlay(Frame& f, app::View view, const LinkOverlayOpts& o);
 // 最近つないだ課題（いまのプロジェクトのもの。新しい順）
 const std::vector<std::string>& recentLinks(const Frame& f);
 // その場編集を始める（fresh = 追加直後の行）

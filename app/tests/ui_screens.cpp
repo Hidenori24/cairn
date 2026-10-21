@@ -408,6 +408,90 @@ int main(int argc, char** argv) {
     io2.AddMousePosEvent(-1, -1);
     frames(2);
   }
+  // 依存のドラッグ（Issue #8）一覧・ボード: 行・カードに載せるとハンドル → ドラッグ中 → つなげない相手は赤。ライト・ダーク
+  {
+    using Slot = ui::UiState::LinkSlot;
+    ImGuiIO& io4 = ImGui::GetIO();
+    const auto listBoardShots = [&](const std::string& tag) {
+      for (const app::View view : {app::View::List, app::View::Board}) {
+        const bool isList = view == app::View::List;
+        const std::string nm = isList ? "list" : "board";
+        c.setView(view);
+        c.clearSelection();
+        u.detailOpen = false;
+        u.sortKey.clear();
+        u.sortDir = 0;
+        io4.AddMousePosEvent(-1, -1);
+        frames(3);
+        const Session* s = c.session();
+        const Tree& T = *s->tree();
+        // 先行 A（上）→ 後続 B（下）で、つなぐと B が遅れる組と、すでにつながっている組（逆向きは循環）を探す
+        std::optional<Slot> sa, sb, ca, cb;
+        for (const auto& a : u.linkSlots)
+          for (const auto& b : u.linkSlots) {
+            if (a.idx < 0 || b.idx < 0 || a.idx == b.idx || !T.isLeaf(a.idx) || !T.isLeaf(b.idx) || b.a.y <= a.a.y || a.a.y < 160 ||
+                b.b.y > 700)
+              continue;
+            if (!sa && checkLink(T, s->viewIssues(), a.idx, b.idx) == LinkBlock::None && s->previewLink(T.ids[a.idx], T.ids[b.idx]).delayDays > 0)
+              sa = a, sb = b;
+            if (!ca && std::find(T.succs[a.idx].begin(), T.succs[a.idx].end(), b.idx) != T.succs[a.idx].end()) ca = a, cb = b;
+          }
+        const auto key = [&](ImGuiKey k) {
+          io4.AddKeyEvent(k, true);
+          frames(1);
+          io4.AddKeyEvent(k, false);
+          frames(1);
+        };
+        if (sa && sb) {
+          const float cx = isList ? sb->a.x + 150 : (sb->a.x + sb->b.x) / 2, cy = (sb->a.y + sb->b.y) / 2;
+          io4.AddMousePosEvent(isList ? sa->a.x + 150 : (sa->a.x + sa->b.x) / 2, (sa->a.y + sa->b.y) / 2);
+          shot("27_link_" + nm + "_hover_" + tag);
+          io4.AddMousePosEvent(sa->hr.x, sa->hr.y);
+          shot("27b_link_" + nm + "_handle_" + tag);
+          io4.AddMouseButtonEvent(0, true);
+          frames(2);
+          io4.AddMousePosEvent(cx, cy);
+          shot("28_link_" + nm + "_drag_ok_" + tag);
+          io4.AddMousePosEvent(isList ? 700 : 1100, 840);  // 相手のいない場所
+          shot("28b_link_" + nm + "_drag_free_" + tag);
+          key(ImGuiKey_Escape);
+          io4.AddMouseButtonEvent(0, false);
+          frames(3);
+          // 左のハンドル（つかんだ方が後続）
+          io4.AddMousePosEvent(sb->hl.x, sb->hl.y);
+          frames(2);
+          io4.AddMouseButtonEvent(0, true);
+          frames(2);
+          io4.AddMousePosEvent(isList ? sa->a.x + 150 : (sa->a.x + sa->b.x) / 2, (sa->a.y + sa->b.y) / 2);
+          shot("28c_link_" + nm + "_drag_left_" + tag);
+          key(ImGuiKey_Escape);
+          io4.AddMouseButtonEvent(0, false);
+          frames(3);
+        }
+        if (ca && cb) {
+          // ca（先行）→ cb（後続）はすでにある。後続の右のハンドルから先行へドラッグすると循環で赤
+          io4.AddMousePosEvent(cb->hr.x, cb->hr.y);
+          frames(2);
+          io4.AddMouseButtonEvent(0, true);
+          frames(2);
+          io4.AddMousePosEvent(isList ? ca->a.x + 150 : (ca->a.x + ca->b.x) / 2, (ca->a.y + ca->b.y) / 2);
+          shot("29_link_" + nm + "_drag_bad_" + tag);
+          key(ImGuiKey_Escape);
+          io4.AddMouseButtonEvent(0, false);
+          frames(3);
+        }
+        io4.AddMousePosEvent(-1, -1);
+        frames(2);
+      }
+    };
+    listBoardShots("light");
+    u.t = &ui::darkTokens();
+    ui::applyStyle(*u.t, u.m);
+    listBoardShots("dark");
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    frames(2);
+  }
   // 依存の矢印（Issue #10）: ホバー・つなぎ替え・外す・たどる・クリティカル・日付の衝突を、ライト・ダークで
   {
     using Geom = ui::UiState::BarGeom;
