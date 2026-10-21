@@ -132,6 +132,8 @@ struct UiState {
     std::string id;
   };
   std::vector<DropTarget> dropTargets, dropBuild;
+  // 行・カードの添付バッジの範囲（煙テストが、マウスを載せる位置を知るため。前のフレームのものが attachBadges）
+  std::vector<DropTarget> attachBadges, attachBadgeBuild;
   std::string attachWarnPath;  // 開く前に警告している添付の本体（Dlg::AttachOpenWarn）
   // 添付のサムネイル（添付タブの行）をつかんで別の課題へ動かすドラッグ（離した位置のドロップ先は dropTargets で調べる）。
   // 別の課題の上で離すと移動（Ctrl を押していればコピー）、同じ課題の添付の一覧の上なら並べ替え、何もないところなら何もしない。

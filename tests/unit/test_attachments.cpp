@@ -173,7 +173,7 @@ TEST_CASE("attachments: 削除は _削除済み へ移す（同名は連番、�
   CHECK(e.fs.content("data/案件A/_削除済み/1/a-2.txt") == "two");
   CHECK(e.fs.content("data/案件A/_削除済み/1/a.txt") == "one");
   // 本体が先に消えていた
-  e.meta["1"].push_back({"gone.txt", 3, "2026-10-20T09:30", "x"});
+  e.meta["1"].push_back({"gone.txt", 3, "2026-10-20T09:30", "x", ""});
   CHECK(removeAttachment(e.fs, kProj, e.meta, "1", 0).ok());
   CHECK(e.meta.empty());
   // 範囲外
@@ -213,8 +213,8 @@ TEST_CASE("attachments: 設定 JSON の往復（空なら項目を出さない =
   ProjectRecord rec = newRecord("P", "", "Summary\nA\n", "2026-10-19", clk);
   const std::string before = dumpJs(settingsToJson(rec));
   CHECK(before.find("attachments") == std::string::npos);
-  rec.settings.attachments["1"].push_back({"仕様書.pdf", 1234, "2026-10-20T09:30", "山田"});
-  rec.settings.attachments["1"].push_back({"b.png", 5, "2026-10-20T09:31", ""});
+  rec.settings.attachments["1"].push_back({"仕様書.pdf", 1234, "2026-10-20T09:30", "山田", ""});
+  rec.settings.attachments["1"].push_back({"b.png", 5, "2026-10-20T09:31", "", ""});
   const std::string after = dumpJs(settingsToJson(rec));
   CHECK(after.find("\"attachments\"") != std::string::npos);
   const Json j = Json::parse(after);
@@ -233,7 +233,7 @@ TEST_CASE("attachments: 設定 JSON の往復（空なら項目を出さない =
 
 TEST_CASE("attachments: 共有・バックアップ JSON には添付のメタ情報を入れない（本体を含まないため）") {
   ProjectRecord rec = newRecord("P", "", "Summary\nA\n", "2026-10-19", clk);
-  rec.settings.attachments["1"].push_back({"a.txt", 1, "2026-10-20T09:30", "x"});
+  rec.settings.attachments["1"].push_back({"a.txt", 1, "2026-10-20T09:30", "x", ""});
   CHECK(exportShareJson({rec}, {}, clk).find("attachments") == std::string::npos);
 }
 
@@ -474,7 +474,7 @@ TEST_CASE("attachments: 添付が残っている課題の id は、削除して�
   issues[1].id = "2";
   AttachmentMap att;
   CHECK(nextIssueId(issues, att) == "3");
-  att["5"].push_back({"a.txt", 1, "", ""});
+  att["5"].push_back({"a.txt", 1, "", "", ""});
   CHECK(nextIssueId(issues, att) == "6");  // 5 の添付が残っている
   att["9"].clear();                         // 空の項目は数えない
   CHECK(nextIssueId(issues, att) == "6");

@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 
+#include "roadmap/sha256.hpp"
 #include "roadmap/text.hpp"
 
 namespace roadmap {
@@ -11,7 +12,11 @@ Json attachmentsToJson(const AttachmentMap& m) {
   for (const auto& [id, list] : m) {
     if (list.empty()) continue;
     Json a = Json::array();
-    for (const auto& x : list) a.push_back(Json{{"name", x.name}, {"size", x.size}, {"at", x.at}, {"who", x.who}});
+    for (const auto& x : list) {
+      Json e = Json{{"name", x.name}, {"size", x.size}, {"at", x.at}, {"who", x.who}};
+      if (isSha256Hex(x.sha256)) e["sha256"] = x.sha256;  // 空（古いメタ情報）なら出さない = 既存の設定ファイルは変わらない
+      a.push_back(std::move(e));
+    }
     o[id] = std::move(a);
   }
   return o;
@@ -44,6 +49,9 @@ AttachmentMap attachmentsFromJson(const Json& j) {
       if (x.contains("size") && x["size"].is_number_unsigned()) a.size = x["size"].get<std::uint64_t>();
       if (x.contains("at") && x["at"].is_string()) a.at = x["at"].get<std::string>();
       if (x.contains("who") && x["who"].is_string()) a.who = x["who"].get<std::string>();
+      // 16進小文字 64 文字だけ読む（長さ・文字・型が壊れていれば空 = 不明のまま。項目は消さない）
+      if (x.contains("sha256") && x["sha256"].is_string() && isSha256Hex(x["sha256"].get_ref<const std::string&>()))
+        a.sha256 = x["sha256"].get<std::string>();
       m[it.key()].push_back(std::move(a));
     }
   }

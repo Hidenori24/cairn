@@ -762,6 +762,54 @@ int main(int argc, char** argv) {
     shot("42_attach_empty");
     c.select("11");
     frames(2);
+    // 行・カードのバッジにマウスを載せたときのツールチップ（先頭 4 件。画像はサムネイル、そのほかは名前だけ。残りは「ほか N 件」）と、
+    // 添付タブの項目にマウスを載せたときの詳細（SHA-256 の先頭 12 文字）
+    {
+      ImGuiIO& hio = ImGui::GetIO();
+      c.attachFiles("12", {paths[4], paths[0], paths[2], paths[5]});
+      c.attachFiles("8", {paths[1], paths[4], paths[0], paths[2], paths[5]});
+      c.setView(app::View::List);
+      c.clearSelection();
+      u.detailOpen = false;
+      hio.AddMousePosEvent(5, 890);
+      frames(4);
+      const auto badgeMid = [&](const std::string& id) {
+        for (const auto& b : u.attachBadges)
+          if (b.id == id && b.a.y > 120 && b.b.y < 850) return ImVec2((b.a.x + b.b.x) / 2, (b.a.y + b.b.y) / 2);
+        return ImVec2(-1, -1);
+      };
+      if (const ImVec2 m = badgeMid("12"); m.x >= 0) {
+        hio.AddMousePosEvent(m.x, m.y);
+        frames(30);
+        shot("48_attach_tip_list");
+      }
+      c.setView(app::View::Board);
+      hio.AddMousePosEvent(700, 500);
+      for (int k = 0; k < 8; ++k) {
+        hio.AddMouseWheelEvent(0, 10);
+        frames(2);
+      }
+      if (const ImVec2 m = badgeMid("8"); m.x >= 0) {
+        hio.AddMousePosEvent(m.x, m.y);
+        frames(30);
+        shot("48b_attach_tip_board");
+      }
+      c.setView(app::View::List);
+      c.select("11");
+      u.detailOpen = true;
+      u.detailTab = 3;
+      hio.AddMousePosEvent(5, 890);
+      frames(6);
+      if (u.attachRows.size() > 1) {
+        const auto& r = u.attachRows[0];  // 仕様書_v3.pdf
+        hio.AddMousePosEvent(r.first.x + 220, (r.first.y + r.second.y) / 2);
+        frames(30);
+        shot("49_attach_hash");
+      }
+      // 詳細パネルは開いたままにする（このあとのドラッグ・サムネイルの大きさの画面が添付タブを映すため）
+      hio.AddMousePosEvent(5, 890);
+      frames(4);
+    }
     // サムネイルをつかんで別の課題の行へ（移動／Ctrl でコピー）と、サムネイルを大きくした一覧
     {
       c.setView(app::View::List);

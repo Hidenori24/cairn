@@ -5,6 +5,7 @@
 #include <functional>
 #include <set>
 
+#include "roadmap/sha256.hpp"
 #include "roadmap/store.hpp"
 #include "roadmap/text.hpp"
 
@@ -84,6 +85,7 @@ Result<Attachment> storeOne(IFileStore& fs, const IClock& clock, const std::stri
   a.size = data->size();
   a.at = clock.nowDT();
   a.who = who;
+  a.sha256 = sha256Hex(*data);  // 書いた本体と同じ、いま読んだバイト列から（追加し直さない限り変わらない指紋）
   meta[issueId].push_back(a);
   return a;
 }
