@@ -107,6 +107,7 @@ std::vector<Cmd> buildCommands(Frame& f) {
     f.u.exportKind = "jira";
     openDialog(f, Dlg::Export);
   });
+  if (s && s->tree()) add("プロジェクト", "HTML に書き出す…", nullptr, [&f] { openDialog(f, Dlg::ExportHtml); });
   add("プロジェクト", "全プロジェクトをバックアップ", nullptr, [&f] {
     f.u.exportKind = "backup";
     openDialog(f, Dlg::Export);

@@ -20,7 +20,8 @@
 
 namespace roadmap {
 
-enum class NoticeAction { None, Undo };
+// OpenFolder は、アプリ側（書き出し）の通知で使う。Session は出さない
+enum class NoticeAction { None, Undo, OpenFolder };
 struct Notice {
   std::string text;
   NoticeAction action = NoticeAction::None;

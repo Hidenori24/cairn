@@ -206,6 +206,38 @@ bool Win32Platform::saveTextFile(const std::string& suggestedName, const std::st
   return ok;
 }
 
+// 名前を付けて保存。上書きの確認はダイアログに任せ（FOS_OVERWRITEPROMPT）、選んだパスだけを返す（書くのは呼び出し側）
+std::optional<std::string> Win32Platform::pickSaveFile(const std::string& suggestedName, const std::string& ext,
+                                                       const std::string& typeLabel) {
+  IFileSaveDialog* dlg = nullptr;
+  if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return std::nullopt;
+  DWORD opts = 0;
+  dlg->GetOptions(&opts);
+  dlg->SetOptions(opts | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT | FOS_PATHMUSTEXIST | FOS_NOREADONLYRETURN);
+  const std::wstring wext = widen(ext);
+  const std::wstring label = widen(typeLabel) + L" (*." + wext + L")";
+  const std::wstring pattern = L"*." + wext;
+  const COMDLG_FILTERSPEC types[] = {{label.c_str(), pattern.c_str()}, {L"すべてのファイル", L"*.*"}};
+  dlg->SetFileTypes(2, types);
+  dlg->SetFileTypeIndex(1);
+  dlg->SetDefaultExtension(wext.c_str());
+  dlg->SetFileName(widen(suggestedName).c_str());
+  std::optional<std::string> out;
+  if (SUCCEEDED(dlg->Show(hwnd_))) {
+    IShellItem* item = nullptr;
+    if (SUCCEEDED(dlg->GetResult(&item))) {
+      PWSTR p = nullptr;
+      if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &p))) {
+        out = narrow(p);
+        CoTaskMemFree(p);
+      }
+      item->Release();
+    }
+  }
+  dlg->Release();
+  return out;
+}
+
 // RGBA 8bit の画像を DX11 のテクスチャ（シェーダリソースビュー）にする。ImGui の DX11 バックエンドは
 // ImTextureID を ID3D11ShaderResourceView* として描く
 ImTextureID Win32Platform::createTexture(const unsigned char* rgba, int w, int h) {

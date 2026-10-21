@@ -29,7 +29,15 @@ namespace {
 struct NullPlatform : ui::IPlatform {
   std::optional<std::pair<std::string, std::string>> openTextFile() override { return std::nullopt; }
   bool saveTextFile(const std::string&, const std::string&) override { return true; }
-  void openFolder(const std::string&) override {}
+  void openFolder(const std::string& p) override { openedFolders.push_back(p); }
+  std::vector<std::string> openedFolders;  // openFolder で開いたフォルダ
+  // 保存ダイアログの代わり（テストが保存先を差し込む。pickedSave が空ならやめたことになる）
+  std::optional<std::string> pickedSave;
+  std::vector<std::string> saveAsked;  // 保存ダイアログに渡した既定の名前
+  std::optional<std::string> pickSaveFile(const std::string& name, const std::string& ext, const std::string&) override {
+    saveAsked.push_back(name + "|" + ext);
+    return pickedSave;
+  }
   std::optional<std::string> pickFolder(const std::string&) override { return picked; }
   std::optional<std::string> picked;
   bool systemDark() override { return false; }
@@ -1150,6 +1158,20 @@ int main() {
     h.frame(3);
     check(h.u.statsLoadRows > 0, "5000件でも負荷のヒートマップを集計する");
     {
+      // 5,000 件の報告（HTML）を数秒以内に作れる。大きさも極端でない
+      ExportOptions all;
+      const auto t0 = std::chrono::steady_clock::now();
+      const auto rep = h.c.buildReport(all);
+      const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+      std::fprintf(stderr, "ui_smoke: 5000件の報告 %.0f ms, %zu KB\n", ms, rep.ok() ? rep.value().size() / 1024 : 0);
+      check(rep.ok() && rep.value().size() < 16u * 1024 * 1024, "5000件の報告（HTML）の大きさ");
+#ifdef ROADMAP_SANITIZED
+      check(ms < 8000, "5000件の報告が数秒以内（サニタイザ付き）");
+#else
+      check(ms < 3000, "5000件の報告が数秒以内");
+#endif
+    }
+    {
       const auto t0 = std::chrono::steady_clock::now();
       h.frame(10);
       const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 10;
@@ -1435,6 +1457,138 @@ int main() {
     ui::applyStyle(*h.u.t, h.u.m);
     h.frame(2);
   }
+  // HTML に書き出す（Issue #42）: コマンドパレット → ダイアログ → 保存ダイアログ（スタブ）→ IFileStore に書く → 通知
+  {
+    h.c.createProject(app::SampleKind::Hierarchy, "報告/テスト", "RPT");
+    h.c.setView(app::View::Gantt);
+    h.c.setUi("zoom", "month");
+    h.c.setUi("colorBy", "float");
+    h.c.clearSelection();
+    h.frame(3);
+    const auto dlgWindow = [&]() { return ImGui::FindWindowByName("###dlg"); };
+    // 右下の主ボタン（位置は字の幅に左右されるので、窓の中を縦に探す）を押す。押せたら（ダイアログが閉じたら）true
+    const auto pressPrimary = [&]() {
+      ImGuiWindow* w = dlgWindow();
+      if (!w) return false;
+      for (float dy = 8; dy < 50 && h.u.dlg == ui::Dlg::ExportHtml; dy += 4) h.click(w->Pos.x + w->Size.x - 45, w->Pos.y + w->Size.y - dy);
+      h.frame(2);
+      return h.u.dlg != ui::Dlg::ExportHtml;
+    };
+    const auto openDlg = [&]() {
+      h.u.paletteOpen = true;
+      h.u.paletteFocus = true;
+      h.u.paletteQuery = "HTML";
+      h.frame(3);
+      h.key(ImGuiKey_Enter);
+      h.frame(3);
+    };
+    openDlg();
+    check(h.u.dlg == ui::Dlg::ExportHtml, "コマンドパレットの「HTML に書き出す…」でダイアログが開く");
+    check(!h.u.paletteOpen, "パレットは閉じる");
+    check(h.u.rep.zoom == "month" && h.u.rep.colorBy == "float", "拡大率と色分けは今の画面から始める");
+    check(!h.u.rep.dark && h.u.rep.gantt && h.u.rep.stats && h.u.rep.list, "既定は 3 つともライト");
+    // すべての選択の組み合わせで描ける
+    for (int bits = 0; bits < 8; ++bits) {
+      h.u.rep.gantt = bits & 1;
+      h.u.rep.stats = bits & 2;
+      h.u.rep.list = bits & 4;
+      h.u.repScope = bits % 2;
+      h.frame(2);
+    }
+    h.u.rep.gantt = h.u.rep.stats = h.u.rep.list = true;
+    h.u.repScope = 0;
+    h.frame(2);
+    // 何も選ばないと主ボタンは押せない（閉じない・保存ダイアログも出さない）
+    h.u.rep.gantt = h.u.rep.stats = h.u.rep.list = false;
+    h.frame(2);
+    check(!pressPrimary(), "書き出す内容が空なら主ボタンは押せない");
+    check(h.p.saveAsked.empty(), "このとき保存ダイアログは出さない");
+    h.u.rep.gantt = h.u.rep.stats = h.u.rep.list = true;
+    // 課題を 1 つも選んでいなければ「選んだ課題の配下」は使えない
+    h.u.repScope = 2;
+    h.frame(2);
+    check(h.u.repScope == 0, "選択がなければ配下の範囲に出来ない");
+    // 保存ダイアログをやめたら何も書かない
+    h.p.pickedSave.reset();
+    check(h.fs.makeDirs("out").ok(), "保存先のフォルダ");
+    const auto files0 = h.fs.paths().size();
+    check(pressPrimary(), "主ボタンでダイアログが閉じる");
+    check(h.p.saveAsked.size() == 1 && h.p.saveAsked[0] == "報告_テスト_2026-10-19.html|html", "保存ダイアログの既定の名前は <プロジェクト名>_<日付>.html");
+    check(h.fs.paths().size() == files0, "やめたら何も書かない");
+    // 保存先を選ぶと IFileStore に書く
+    h.p.pickedSave = "out/報告.html";
+    openDlg();
+    check(h.u.dlg == ui::Dlg::ExportHtml, "もう一度開く");
+    h.u.rep.dark = true;
+    check(pressPrimary(), "書き出す");
+    check(h.fs.exists("out/報告.html"), "選んだ保存先に書く");
+    if (h.fs.exists("out/報告.html")) {
+      const std::string& html = h.fs.content("out/報告.html");
+      check(html.compare(0, 15, "<!doctype html>") == 0 && html.find("color-scheme:dark") != std::string::npos, "HTML（ダークを選んだ）");
+      check(html.find("<h1>報告/テスト</h1>") != std::string::npos && html.find("<script") == std::string::npos, "プロジェクト名が入り、スクリプトはない");
+      check(html.find("拡大率: 月") != std::string::npos, "画面の拡大率が入る");
+    }
+    check(!h.c.toasts().empty() && h.c.toasts().back().action == NoticeAction::OpenFolder && h.c.toasts().back().arg == "out", "通知に「フォルダを開く」");
+    // 通知の「フォルダを開く」を押す（位置は通知の幅に左右されるので、横に探す）
+    h.frame(2);
+    {
+      const std::size_t n0 = h.p.openedFolders.size();
+      // いちばん下の通知（8 + 40 の間隔で積む）の中段にボタンがある
+      for (float x = 100; x < 700 && h.p.openedFolders.size() == n0; x += 5) h.click(x, 856);
+      check(h.p.openedFolders.size() == n0 + 1 && h.p.openedFolders.back() == "out", "「フォルダを開く」で保存先のフォルダを開く");
+      h.frame(2);
+      check(h.c.toasts().empty() || h.c.toasts().back().action != NoticeAction::OpenFolder, "押したら通知は閉じる");
+    }
+    // 失敗（書き込めない）は通知で知らせ、落とさない・古いファイルを壊さない
+    const std::string before = h.fs.content("out/報告.html");
+    h.p.pickedSave = "out/報告.html";
+    h.fs.setFailWrites(true);
+    openDlg();
+    check(pressPrimary(), "書けなくてもダイアログは閉じる");
+    h.fs.setFailWrites(false);
+    check(!h.c.toasts().empty() && h.c.toasts().back().text.find("書き出せません") == 0, "失敗の理由を通知する");
+    check(h.fs.content("out/報告.html") == before, "古いファイルは壊さない");
+    // .html でない保存先は断る
+    h.p.pickedSave = "out/報告.exe";
+    openDlg();
+    check(pressPrimary(), "拡張子が違う保存先");
+    check(!h.fs.exists("out/報告.exe") && h.c.toasts().back().text.find("書き出せません") == 0, "拡張子が違えば書かない");
+    // 選んだ課題の配下・今の表示のまま
+    h.c.select("11");
+    h.p.pickedSave = "out/配下.html";
+    openDlg();
+    h.frame(2);
+    h.u.repScope = 2;
+    h.frame(2);
+    check(h.u.repScope == 2, "課題を 1 つ選べば配下の範囲にできる");
+    check(pressPrimary() && h.fs.exists("out/配下.html"), "配下を書き出す");
+    if (h.fs.exists("out/配下.html")) check(h.fs.content("out/配下.html").find("とその配下") != std::string::npos, "範囲の注記");
+    h.c.filter().q = "ZZZ-なし";
+    h.p.pickedSave = "out/絞込.html";
+    openDlg();
+    h.frame(2);
+    h.u.repScope = 1;
+    check(pressPrimary() && h.fs.exists("out/絞込.html"), "今の表示のまま書き出す");
+    if (h.fs.exists("out/絞込.html")) check(h.fs.content("out/絞込.html").find("表示範囲: 画面の表示のまま") != std::string::npos, "絞り込みの注記");
+    h.c.filter() = {};
+    // 閉じるボタン・Esc で何も書かない
+    h.p.saveAsked.clear();
+    openDlg();
+    h.key(ImGuiKey_Escape);
+    check(h.u.dlg == ui::Dlg::None && h.p.saveAsked.empty(), "Esc で閉じる");
+    // ダイアログを開いたまま課題を消しても落ちない（描画のあとで書く）
+    h.p.pickedSave = "out/消去.html";
+    openDlg();
+    h.c.deleteSelection();
+    h.frame(2);
+    pressPrimary();
+    h.frame(2);
+    h.u.dlg = ui::Dlg::None;
+    h.frame(2);
+    h.c.clearSelection();
+    h.c.deleteCurrentProject();
+    h.frame(2);
+  }
   // 空のプロジェクト
   h.c.createProject(app::SampleKind::Empty, "空", "");
   h.frame(3);
@@ -1446,6 +1600,7 @@ int main() {
     const char* files[] = {"app/ui/app_ui.cpp", "app/ui/view_list.cpp", "app/ui/view_gantt.cpp", "app/ui/view_board.cpp",
                            "app/ui/view_goals.cpp", "app/ui/view_stats.cpp", "app/ui/panel_detail.cpp", "app/ui/panel_attach.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
                            "app/ui/widgets.cpp", "app/ui/strings.hpp", "app/controller/app_controller.cpp",
+                           "core/src/report.cpp", "core/src/report_gantt.cpp", "core/src/report_stats.cpp", "core/src/report_list.cpp", "core/src/gantt_geom.cpp",
                            "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp", "core/src/attachments.cpp", "core/src/load.cpp"};
     for (const char* rel : files) {
       std::ifstream in(std::string(ROADMAP_SOURCE_DIR) + "/" + rel, std::ios::binary);

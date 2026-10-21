@@ -6,6 +6,7 @@
 #include <set>
 
 #include "roadmap/dependency_view.hpp"
+#include "roadmap/gantt_geom.hpp"
 #include "roadmap/text.hpp"
 #include "ui/icons.hpp"
 #include "ui/internal.hpp"
@@ -50,12 +51,8 @@ ColW readCols(const app::AppController& c) {
   return w;
 }
 
-struct Axis {
-  Day rs = 0, hi = 0;
-  float px = 6;
-  float left = 0;  // タイムラインの左端（スクリーン座標、スクロール込み）
-  float x(Day d) const { return left + static_cast<float>(d - rs) * px; }
-};
+// 時間軸（日付 → x）は core/gantt_geom と共有する（書き出しと同じ式）。left = タイムラインの左端（スクリーン座標、スクロール込み）
+using Axis = GanttAxis;
 
 void hatch(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col, float step) {
   dl->PushClipRect(a, b, true);
@@ -196,9 +193,8 @@ void drawGanttView(Frame& f, ImVec2 size) {
     u.customProject = c.currentId();
   }
   // 見出しの書き方は、1日の幅で決める（段階のときは段階の名前のまま）
-  std::string styleZoom = zoom;
-  if (u.customPx > 0) styleZoom = u.customPx >= 14 ? "day" : u.customPx >= 4 ? "week" : "month";
-  const float headH = (styleZoom == "day" || styleZoom == "week") ? u.m.s(46) : u.m.s(30);
+  const std::string styleZoom = ganttStyleZoom(zoom, u.customPx);
+  const float headH = ganttHeaderH(styleZoom, u.m.scale);
   const std::string colorBy = c.uiStr("colorBy", "root");
 
   // 列
@@ -227,29 +223,18 @@ void drawGanttView(Frame& f, ImVec2 size) {
   const auto rows = c.visibleRows();
   const std::vector<char> dim = c.dimmedSet();
   u.order.clear();
-  std::vector<int> rowOf(T.n, -1);
-  for (std::size_t i = 0; i < rows.size(); ++i) {
-    u.order.push_back(T.ids[rows[i].id]);
-    rowOf[rows[i].id] = static_cast<int>(i);
-  }
+  for (const VisibleRow& vr : rows) u.order.push_back(T.ids[vr.id]);
+  const std::vector<int> rowOf = ganttRowIndex(T, rows);
 
   // 時間軸
   const Day base = s->baseDay();
-  Day lo = base, hi = base + 120;
-  for (int id : T.leafOrder) {
-    lo = std::min(lo, R[id].asapStart);
-    hi = std::max({hi, R[id].asapFinish + 21, R[id].alapFinish + 21});
-    if (T.dl[id]) hi = std::max(hi, *T.dl[id] + 21);
-  }
+  const GanttDayRange dayRange = ganttDayRange(T, R, base);
+  const Day hi = dayRange.hi;
   Axis ax;
-  ax.rs = lo - ((dow(lo) + 6) % 7) - 7;
+  ax.rs = ganttAxisStart(dayRange.lo);
   ax.hi = hi;
   if (u.customPx > 0) ax.px = u.m.s(u.customPx);
-  else if (zoom == "day") ax.px = u.m.s(22);
-  else if (zoom == "month") ax.px = u.m.s(2.4f);
-  else if (zoom == "all")
-    ax.px = std::max(0.9f, std::min(12.f, (size.x - leftW - u.m.s(24)) / static_cast<float>(hi - ax.rs + 1))) ;
-  else ax.px = u.m.s(6);
+  else ax.px = ganttZoomPx(zoom, u.m.scale, size.x - leftW - u.m.s(24), hi - ax.rs + 1);
   // Ctrl+ホイール（時間軸の上）: 1日の幅を変える。マウスの下の日付を動かさない。
   // 画面全体の拡大縮小は、ガントが使わなかった Ctrl+ホイールを app_ui が受ける
   u.wheelConsumed = false;
@@ -318,20 +303,11 @@ void drawGanttView(Frame& f, ImVec2 size) {
   };
   const auto spanOf = [&](int i) {
     const VisibleRow& vr = rows[static_cast<std::size_t>(i)];
-    const ScheduleRow& r = R[vr.id];
+    const GanttSpan g = ganttSpan(ax, T, R[vr.id], vr.id, vr.isPar, u.m.scale);
     Span sp;
     sp.cy = rowY(i) + RH / 2;
-    if (vr.isPar) {
-      sp.xl = ax.x(r.asapStart);
-      sp.xr = sp.xl + std::max(ax.x(r.asapFinish + 1) - sp.xl, 3.f);
-    } else if (T.kind[vr.id] == Kind::Ms) {
-      const float x = ax.x(r.asapFinish) + ax.px / 2;
-      sp.xl = x - u.m.s(7.f);
-      sp.xr = x + u.m.s(7.f);
-    } else {
-      sp.xl = ax.x(r.asapStart);
-      sp.xr = sp.xl + std::max(static_cast<float>(r.asapFinish - r.asapStart + 1) * ax.px, 3.f);
-    }
+    sp.xl = g.xl;
+    sp.xr = g.xr;
     return sp;
   };
   const float handleR = u.m.s(6), handleGap = u.m.s(4);
@@ -384,11 +360,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
       for (int p : T.preds[leaf]) related.insert(p);
       for (int q : T.succs[leaf]) related.insert(q);
     }
-  const auto visRow = [&](int leaf) {
-    for (int x = leaf; x >= 0; x = T.parentOf[x])
-      if (rowOf[x] >= 0) return rowOf[x];
-    return -1;
-  };
+  const auto visRow = [&](int leaf) { return ganttVisibleRow(T, rowOf, leaf); };
   std::set<int> relatedRows;
   for (int x : related)
     if (int r = visRow(x); r >= 0) relatedRows.insert(r);
@@ -411,48 +383,34 @@ void drawGanttView(Frame& f, ImVec2 size) {
   };
   std::vector<Arrow> arrows;
   {
+    // 先行 → 後続の対の列挙・行へのまとめ方・経路は core/gantt_geom（書き出しと共有）。カーソル行との関係（強調・たどる）は画面だけ
     std::map<std::pair<int, int>, Arrow> amap;
-    for (int leaf : T.leafOrder)
-      for (int sc : T.succs[leaf]) {
-        const int ra = visRow(leaf), rb = visRow(sc);
-        if (ra < 0 || rb < 0 || ra == rb) continue;
-        if (std::max(ra, rb) < first || std::min(ra, rb) > last) continue;
-        const bool hot = curIdx >= 0 && (rows[ra].id == curIdx || rows[rb].id == curIdx ||
-                                         std::find(T.leaves[curIdx].begin(), T.leaves[curIdx].end(), leaf) != T.leaves[curIdx].end() ||
-                                         std::find(T.leaves[curIdx].begin(), T.leaves[curIdx].end(), sc) != T.leaves[curIdx].end());
-        const bool traced = traceOn && traceSet[leaf] && traceSet[sc];
-        const bool zw = T.kind[sc] == Kind::Ms && R[sc].weeks == 0;
-        const bool conflict = isDateConflict(R[leaf], R[sc], zw);
-        const bool critical = isCriticalLink(R[leaf], R[sc]);
-        auto [it, fresh] = amap.try_emplace({ra, rb});
-        Arrow& ar = it->second;
-        if (fresh) {
-          ar.a = ra;
-          ar.b = rb;
-          ar.succLeaf = sc;
-        }
-        ar.hot = ar.hot || hot;
-        ar.traced = ar.traced || traced;
-        ar.conflict = ar.conflict || conflict;
-        ar.critical = ar.critical || critical;
+    ganttForEachPair(T, R, rowOf, first, last, [&](const GanttPair& gp) {
+      const int leaf = gp.leaf, sc = gp.succ, ra = gp.ra, rb = gp.rb;
+      const bool hot = curIdx >= 0 && (rows[ra].id == curIdx || rows[rb].id == curIdx ||
+                                       std::find(T.leaves[curIdx].begin(), T.leaves[curIdx].end(), leaf) != T.leaves[curIdx].end() ||
+                                       std::find(T.leaves[curIdx].begin(), T.leaves[curIdx].end(), sc) != T.leaves[curIdx].end());
+      const bool traced = traceOn && traceSet[leaf] && traceSet[sc];
+      auto [it, fresh] = amap.try_emplace({ra, rb});
+      Arrow& ar = it->second;
+      if (fresh) {
+        ar.a = ra;
+        ar.b = rb;
+        ar.succLeaf = sc;
       }
+      ar.hot = ar.hot || hot;
+      ar.traced = ar.traced || traced;
+      ar.conflict = ar.conflict || gp.conflict;
+      ar.critical = ar.critical || gp.critical;
+    });
     for (auto& [k, ar] : amap) {
       const int ia = rows[ar.a].id, ib = rows[ar.b].id;
-      const ScheduleRow& ra = R[ia];
-      const ScheduleRow& rb = R[ib];
-      const bool msA = T.isLeaf(ia) && T.kind[ia] == Kind::Ms, msB = T.isLeaf(ib) && T.kind[ib] == Kind::Ms;
-      ar.y0 = rowY(ar.a) + RH / 2;
-      ar.y1 = rowY(ar.b) + RH / 2;
-      ar.x0 = msA ? ax.x(ra.asapFinish) + ax.px / 2 + u.m.s(7) : ax.x(ra.asapFinish + 1);
-      ar.x1 = msB ? ax.x(rb.asapStart) + ax.px / 2 - u.m.s(7) : ax.x(rb.asapStart);
-      const float kk = u.m.s(6);
-      if (ar.x1 >= ar.x0 + u.m.s(12)) {
-        ar.pts = {ImVec2(ar.x0, ar.y0), ImVec2(ar.x0 + kk, ar.y0), ImVec2(ar.x0 + kk, ar.y1), ImVec2(ar.x1, ar.y1)};
-      } else {
-        const float ym = ar.y0 + (ar.y1 > ar.y0 ? RH / 2 : -RH / 2);
-        ar.pts = {ImVec2(ar.x0, ar.y0), ImVec2(ar.x0 + kk, ar.y0), ImVec2(ar.x0 + kk, ym),
-                  ImVec2(ar.x1 - kk, ym), ImVec2(ar.x1 - kk, ar.y1), ImVec2(ar.x1, ar.y1)};
-      }
+      const GanttArrowEnds e = ganttArrowEnds(ax, T, R, ia, ib, rowY(ar.a) + RH / 2, rowY(ar.b) + RH / 2, u.m.scale);
+      ar.y0 = e.y0;
+      ar.y1 = e.y1;
+      ar.x0 = e.x0;
+      ar.x1 = e.x1;
+      for (const GanttPoint& gp : ganttArrowRoute(e, RH, u.m.scale)) ar.pts.emplace_back(gp.x, gp.y);
       arrows.push_back(std::move(ar));
     }
   }
@@ -535,17 +493,15 @@ void drawGanttView(Frame& f, ImVec2 size) {
   dl->PopClipRect();
 
   // ---- 行 ----
+  const GanttColorBy colorMode = ganttColorByFromKey(colorBy);
   const auto colorOf = [&](int id, Risk risk) -> ImU32 {
-    if (colorBy == "float") {
-      switch (risk) {
-        case Risk::Late: return u.t->late;
-        case Risk::Tight: return u.t->tightEdge;
-        case Risk::Done: return u.t->c[0];
-        default: return u.t->accent;
-      }
+    const GanttBarColor bc = ganttBarColor(colorMode, risk, rootIdx[id], I[id].assignee);
+    switch (bc.kind) {
+      case GanttBarColor::Kind::Late: return u.t->late;
+      case GanttBarColor::Kind::TightEdge: return u.t->tightEdge;
+      case GanttBarColor::Kind::Accent: return u.t->accent;
+      default: return u.t->c[bc.index];
     }
-    if (colorBy == "asg") return u.t->c[nameHash(text::trim(I[id].assignee)) % 8];
-    return u.t->c[rootIdx[id]];
   };
   std::string hoverTipId;
   // バーのドラッグ中のプレビュー
@@ -587,13 +543,16 @@ void drawGanttView(Frame& f, ImVec2 size) {
       if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) openDetail(f, T.ids[id], 0);
     }
 
+    // バーの位置・余裕の影・期限の菱形は core/gantt_geom（書き出しと共有）
+    const GanttRowShape shape = ganttRowShape(ax, T, r, id, vr.isPar);
     if (vr.isPar) {
-      const float x0 = ax.x(r.asapStart), x1 = ax.x(r.asapFinish + 1), xl = ax.x(std::max(r.alapFinish, r.asapFinish) + 1);
-      if (!r.done && xl > x1) {
+      const float x0 = shape.x0;
+      if (shape.hasSlack) {
         const auto rc = riskColor(u, risk);
-        dl->AddRectFilled(ImVec2(x1, cy - u.m.s(2)), ImVec2(xl, cy + u.m.s(2)), withAlpha(risk == Risk::Ok ? u.t->muted : rc.fg, 0.35f));
+        dl->AddRectFilled(ImVec2(shape.slackX0, cy - u.m.s(2)), ImVec2(shape.slackX1, cy + u.m.s(2)),
+                          withAlpha(risk == Risk::Ok ? u.t->muted : rc.fg, 0.35f));
       }
-      const float w = std::max(x1 - x0, 3.f);
+      const float w = shape.w;
       const float t0 = y + u.m.s(9), t1 = t0 + u.m.s(6);
       const ImU32 col = r.done ? withAlpha(bc, 0.5f) : bc;
       dl->AddRectFilled(ImVec2(x0, t0), ImVec2(x0 + w, t1), col);
@@ -606,7 +565,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
       ImGui::InvisibleButton("##sum", ImVec2(w, u.m.s(12)));
       if (ImGui::IsItemHovered()) hoverTipId = T.ids[id];
     } else if (T.kind[id] == Kind::Ms) {
-      const float x = ax.x(r.asapFinish) + ax.px / 2;
+      const float x = shape.msX;
       diamond(dl, ImVec2(x, cy), u.m.s(6) * 1.2f, r.done ? withAlpha(bc, 0.5f) : bc, risk == Risk::Late ? u.t->late : 0);
       ImGui::SetCursorScreenPos(ImVec2(x - u.m.s(8), cy - u.m.s(8)));
       ImGui::SetNextItemAllowOverlap();
@@ -623,15 +582,16 @@ void drawGanttView(Frame& f, ImVec2 size) {
         }
       }
       // 余裕の影 / 遅れの帯
-      if (!r.done && r.alapFinish > r.asapFinish) {
+      if (shape.hasSlack) {
         const auto rc = riskColor(u, risk);
-        const ImVec2 a(ax.x(r.asapFinish + 1), cy - u.m.s(3)), b(ax.x(r.alapFinish + 1), cy + u.m.s(3));
+        const ImVec2 a(shape.slackX0, cy - u.m.s(3)), b(shape.slackX1, cy + u.m.s(3));
         hatch(dl, a, b, withAlpha(risk == Risk::Ok ? u.t->muted : rc.fg, 0.6f), u.m.s(5));
       }
-      if (!r.done && r.alapFinish < r.asapFinish)
-        dl->AddRectFilled(ImVec2(ax.x(r.alapFinish + 1), cy - u.m.s(3)), ImVec2(ax.x(r.asapFinish + 1), cy + u.m.s(3)),
+      if (shape.hasOver)
+        dl->AddRectFilled(ImVec2(shape.overX0, cy - u.m.s(3)), ImVec2(shape.overX1, cy + u.m.s(3)),
                           withAlpha(u.t->late, 0.55f), u.m.s(2));
-      const float x0 = ax.x(s0), bw = std::max(static_cast<float>(f0 - s0 + 1) * ax.px, 3.f);
+      const GanttSpan bar = ganttTaskBar(ax, s0, f0);  // ドラッグ中は動かしている位置
+      const float x0 = bar.xl, bw = bar.w;
       const ImVec2 a(x0, by0), b(x0 + bw, by1);
       dl->AddRectFilled(a, b, r.done ? withAlpha(bc, 0.45f) : bc, u.m.s(4));
       if (r.prog) hatch(dl, a, b, IM_COL32(255, 255, 255, 90), u.m.s(6));
@@ -665,8 +625,8 @@ void drawGanttView(Frame& f, ImVec2 size) {
       }
     }
     // 期限の菱形（白抜き・黒い縁）
-    if (T.ownDl[id]) {
-      const float x = ax.x(*T.ownDl[id]) + ax.px / 2;
+    if (shape.hasDeadline) {
+      const float x = shape.dlX;
       diamond(dl, ImVec2(x, cy), u.m.s(6), u.t->surface, u.t->dark ? u.t->ink : IM_COL32(0, 0, 0, 255));
       if (ImGui::IsMouseHoveringRect(ImVec2(x - u.m.s(6), cy - u.m.s(6)), ImVec2(x + u.m.s(6), cy + u.m.s(6))) &&
           ImGui::IsWindowHovered())
@@ -775,7 +735,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
         dl->AddText(ImVec2(x + (ax.px - ts.x) / 2, wp.y + rowH2 + (rowH2 - ts.y) / 2), (w == 0 || w == 6) ? u.t->muted : u.t->ink, n.c_str());
       } else if (styleZoom == "week" && dow(d) == 1) {
         const float weekW = ax.px * 7;
-        const int every = weekW < u.m.s(26) ? 3 : weekW < u.m.s(40) ? 2 : 1;
+        const int every = ganttWeekLabelEvery(weekW, u.m.scale);
         const int wk = (d - ax.rs) / 7;
         if (wk % every == 0) {
           const std::string l = fmtShort(d);
