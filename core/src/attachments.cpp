@@ -150,6 +150,134 @@ Status removeAttachment(IFileStore& fs, const std::string& projectDir, Attachmen
   return okStatus();
 }
 
+namespace {
+// 移す・コピーする元の添付を調べる。元の課題と添付の番号、本体の有無、先の課題（空でなく、元と違う）
+struct SourceAttach {
+  Attachment a;
+  std::string path;
+};
+Result<SourceAttach> findSource(IFileStore& fs, const std::string& projectDir, const AttachmentMap& meta, const std::string& fromIssue,
+                                std::size_t index, const std::string& toIssue) {
+  if (projectDir.empty()) return Error{"このプロジェクトには添付を置く場所がありません"};
+  if (toIssue.empty()) return Error{"移す先の課題がありません"};
+  if (fromIssue == toIssue) return Error{"同じ課題です"};
+  const auto it = meta.find(fromIssue);
+  if (it == meta.end() || index >= it->second.size()) return Error{"その添付はありません"};
+  SourceAttach src;
+  src.a = it->second[index];
+  src.path = attachmentPath(projectDir, fromIssue, src.a);
+  const auto st = fs.stat(src.path);
+  if (!st || st->isDir) return Error{"元のファイルが見つかりません（フォルダから移動・削除された可能性があります）"};
+  return src;
+}
+}  // namespace
+
+Result<Attachment> moveAttachment(IFileStore& fs, const std::string& projectDir, AttachmentMap& meta, const std::string& fromIssue,
+                                  std::size_t index, const std::string& toIssue) {
+  auto src = findSource(fs, projectDir, meta, fromIssue, index, toIssue);
+  if (!src) return Error{src.error()};
+  const std::string dir = paths::attachmentDir(projectDir, toIssue);
+  if (auto s = fs.makeDirs(dir); !s) return Error{"添付のフォルダを作れません: " + s.error()};
+  std::set<std::string> used = lowerNamesIn(fs, dir);
+  if (const auto it = meta.find(toIssue); it != meta.end())
+    for (const auto& x : it->second) used.insert(text::toLower(x.name));
+  std::string name = paths::fitFileName(dir, src->a.name, paths::kMaxPathUnits - kNameHeadroom);
+  if (name.empty()) return Error{"移し先のパスが長すぎて、このファイル名では置けません"};
+  name = paths::uniqueName(used, name, true);
+  // 本体を先に移す。移せなければメタ情報には触れない（食い違わせない）。移せたあとのメタ情報の付け替えは失敗しない
+  if (auto s = fs.move(src->path, joinPath(dir, name)); !s) return Error{"移せません: " + s.error()};
+  Attachment moved = src->a;
+  moved.name = name;
+  meta[toIssue].push_back(moved);
+  auto from = meta.find(fromIssue);
+  from->second.erase(from->second.begin() + static_cast<std::ptrdiff_t>(index));
+  if (from->second.empty()) meta.erase(from);
+  return moved;
+}
+
+Result<Attachment> copyAttachment(IFileStore& fs, const IClock& clock, const std::string& projectDir, AttachmentMap& meta,
+                                  const std::string& fromIssue, std::size_t index, const std::string& toIssue,
+                                  const std::string& who, const AttachLimits& lim) {
+  auto src = findSource(fs, projectDir, meta, fromIssue, index, toIssue);
+  if (!src) return Error{src.error()};
+  const auto st = fs.stat(src->path);
+  const std::uint64_t size = st ? st->size : src->a.size;
+  return storeOne(fs, clock, projectDir, meta, toIssue, src->a.name, size,
+                  [&]() -> Result<std::string> {
+                    auto d = fs.read(src->path);
+                    if (!d) return Error{"元のファイルを読み込めません"};
+                    return d;
+                  },
+                  who, lim);
+}
+
+Status reorderAttachment(AttachmentMap& meta, const std::string& issueId, std::size_t from, std::size_t to) {
+  const auto it = meta.find(issueId);
+  if (it == meta.end() || from >= it->second.size() || to >= it->second.size()) return Error{"その添付はありません"};
+  if (from == to) return okStatus();
+  auto& v = it->second;
+  Attachment a = std::move(v[from]);
+  v.erase(v.begin() + static_cast<std::ptrdiff_t>(from));
+  v.insert(v.begin() + static_cast<std::ptrdiff_t>(to), std::move(a));
+  return okStatus();
+}
+
+Result<std::string> bmpFromDib(const std::string& dib) {
+  constexpr std::int64_t kMaxSide = 32767;
+  constexpr std::int64_t kMaxPixels = 100'000'000;
+  const auto u16 = [&](std::size_t at) { return static_cast<std::uint32_t>(static_cast<unsigned char>(dib[at])) | (static_cast<std::uint32_t>(static_cast<unsigned char>(dib[at + 1])) << 8); };
+  const auto u32 = [&](std::size_t at) { return u16(at) | (u16(at + 2) << 16); };
+  const auto i32 = [&](std::size_t at) { return static_cast<std::int64_t>(static_cast<std::int32_t>(u32(at))); };
+  if (dib.size() < 40) return Error{"画像のヘッダが短すぎます"};
+  const std::uint32_t hdr = u32(0);
+  if (hdr != 40 && hdr != 56 && hdr != 108 && hdr != 124) return Error{"対応していない形式の画像です"};
+  if (dib.size() < hdr) return Error{"画像のヘッダが途中で切れています"};
+  const std::int64_t w = i32(4);
+  const std::int64_t h = i32(8);
+  const std::uint32_t planes = u16(12), bpp = u16(14), comp = u32(16), sizeImage = u32(20), clrUsed = u32(32);
+  if (planes != 1) return Error{"画像のヘッダが壊れています"};
+  if (bpp != 1 && bpp != 4 && bpp != 8 && bpp != 16 && bpp != 24 && bpp != 32) return Error{"対応していない形式の画像です"};
+  if (w <= 0 || h == 0) return Error{"画像の大きさが正しくありません"};
+  const std::int64_t absH = h < 0 ? -h : h;
+  if (w > kMaxSide || absH > kMaxSide || w * absH > kMaxPixels) return Error{"画像が大きすぎます"};
+  const bool plain = comp == 0 || comp == 3 || comp == 6;  // BI_RGB / BI_BITFIELDS / BI_ALPHABITFIELDS
+  if (!plain && !(comp == 1 && bpp == 8) && !(comp == 2 && bpp == 4)) return Error{"対応していない形式の画像です"};
+  if ((comp == 3 || comp == 6) && bpp != 16 && bpp != 32) return Error{"画像のヘッダが壊れています"};
+  std::uint64_t off = hdr;
+  if (hdr == 40 && comp == 3) off += 12;  // BITMAPINFOHEADER の直後にマスク 3 つ（V3 以降はヘッダの中）
+  if (hdr == 40 && comp == 6) off += 16;
+  std::uint64_t colors = 0;
+  if (bpp <= 8) {
+    colors = clrUsed != 0 ? clrUsed : (1u << bpp);
+    if (colors > (1u << bpp)) return Error{"画像の色の数が正しくありません"};
+  } else if (clrUsed != 0) {
+    if (clrUsed > 256) return Error{"画像の色の数が正しくありません"};
+    colors = clrUsed;
+  }
+  off += colors * 4;
+  if (off > dib.size()) return Error{"画像が途中で切れています"};
+  const std::uint64_t avail = dib.size() - off;
+  if (plain) {
+    const std::uint64_t rowBytes = ((static_cast<std::uint64_t>(w) * bpp + 31) / 32) * 4;
+    if (rowBytes * static_cast<std::uint64_t>(absH) > avail) return Error{"画像のデータが足りません（途中で切れています）"};
+  } else if (sizeImage == 0 || sizeImage > avail) {
+    return Error{"画像のデータが足りません（途中で切れています）"};
+  }
+  const std::uint64_t total = static_cast<std::uint64_t>(dib.size()) + 14;
+  if (total > 0xffffffffull) return Error{"画像が大きすぎます"};
+  std::string out;
+  out.reserve(static_cast<std::size_t>(total));
+  const auto put32 = [&](std::uint64_t v) {
+    for (int i = 0; i < 4; ++i) out.push_back(static_cast<char>((v >> (8 * i)) & 0xff));
+  };
+  out += "BM";
+  put32(total);
+  put32(0);
+  put32(14 + off);
+  out += dib;
+  return out;
+}
+
 std::size_t attachmentCount(const AttachmentMap& m, const std::string& issueId) {
   const auto it = m.find(issueId);
   return it == m.end() ? 0 : it->second.size();

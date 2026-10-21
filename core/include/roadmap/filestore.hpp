@@ -65,6 +65,8 @@ class MemFileStore final : public IFileStore {
   const std::string& content(const std::string& path) const { return files_.at(path).data; }
   std::vector<std::string> paths() const;
   void setFailWrites(bool f) { failWrites_ = f; }
+  void setFailMoves(bool f) { failMoves_ = f; }               // move だけ失敗させる（フォルダ作成・書き込みは通す）
+  void setFailAtomicWrites(bool f) { failAtomic_ = f; }       // writeAtomic だけ失敗させる（フォルダ作成は通す）
   int writeCount() const { return writes_; }
   void tick(std::int64_t ms = 1000) { now_ += ms; }
 
@@ -76,7 +78,7 @@ class MemFileStore final : public IFileStore {
   std::map<std::string, F> files_;
   std::map<std::string, bool> dirs_;
   std::int64_t now_ = 1'000'000;
-  bool failWrites_ = false;
+  bool failWrites_ = false, failMoves_ = false, failAtomic_ = false;
   int writes_ = 0;
 };
 

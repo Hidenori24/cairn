@@ -11,6 +11,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "roadmap/attachments.hpp"
 #include "roadmap/encoding.hpp"
 #include "roadmap/filestore.hpp"
 #include "roadmap/store.hpp"
@@ -212,6 +213,61 @@ std::optional<std::string> Win32Platform::pickFolder(const std::string& start) {
     }
   }
   dlg->Release();
+  return out;
+}
+
+// 添付するファイルを選ぶ（複数選択）。フォルダは選べない（フォルダは従来どおりドロップで付ける）。やめたら空
+std::vector<std::string> Win32Platform::pickOpenFiles(const std::string& title) {
+  std::vector<std::string> out;
+  IFileOpenDialog* dlg = nullptr;
+  if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return out;
+  DWORD opts = 0;
+  dlg->GetOptions(&opts);
+  dlg->SetOptions(opts | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
+  dlg->SetTitle(widen(title).c_str());
+  const COMDLG_FILTERSPEC types[] = {{L"すべてのファイル", L"*.*"}};
+  dlg->SetFileTypes(1, types);
+  if (SUCCEEDED(dlg->Show(hwnd_))) {
+    IShellItemArray* items = nullptr;
+    if (SUCCEEDED(dlg->GetResults(&items)) && items) {
+      DWORD n = 0;
+      if (SUCCEEDED(items->GetCount(&n))) {
+        constexpr DWORD kMaxPicked = static_cast<DWORD>(kMaxDropFiles);  // 1回の上限（ドロップと同じ）
+        for (DWORD i = 0; i < n && i < kMaxPicked; ++i) {
+          IShellItem* item = nullptr;
+          if (FAILED(items->GetItemAt(i, &item)) || !item) continue;
+          PWSTR p = nullptr;
+          if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &p)) && p) out.push_back(narrow(p));
+          if (p) CoTaskMemFree(p);
+          item->Release();
+        }
+      }
+      items->Release();
+    }
+  }
+  dlg->Release();
+  return out;
+}
+
+// クリップボードの画像（CF_DIBV5 を優先、なければ CF_DIB）を BMP ファイルのバイト列にして返す。
+// 1ファイルの上限を超えるもの・ヘッダが壊れているもの・読めないものは nullopt（bmpFromDib が検査する）
+std::optional<std::string> Win32Platform::clipboardImage() {
+  UINT fmt = 0;
+  if (IsClipboardFormatAvailable(CF_DIBV5)) fmt = CF_DIBV5;
+  else if (IsClipboardFormatAvailable(CF_DIB)) fmt = CF_DIB;
+  else return std::nullopt;
+  if (!OpenClipboard(hwnd_)) return std::nullopt;
+  std::optional<std::string> out;
+  if (HANDLE h = GetClipboardData(fmt)) {
+    const SIZE_T bytes = GlobalSize(h);
+    if (bytes >= 40 && bytes <= static_cast<SIZE_T>(kMaxAttachFileBytes)) {
+      if (const auto* p = static_cast<const char*>(GlobalLock(h))) {
+        if (auto bmp = bmpFromDib(std::string(p, bytes))) out = std::move(*bmp);
+        GlobalUnlock(h);
+      }
+    }
+  }
+  CloseClipboard();
   return out;
 }
 

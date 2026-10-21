@@ -181,7 +181,7 @@ Result<std::string> MemFileStore::read(const std::string& path) {
 }
 
 Status MemFileStore::writeAtomic(const std::string& path, const std::string& data) {
-  if (failWrites_) return Error{"書き込めません（テスト）"};
+  if (failWrites_ || failAtomic_) return Error{"書き込めません（テスト）"};
   ++writes_;
   now_ += 10;
   files_[path] = {data, now_};
@@ -202,7 +202,7 @@ Status MemFileStore::makeDirs(const std::string& dir) {
 }
 
 Status MemFileStore::move(const std::string& from, const std::string& to) {
-  if (failWrites_) return Error{"移せません（テスト）"};
+  if (failWrites_ || failMoves_) return Error{"移せません（テスト）"};
   if (!stat(from)) return Error{"移す元がありません: " + from};
   if (stat(to)) return Error{"移す先に同じ名前があります: " + to};
   if (files_.count(from)) {

@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "ui/app_ui.hpp"
 
@@ -32,6 +33,8 @@ class Win32Platform final : public ui::IPlatform {
   void releaseTexture(ImTextureID tex) override;
   std::optional<std::string> readTextFile(const std::string& path, std::string* error) override;
   std::optional<std::string> pickFolder(const std::string& start) override;
+  std::vector<std::string> pickOpenFiles(const std::string& title) override;
+  std::optional<std::string> clipboardImage() override;
   bool systemDark() override { return systemDarkMode(); }
   void requestQuit() override { quit_ = true; }
   std::optional<std::string> clipboardText() override;

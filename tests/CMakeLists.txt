@@ -24,6 +24,7 @@ add_executable(roadmap_unit_tests
   unit/test_issue_name.cpp
   unit/test_pred_edit.cpp
   unit/test_attachments.cpp
+  unit/test_attachments_move.cpp
   unit/test_gantt_geom.cpp
   unit/test_report.cpp
   unit/test_weekly.cpp

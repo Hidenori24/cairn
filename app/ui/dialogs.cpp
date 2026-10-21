@@ -1093,7 +1093,7 @@ void dlgShortcuts(Frame& f) {
       {"← →", "閉じる / 開く"},          {"Enter / F2", "件名を編集"},           {"N / Insert", "同じ階層に追加"},
       {"Shift+N", "子を追加"},           {"Tab / Shift+Tab", "階層を下げる / 上げる"}, {"Delete / Backspace", "選択を削除"},
       {"Space", "詳細パネルを開閉"},
-      {"Ctrl+V", "クリップボードの複数行を、選んだ課題の子としてまとめて追加"}};
+      {"Ctrl+V", "クリップボードの複数行を、選んだ課題の子としてまとめて追加（テキストがなく画像があれば、その画像を添付）"}};
   const std::pair<const char*, const char*> edit[] = {
       {"Enter", "確定（追加直後の行は次の行を追加）"}, {"Ctrl+Enter", "確定して同じ階層に追加"}, {"Shift+Enter", "確定して子を追加"},
       {"Tab / Shift+Tab", "編集したまま階層を変える"}, {"↑ ↓", "隣の行の編集へ"}, {"Esc", "取り消し"}};
@@ -1334,6 +1334,22 @@ void startPasteChildren(Frame& f) {
   u.pasteParent = c.selection()[0];
   u.paste = std::move(o);
   openDialog(f, Dlg::PasteChildren);
+}
+
+void pasteFromClipboard(Frame& f) {
+  app::AppController& c = f.c;
+  Session* s = c.session();
+  if (!s) return;
+  if (c.selection().size() == 1 && s->issue(c.selection()[0])) {
+    const auto clip = f.p.clipboardText();
+    if (!clip || text::trim(*clip).empty()) {  // テキストがあれば、画像より先に子課題の貼り付け（Excel などは両方を載せる）
+      if (const auto img = f.p.clipboardImage()) {
+        c.attachClipboardImage(c.selection()[0], *img);
+        return;
+      }
+    }
+  }
+  startPasteChildren(f);
 }
 
 }  // namespace roadmap::ui

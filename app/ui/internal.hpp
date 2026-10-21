@@ -57,12 +57,21 @@ void openTplApply(Frame& f);
 void openTplSave(Frame& f, const std::string& id);
 // クリップボードの複数行を、選んだ課題の子としてまとめて作る（プレビューのダイアログを開く）
 void startPasteChildren(Frame& f);
+// 入力欄の外の Ctrl+V: 課題が1つ選ばれていて、クリップボードにテキストがなく画像があれば、その画像を添付する。
+// テキストがあれば今までどおり（複数行を子課題として貼り付ける）
+void pasteFromClipboard(Frame& f);
 
 // ---- 添付とファイルのドロップ ----
 // この範囲（画面の座標。描画中のクリップ範囲に切り詰める）を、課題 issueId のドロップ先にする
 void registerDropTarget(Frame& f, const std::string& issueId, ImVec2 a, ImVec2 b);
 // 前のフレームに描いたドロップ先と照らして、pendingDrop を処理する（drawApp の先頭で呼ぶ）
 void processDrop(Frame& f);
+// 添付のサムネイルのドラッグ（別の課題へ移動・コピー、同じ課題の中の並べ替え）。processAttachDrag は drawApp の先頭
+// （processDrop の次）で、離した位置を前のフレームのドロップ先と照らして実行する。drawAttachDrag は最後にカーソルへ付く表示を描く
+void processAttachDrag(Frame& f);
+void drawAttachDrag(Frame& f);
+// 並べ替えのドラッグで、位置 pos に離したときの挿入位置（0〜添付の数）。添付の一覧の外なら -1
+int attachReorderSlot(const UiState& u, const std::string& issueId, ImVec2 pos);
 // 添付の本体を開く。実行ファイルなどは先に警告のダイアログを出す（確認したら開く）
 void openAttachment(Frame& f, const std::string& issueId, std::size_t index);
 // 添付の画像のテクスチャ（maxDim = 縮小の上限）。まだ作っていなければ nullptr（デコードは1フレームに1枚まで。

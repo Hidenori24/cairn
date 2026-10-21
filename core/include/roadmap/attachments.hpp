@@ -60,6 +60,24 @@ Result<Attachment> attachData(IFileStore& fs, const IClock& clock, const std::st
 Status removeAttachment(IFileStore& fs, const std::string& projectDir, AttachmentMap& meta, const std::string& issueId,
                         std::size_t index);
 
+// 別の課題へ移す（Issue #19）: 本体を 添付/<元>/ から 添付/<先>/ へ、メタ情報（名前・日時・作成者）と一緒に動かす。
+// 同名は連番（-2、-3 …）で、返す Attachment の name が変わりうる。先の末尾に足す。合計は変わらないので上限は見ない。
+// 本体を移せなければ（元がない・先に書けない）何も変えない。元と先が同じ課題ならエラー（並べ替えは reorderAttachment）。
+// 先の課題が実在するかは呼び出し側が確かめる（core は課題の一覧を持たない）
+Result<Attachment> moveAttachment(IFileStore& fs, const std::string& projectDir, AttachmentMap& meta, const std::string& fromIssue,
+                                  std::size_t index, const std::string& toIssue);
+// 別の課題へコピーする: 本体を複製して先に付ける（日時と作成者は「いま付けた」ものにする）。元は残る。
+// コピーは新しいファイルなので、1ファイルとプロジェクト合計の上限を、実際に読めた大きさで検査する。失敗したら何も変えない
+Result<Attachment> copyAttachment(IFileStore& fs, const IClock& clock, const std::string& projectDir, AttachmentMap& meta,
+                                  const std::string& fromIssue, std::size_t index, const std::string& toIssue,
+                                  const std::string& who, const AttachLimits& lim = {});
+// 同じ課題の中で並べ替える: from の添付を、取り除いたあとの添字 to の位置へ入れる（本体は動かさない）
+Status reorderAttachment(AttachmentMap& meta, const std::string& issueId, std::size_t from, std::size_t to);
+
+// Windows のクリップボードの DIB（CF_DIB / CF_DIBV5。BITMAPINFOHEADER 以降）に、14 バイトのファイルヘッダを足して BMP の
+// ファイルのバイト列にする。壊れたヘッダ（大きさ 0・極端な大きさ・色数・ピクセルの欠け）は断る。プラットフォームを問わず試せるよう core に置く
+Result<std::string> bmpFromDib(const std::string& dib);
+
 std::size_t attachmentCount(const AttachmentMap& m, const std::string& issueId);
 std::uint64_t attachmentsTotalBytes(const AttachmentMap& m);
 
