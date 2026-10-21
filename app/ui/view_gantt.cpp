@@ -310,7 +310,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
     sp.xr = g.xr;
     return sp;
   };
-  const float handleR = u.m.s(6), handleGap = u.m.s(4);
+  const float handleR = u.m.s(kLinkHandleR), handleGap = u.m.s(kLinkHandleGap);
   const auto handleCenter = [&](const Span& sp, bool right) {
     return ImVec2(right ? sp.xr + handleGap + handleR : sp.xl - handleGap - handleR, sp.cy);
   };
@@ -319,9 +319,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
   bool idle = false;  // ほかのドラッグ・選択モード・ダイアログがなく、マウスがガントの上にある
   {
     const ImVec2 mp = ImGui::GetMousePos();
-    idle = !u.linkPick.active && !u.barDrag.active && !u.rowDrag.active && !u.colDrag.active && !u.linkDrag.active &&
-           !u.arrowDrag.pending && !u.arrowDrag.active && u.dlg == Dlg::None && !u.paletteOpen &&
-           u.editField == EditField::None && ImGui::IsWindowHovered();
+    idle = linkDragIdle(u) && ImGui::IsWindowHovered();
     if (idle && mp.x >= tlMin.x && mp.x < tlMax.x && mp.y >= bodyTop && mp.y < tlMax.y) {
       const int ri = static_cast<int>(std::floor((mp.y - bodyTop + sy) / RH));
       if (ri >= 0 && ri < static_cast<int>(rows.size())) {
@@ -341,14 +339,8 @@ void drawGanttView(Frame& f, ImVec2 size) {
       }
     }
     // ハンドルを押したらドラッグを始める（この行のクリックにはしない）
-    if (hotSide != 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-      u.linkDrag = {};
-      u.linkDrag.active = true;
-      u.linkDrag.id = T.ids[rows[static_cast<std::size_t>(hotRow)].id];
-      u.linkDrag.fromRight = hotSide == 2;
-      u.linkDrag.project = c.currentId();
-      u.linkDrag.start = mp;
-    }
+    if (hotSide != 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+      linkDragBegin(f, rows[static_cast<std::size_t>(hotRow)].id, hotSide == 2, mp);
   }
 
   // 関係する行（カーソル行の先行・後続）
@@ -862,12 +854,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
     const Span sp = spanOf(i);
     u.barGeom.push_back({T.ids[rows[static_cast<std::size_t>(i)].id], sp.xl, sp.xr, sp.cy});
   }
-  const auto drawHandle = [&](ImVec2 hc, bool hot, bool ok = true) {
-    const ImU32 col = ok ? u.t->accent : u.t->late;
-    dl->AddCircleFilled(hc, handleR, hot ? col : u.t->surface);
-    dl->AddCircle(hc, handleR, col, 0, 2.f);
-    dl->AddCircleFilled(hc, handleR * 0.38f, hot ? IM_COL32_WHITE : col);
-  };
+  const auto drawHandle = [&](ImVec2 hc, bool hot, bool ok = true) { drawLinkHandle(f, hc, hot, ok); };
   // 相手の行とバーの強調（つなげないときは lineCol を赤にする）
   const auto highlightTarget = [&](int tgtRow, ImU32 lineCol) {
     const Span tsp = spanOf(tgtRow);
@@ -896,58 +883,27 @@ void drawGanttView(Frame& f, ImVec2 size) {
       dl->AddLine(ImVec2(ax.x(sh.oldStart), cy), ImVec2(ax.x(sh.newStart), cy), withAlpha(gc, 0.8f), 1.5f);
     }
   };
-  // ゴムひも（p0 から p1 まで。fromRight = p0 が先行側の右端から右へ出る。そうでなければ左へ出る）
-  const auto drawRubber = [&](ImVec2 p0, ImVec2 p1, bool fromRight, ImU32 lineCol) {
-    const float dir = fromRight ? 1.f : -1.f;
-    const float dx = std::max(u.m.s(40), std::abs(p1.x - p0.x) * 0.5f);
-    const ImVec2 c1(p0.x + dir * dx, p0.y), c2(p1.x - dir * dx, p1.y);
-    dl->AddBezierCubic(p0, c1, c2, p1, withAlpha(lineCol, 0.25f), u.m.s(6));  // 太い薄い線 + 本線
-    dl->AddBezierCubic(p0, c1, c2, p1, lineCol, u.m.s(2.2f));
-    if (fromRight) {
-      dl->AddTriangleFilled(p1, ImVec2(p1.x - u.m.s(8), p1.y - u.m.s(5)), ImVec2(p1.x - u.m.s(8), p1.y + u.m.s(5)), lineCol);
-    } else {
-      dl->AddCircleFilled(p1, u.m.s(4), lineCol);
-    }
-  };
-  if (u.linkDrag.active && (T.find(u.linkDrag.id) < 0 || c.currentId() != u.linkDrag.project)) u.linkDrag = {};
-  if (u.linkDrag.active) {
+  if (linkDragValid(f, app::View::Gantt)) {
     // つかんでいるバーの課題 si と、マウスの下の行の課題 tgt（同じ課題なら「元の場所」で、相手なし）
     const int si = T.find(u.linkDrag.id);
-    const bool fromRight = u.linkDrag.fromRight;
     const ImVec2 mp = ImGui::GetMousePos();
     int tgtRow = -1;
     if (mp.x >= wp.x && mp.x < wp.x + viewW && mp.y >= bodyTop && mp.y < wp.y + viewH) {
       const int ri = static_cast<int>(std::floor((mp.y - bodyTop + sy) / RH));
       if (ri >= 0 && ri < static_cast<int>(rows.size()) && rows[static_cast<std::size_t>(ri)].id != si) tgtRow = ri;
     }
-    const int tgt = tgtRow >= 0 ? rows[static_cast<std::size_t>(tgtRow)].id : -1;
-    LinkBlock blk = LinkBlock::None;
-    const LinkPreview* pv = nullptr;
-    if (tgt >= 0) {
-      const int pred = fromRight ? si : tgt, succ = fromRight ? tgt : si;
-      blk = checkLink(T, I, pred, succ);  // 循環・重複・親子は赤（つなげない）
-      if (blk == LinkBlock::None) {
-        const std::string key = T.ids[pred] + "\n" + T.ids[succ];
-        if (u.linkDrag.previewKey != key || u.linkDrag.previewVer != s->version()) {
-          u.linkDrag.preview = s->previewLink(T.ids[pred], T.ids[succ]);
-          u.linkDrag.previewKey = key;
-          u.linkDrag.previewVer = s->version();
-        }
-        pv = &u.linkDrag.preview;
-      }
-    }
-    const bool ok = tgt >= 0 && blk == LinkBlock::None;
-    const bool bad = tgt >= 0 && !ok;
-    const ImU32 lineCol = bad ? u.t->late : ok ? u.t->accent : u.t->muted;
+    // 循環・重複・親子は赤（つなげない）。日程の影響は相手が変わったときだけ計算し直す（共有: link_drag.cpp）
+    const LinkEval e = linkDragEval(f, tgtRow >= 0 ? rows[static_cast<std::size_t>(tgtRow)].id : -1);
+    const bool fromRight = e.fromRight;
 
     // つなぐ相手の行とバーを強調（つなげないときは赤）、日程への影響のプレビュー、ゴムひも
     dl->PushClipRect(tlMin, tlMax, true);
     Span tsp;
     if (tgtRow >= 0) {
       tsp = spanOf(tgtRow);
-      highlightTarget(tgtRow, lineCol);
+      highlightTarget(tgtRow, e.lineCol);
     }
-    drawGhosts(pv);
+    drawGhosts(e.pv);
     dl->PopClipRect();
     {
       dl->PushClipRect(ImVec2(wp.x, bodyTop), ImVec2(wp.x + viewW, wp.y + viewH), true);
@@ -955,55 +911,18 @@ void drawGanttView(Frame& f, ImVec2 size) {
       ImVec2 p0 = u.linkDrag.start;
       if (srow >= 0) {
         p0 = handleCenter(spanOf(srow), fromRight);
-        drawHandle(p0, true, !bad);
+        drawHandle(p0, true, !e.bad);
       }
       ImVec2 p1 = mp;
       if (tgtRow >= 0) p1 = ImVec2(fromRight ? tsp.xl - u.m.s(2) : tsp.xr + u.m.s(2), tsp.cy);  // 吸着: 相手の端にぴたっと付く
-      drawRubber(p0, p1, fromRight, lineCol);
+      drawLinkRubber(f, p0, p1, fromRight, false, u.m.s(40), e.lineCol);
       dl->PopClipRect();
     }
-
-    // 理由・影響の表示（カーソルの近く）
-    {
-      const std::string a = T.did[static_cast<std::size_t>(fromRight ? si : std::max(tgt, 0))];
-      const std::string b = T.did[static_cast<std::size_t>(fromRight ? std::max(tgt, 0) : si)];
-      ImGui::BeginTooltip();
-      if (tgt < 0) {
-        ImGui::TextUnformatted("つなぐ相手のバーまでドラッグ（Esc で取り消し）");
-      } else if (bad) {
-        ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
-        ImGui::TextUnformatted((a + " → " + b + " はつなげません").c_str());
-        ImGui::TextUnformatted(linkBlockReason(blk));
-        ImGui::PopStyleColor();
-      } else {
-        ImGui::TextUnformatted((a + " → " + b + " をつなぐ").c_str());
-        const std::string who = T.did[static_cast<std::size_t>(fromRight ? tgt : si)];  // 後続
-        if (pv && pv->delayDays > 0) {
-          ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
-          std::string t = who + " が " + std::to_string(pv->delayDays) + "営業日 遅れます";
-          if (pv->shifts.size() > 1) t += "（影響 " + std::to_string(pv->shifts.size()) + "件）";
-          ImGui::TextUnformatted(t.c_str());
-          ImGui::PopStyleColor();
-        } else if (pv && !pv->shifts.empty()) {
-          ImGui::TextDisabled("%s", ("日程が変わる課題 " + std::to_string(pv->shifts.size()) + "件").c_str());
-        } else {
-          ImGui::TextDisabled("日程は変わりません");
-        }
-        ImGui::TextDisabled("離すとつなぎます（Esc で取り消し）");
-      }
-      ImGui::EndTooltip();
-    }
-    ImGui::SetMouseCursor(bad ? ImGuiMouseCursor_NotAllowed : ImGuiMouseCursor_Hand);
-
-    // 離したら確定（相手がいなければ取り消し）。課題を変えるのは描画が終わってから
-    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-      const std::string src = u.linkDrag.id;
-      u.linkDrag = {};
-      if (tgt >= 0) {
-        const std::string other = T.ids[static_cast<std::size_t>(tgt)];
-        deferAfterFrame(f, [&f, src, other, fromRight] { linkIssues(f, src, fromRight, other, true); });
-      }
-    }
+    drawLinkTip(f, e, "バー");  // 理由・影響の表示（カーソルの近く）
+    ImGui::SetMouseCursor(e.bad ? ImGuiMouseCursor_NotAllowed : ImGuiMouseCursor_Hand);
+    // ウィンドウの端へ近づいたらスクロール（タイムラインの上・下・右。左は左の表に出る手前まで）
+    linkDragAutoScroll(f, mp, ImVec2(tlMin.x, bodyTop), ImVec2(wp.x + viewW, wp.y + viewH), true);
+    linkDragFinish(f, e);  // 離したら確定（相手がいなければ取り消し）
   } else if (hotRow >= 0) {
     // マウスを載せたバーの左右にハンドルを出す
     dl->PushClipRect(tlMin, tlMax, true);
@@ -1092,7 +1011,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
         const Span tsp = spanOf(tgtRow);
         p1 = ImVec2(head ? tsp.xl - u.m.s(2) : tsp.xr + u.m.s(2), tsp.cy);
       }
-      drawRubber(p0, p1, head, lineCol);
+      drawLinkRubber(f, p0, p1, head, false, u.m.s(40), lineCol);
       if (act == Act::Remove) {  // 外す印
         const float r = u.m.s(5);
         dl->AddLine(ImVec2(mp.x - r, mp.y - r), ImVec2(mp.x + r, mp.y + r), lineCol, 2.5f);

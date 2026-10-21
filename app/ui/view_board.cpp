@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <map>
 
+#include <imgui_internal.h>
+
 #include "roadmap/text.hpp"
 #include "ui/icons.hpp"
 #include "ui/internal.hpp"
@@ -14,8 +16,7 @@ struct DragCard {
   bool active = false;
 } gCardDrag;
 
-void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, std::string& dropColumnHover) {
-  (void)dropColumnHover;
+void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, const LinkOverlayOpts& lo) {
   app::AppController& c = f.c;
   UiState& u = f.u;
   Session* s = c.session();
@@ -29,17 +30,37 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, std::s
   const ImVec2 p = ImGui::GetCursorScreenPos();
   const ImVec2 q(p.x + w, p.y + h);
   const bool sel = c.isSelected(sid);
+  // 依存をつなぐハンドル（カードの左右の端。右 → 後続、左 → 先行）。ハンドルを押したときはカードのクリックにもドラッグにもしない
+  int handleSide = 0;
+  {
+    UiState::LinkSlot sl;
+    sl.idx = id;
+    sl.a = p;
+    sl.b = q;
+    sl.padX = u.m.s(10);
+    const float mid = (p.y + q.y) / 2;
+    sl.hl = ImVec2(p.x - u.m.s(2), mid);
+    sl.hr = ImVec2(q.x + u.m.s(2), mid);
+    sl.landR = ImVec2(p.x - u.m.s(2), mid);  // 右のハンドルで来た線はカードの左の端へ
+    sl.landL = ImVec2(q.x + u.m.s(2), mid);
+    sl.sameL = ImVec2(sl.hl.x - u.m.s(kLinkHandleR), mid);  // 同じ列のカードへは、同じ側の端へ回り込む
+    sl.sameR = ImVec2(sl.hr.x + u.m.s(kLinkHandleR), mid);
+    handleSide = linkSlotAdd(f, sl, lo);
+  }
+  const bool linking = handleSide != 0 || u.linkDrag.active;
   ImGui::PushID(sid.c_str());
   registerDropTarget(f, sid, p, q);  // カードへファイルをドロップすると添付
   ImGui::SetNextItemAllowOverlap();
   ImGui::InvisibleButton("##card", ImVec2(w, h));
   const bool hov = ImGui::IsItemHovered();
-  const bool inCard = ImGui::IsMouseHoveringRect(p, q) && ImGui::IsWindowHovered() && !gCardDrag.active;
-  if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) rowClick(f, sid);
-  if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) openContext(f, sid);
-  if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) openDetail(f, sid, 0);
-  if (!u.linkPick.active && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 5.f))
-    gCardDrag = {sid, true};
+  const bool inCard = ImGui::IsMouseHoveringRect(p, q) && ImGui::IsWindowHovered() && !gCardDrag.active && !linking;
+  if (!linking) {
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) rowClick(f, sid);
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) openContext(f, sid);
+    if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) openDetail(f, sid, 0);
+    if (!u.linkPick.active && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 5.f))
+      gCardDrag = {sid, true};
+  }
   dl->AddRectFilled(p, q, sel ? u.t->accentBg : u.t->surface, u.m.s(6));
   dl->AddRect(p, q, sel ? u.t->accent : (hov ? u.t->line2 : u.t->line), u.m.s(6));
   dl->AddRectFilled(p, ImVec2(p.x + u.m.s(3), q.y), u.t->c[rootIdx[id]], u.m.s(6), ImDrawFlags_RoundCornersLeft);
@@ -164,6 +185,21 @@ void drawBoardView(Frame& f, ImVec2 size) {
   }
 
   ImGui::BeginChild("##board", size, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+  // 依存をつなぐドラッグ（カードの左右の端のハンドル。ゴムひもは右 → 相手の左の端）
+  LinkOverlayOpts linkOpts;
+  linkOpts.noun = "カード";
+  linkOpts.sameColumn = true;
+  linkOpts.hitR = 8.f;  // 右下の削除ボタンと重ならない大きさ
+  linkOpts.bend = 24.f;
+  linkOpts.round = 6.f;
+  linkOpts.horizontalScroll = true;
+  linkOpts.busy = gCardDrag.active;
+  {
+    const ImRect inner = ImGui::GetCurrentWindow()->InnerRect;  // スクロールバーを除いた、見えている範囲
+    linkOpts.clipMin = inner.Min;
+    linkOpts.clipMax = inner.Max;
+  }
+  u.linkSlots.clear();
   if (leaves.empty()) {
     ImGui::SetCursorPos(ImVec2(u.m.s(24), u.m.s(24)));
     ImGui::TextDisabled("%s", S::kNoMatch);
@@ -184,7 +220,6 @@ void drawBoardView(Frame& f, ImVec2 size) {
   }
   y += ImGui::GetTextLineHeight() + u.m.s(8);
   int dropCol = -1;
-  std::string dummy;
   for (const auto& [laneName, ids] : lanes) {
     if (!laneName.empty()) {
       const std::string lh = laneName + "  " + std::to_string(ids.size()) + "件";
@@ -202,7 +237,7 @@ void drawBoardView(Frame& f, ImVec2 size) {
         if (colOf(id) == k) {
           {
             FadeScope fade(dl, isDimmed(u, dim, id, T.ids[id]), dimAlpha(c));
-            drawCard(f, id, colW - u.m.s(12), rootIdx, dummy);
+            drawCard(f, id, colW - u.m.s(12), rootIdx, linkOpts);
           }
           cy = ImGui::GetCursorScreenPos().y;
           ImGui::SetCursorScreenPos(ImVec2(x + u.m.s(6), cy));
@@ -220,6 +255,8 @@ void drawBoardView(Frame& f, ImVec2 size) {
   }
   ImGui::SetCursorScreenPos(ImVec2(origin.x, y));
   ImGui::Dummy(ImVec2(pad + (colW + pad) * static_cast<float>(nc), u.m.s(20)));
+  linkOpts.busy = gCardDrag.active;
+  drawLinkOverlay(f, app::View::Board, linkOpts);  // ハンドル・ゴムひも・相手のカードの強調・確定
   if (gCardDrag.active && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
     const std::string id = gCardDrag.id;
     gCardDrag = {};
