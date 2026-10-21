@@ -1,0 +1,1019 @@
+// 週次レポート（Issue #43）: 期間・各リストの抽出・Markdown と HTML のエスケープ・スナップショットと比較
+#include <doctest/doctest.h>
+
+#include <algorithm>
+#include <string>
+#include <vector>
+
+#include "roadmap/clock.hpp"
+#include "roadmap/filestore.hpp"
+#include "roadmap/load.hpp"
+#include "roadmap/project_io.hpp"
+#include "roadmap/report.hpp"
+#include "roadmap/schedule.hpp"
+#include "roadmap/stats.hpp"
+#include "roadmap/text.hpp"
+#include "roadmap/weekly.hpp"
+
+using namespace roadmap;
+
+namespace {
+
+Day D(const char* iso) { return *parseIso(iso); }
+
+struct Spec {
+  std::string id, name, who, status = "To Do", parent, type = "Task", resolved, earliest, deadline;
+  double weeks = 1;
+  std::vector<std::string> blocks;
+};
+
+Issue mk(const Spec& s) {
+  Issue o;
+  o.id = s.id;
+  o.key = "P-" + s.id;
+  o.type = s.type;
+  o.summary = s.name;
+  o.parent = s.parent;
+  o.status = s.status;
+  o.assignee = s.who;
+  if (!s.resolved.empty()) o.resolved = parseIso(s.resolved);
+  if (!s.earliest.empty()) o.notBefore = parseIso(s.earliest);
+  if (!s.deadline.empty()) o.deadline = parseIso(s.deadline);
+  o.durW = s.weeks;
+  o.blocks = s.blocks;
+  return o;
+}
+
+struct Proj {
+  std::vector<Issue> issues;
+  ProjectMeta meta;
+  Computed comp;
+  Calendar cal = Calendar::fromText(defaultHolidaysText());
+  Day base = D("2026-10-21");  // 水曜
+  ProjectStats stats;
+  LoadReport load;
+  std::string name = "テストプロジェクト";
+
+  static Proj make(const std::vector<Spec>& specs, const char* baseIso = "2026-10-21") {
+    Proj p;
+    p.meta.hasDeadlineCol = true;
+    for (const Spec& s : specs) p.issues.push_back(mk(s));
+    p.base = D(baseIso);
+    ScheduleOptions opt;
+    opt.base = p.base;
+    auto c = computeAll(p.issues, p.meta, p.cal, opt);
+    REQUIRE(c.ok());
+    p.comp = std::move(c).value();
+    p.comp.issues = p.issues;
+    p.stats = computeStats(p.comp.T, p.issues, p.comp.R, p.base);
+    p.load = computeLoad(p.comp.T, p.issues, p.comp.R, p.cal, p.base, ResourceLimit{});
+    return p;
+  }
+  WeeklyInput input(const WeeklySnapshot* prev = nullptr) const {
+    WeeklyInput in(comp.T, issues, comp.R, cal, stats, load);
+    in.base = base;
+    in.projectName = name;
+    in.prev = prev;
+    return in;
+  }
+  WeeklyReport report(const WeeklyOptions& o = {}, const WeeklySnapshot* prev = nullptr) const { return buildWeeklyReport(input(prev), o); }
+  int idx(const char* id) const { return comp.T.find(id); }
+  const ScheduleRow& row(const char* id) const { return comp.R[static_cast<std::size_t>(idx(id))]; }
+};
+
+// 基本の課題群（基準日 2026-10-21 水。今週 10/19〜10/25、来週 10/26〜11/1）
+std::vector<Spec> basic() {
+  std::vector<Spec> v;
+  v.push_back({"1", "全体", "", "To Do", "", "Epic", "", "", "2026-12-25", 1, {}});
+  v.push_back({"2", "A", "田中", "Done", "1", "Task", "2026-10-19", "", "", 1, {}});  // 週の最初の日（月）= 期間内
+  v.push_back({"3", "B", "田中", "Done", "1", "Task", "2026-10-25", "", "", 1, {}});  // 週の最後の日（日）= 期間内
+  v.push_back({"4", "C", "鈴木", "Done", "1", "Task", "2026-10-18", "", "", 1, {}});  // 前の週の日曜 = 期間外
+  v.push_back({"5", "D", "鈴木", "Done", "1", "Task", "2026-10-26", "", "", 1, {}});  // 次の週の月曜 = 期間外
+  v.push_back({"6", "E", "田中", "Done", "1", "Task", "", "", "", 1, {}});            // 完了日なし
+  v.push_back({"7", "F", "田中", "In Progress", "1", "Task", "", "", "", 1, {}});
+  v.push_back({"8", "G", "鈴木", "To Do", "1", "Task", "", "2026-10-26", "", 1, {"9"}});
+  v.push_back({"9", "H", "鈴木", "To Do", "1", "Task", "", "", "2026-11-06", 2, {"11"}});
+  v.push_back({"10", "U", "", "To Do", "1", "Task", "", "", "", 1, {}});
+  v.push_back({"11", "リリース", "", "To Do", "1", "Milestone", "", "", "2026-11-06", 0, {}});
+  v.push_back({"12", "設計完了", "", "Done", "1", "Milestone", "2026-10-22", "", "2026-10-23", 0, {}});
+  v.push_back({"13", "前期", "", "Done", "1", "Milestone", "2026-10-05", "", "", 0, {}});
+  return v;
+}
+std::vector<std::string> didsOf(const Proj& p, const WeeklyList& l) {
+  std::vector<std::string> v;
+  for (const WeeklyItem& it : l.items) v.push_back(p.comp.T.name[static_cast<std::size_t>(it.index)]);
+  return v;
+}
+
+bool has(const std::string& s, const std::string& needle) { return s.find(needle) != std::string::npos; }
+
+// Markdown の 1 行の中の、打ち消されていない "|" の数
+int rawPipes(const std::string& line) {
+  int n = 0;
+  for (std::size_t i = 0; i < line.size(); ++i) {
+    if (line[i] == '\\') {
+      ++i;
+      continue;
+    }
+    if (line[i] == '|') ++n;
+  }
+  return n;
+}
+
+// 打ち消されていない "<" の数（Markdown の生の HTML・自動リンクの元）
+int rawLt(const std::string& s) {
+  int n = 0;
+  for (std::size_t i = 0; i < s.size(); ++i) {
+    if (s[i] == '\\') {
+      ++i;
+      continue;
+    }
+    if (s[i] == '<') ++n;
+  }
+  return n;
+}
+
+std::vector<std::string> lines(const std::string& s) {
+  std::vector<std::string> v;
+  std::size_t from = 0;
+  for (;;) {
+    const std::size_t p = s.find('\n', from);
+    if (p == std::string::npos) {
+      v.push_back(s.substr(from));
+      break;
+    }
+    v.push_back(s.substr(from, p - from));
+    from = p + 1;
+  }
+  return v;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------- 期間
+TEST_CASE("weekly: 期間は月曜始まり。基準日が週の途中でも、月曜〜日曜") {
+  const Day wed = D("2026-10-21");
+  const auto tw = weeklyRange(wed, WeeklyPeriod::ThisWeek, 0, 0);
+  CHECK(tw.from == D("2026-10-19"));
+  CHECK(tw.to == D("2026-10-25"));
+  CHECK(dow(tw.from) == 1);
+  const auto lw = weeklyRange(wed, WeeklyPeriod::LastWeek, 0, 0);
+  CHECK(lw.from == D("2026-10-12"));
+  CHECK(lw.to == D("2026-10-18"));
+  // 月曜・日曜が基準日でも同じ週
+  CHECK(weeklyRange(D("2026-10-19"), WeeklyPeriod::ThisWeek, 0, 0).from == D("2026-10-19"));
+  CHECK(weeklyRange(D("2026-10-25"), WeeklyPeriod::ThisWeek, 0, 0).from == D("2026-10-19"));
+  CHECK(weeklyRange(D("2026-10-25"), WeeklyPeriod::ThisWeek, 0, 0).to == D("2026-10-25"));
+  CHECK(weeklyRange(D("2026-10-26"), WeeklyPeriod::ThisWeek, 0, 0).from == D("2026-10-26"));
+}
+
+TEST_CASE("weekly: 年またぎの週") {
+  const auto tw = weeklyRange(D("2026-12-31"), WeeklyPeriod::ThisWeek, 0, 0);  // 木曜
+  CHECK(fmtIso(tw.from) == "2026-12-28");
+  CHECK(fmtIso(tw.to) == "2027-01-03");
+  const auto lw = weeklyRange(D("2027-01-01"), WeeklyPeriod::LastWeek, 0, 0);  // 金曜
+  CHECK(fmtIso(lw.from) == "2026-12-21");
+  CHECK(fmtIso(lw.to) == "2026-12-27");
+  const auto next = weeklyRange(D("2026-12-31"), WeeklyPeriod::ThisWeek, 0, 0);
+  CHECK(fmtIso(next.to + 1) == "2027-01-04");
+}
+
+TEST_CASE("weekly: 任意の範囲は入れ替え・上限") {
+  const Day a = D("2026-10-10"), b = D("2026-10-20");
+  CHECK(weeklyRange(0, WeeklyPeriod::Custom, a, b).from == a);
+  CHECK(weeklyRange(0, WeeklyPeriod::Custom, b, a).from == a);  // 逆でも入れ替える
+  CHECK(weeklyRange(0, WeeklyPeriod::Custom, b, a).to == b);
+  CHECK(weeklyRange(0, WeeklyPeriod::Custom, a, a).to == a);  // 1 日
+  const auto big = weeklyRange(0, WeeklyPeriod::Custom, a, a + 5000);
+  CHECK(big.to - big.from + 1 == kWeeklyMaxRangeDays);
+  // 極端な値でも壊れない
+  const auto ext = weeklyRange(0, WeeklyPeriod::Custom, -1000000000, 1000000000);
+  CHECK(ext.to - ext.from + 1 == kWeeklyMaxRangeDays);
+}
+
+TEST_CASE("weekly: 営業日数は休業日を除く（年末年始・祝日）") {
+  Proj p = Proj::make(basic(), "2026-11-04");  // 水。11/3（火）は休業日
+  const WeeklyReport r = p.report();
+  CHECK(fmtIso(r.range.from) == "2026-11-02");
+  CHECK(r.rangeWorkdays == 4);  // 月・水・木・金
+  CHECK(r.nextWorkdays == 5);
+  Proj y = Proj::make(basic(), "2026-12-30");
+  const WeeklyReport ry = y.report();
+  CHECK(fmtIso(ry.range.from) == "2026-12-28");
+  CHECK(ry.rangeWorkdays == 1);  // 12/28 だけ（12/29〜1/3 は休業日）
+  CHECK(fmtIso(ry.next.from) == "2027-01-04");
+  CHECK(ry.nextWorkdays == 5);
+}
+
+// ---------------------------------------------------------------- 各リスト
+TEST_CASE("weekly: 今週の完了は期間の両端を含み、前後の日・完了日なしは入れない") {
+  Proj p = Proj::make(basic());
+  const WeeklyReport r = p.report();
+  REQUIRE_FALSE(r.empty);
+  CHECK(didsOf(p, r.done) == std::vector<std::string>{"A", "B"});  // 完了日の順
+  CHECK(r.done.total == 2);
+  CHECK(r.summary.doneInPeriod == 2);
+  CHECK(r.summary.doneNoDate == 1);  // E
+  CHECK(fmtIso(*r.done.items[0].resolved) == "2026-10-19");
+  CHECK(r.done.items[0].assignee == "田中");
+  // 先週
+  WeeklyOptions lw;
+  lw.period = WeeklyPeriod::LastWeek;
+  const WeeklyReport rl = p.report(lw);
+  CHECK(didsOf(p, rl.done) == std::vector<std::string>{"C"});
+  // 任意の範囲（週をまたぐ）
+  WeeklyOptions cu;
+  cu.period = WeeklyPeriod::Custom;
+  cu.from = D("2026-10-18");
+  cu.to = D("2026-10-26");
+  CHECK(didsOf(p, p.report(cu).done) == std::vector<std::string>{"C", "A", "B", "D"});
+  // 1 日だけ
+  cu.from = cu.to = D("2026-10-25");
+  CHECK(didsOf(p, p.report(cu).done) == std::vector<std::string>{"B"});
+}
+
+TEST_CASE("weekly: 進行中は担当・残り営業日・余裕") {
+  Proj q = Proj::make(basic());
+  const WeeklyReport r = q.report();
+  REQUIRE(r.progress.items.size() == 1);
+  const WeeklyItem& f = r.progress.items[0];
+  CHECK(f.name == "F");
+  CHECK(f.assignee == "田中");
+  CHECK(f.done == false);
+  CHECK(f.prog == true);
+  CHECK(f.remainDays == q.cal.nd(q.base, f.finish));
+  CHECK(f.floatDays == q.row("7").floatDays);
+  CHECK(r.progress.total == 1);
+}
+
+TEST_CASE("weekly: 来週の予定は、来週に最早の開始・完了が来る未完了の作業") {
+  Proj p = Proj::make(basic());
+  const WeeklyReport r = p.report();
+  CHECK(fmtIso(r.next.from) == "2026-10-26");
+  CHECK(fmtIso(r.next.to) == "2026-11-01");
+  CHECK(didsOf(p, r.nextStart) == std::vector<std::string>{"G"});
+  // 完了: F（10/27 ごろ）と G（10/30）。完了日の順
+  const std::vector<std::string> fin = didsOf(p, r.nextFinish);
+  CHECK(std::find(fin.begin(), fin.end(), "G") != fin.end());
+  for (std::size_t i = 1; i < r.nextFinish.items.size(); ++i) CHECK(r.nextFinish.items[i - 1].finish <= r.nextFinish.items[i].finish);
+  for (const WeeklyItem& it : r.nextFinish.items) {
+    CHECK(it.finish >= r.next.from);
+    CHECK(it.finish <= r.next.to);
+    CHECK_FALSE(it.done);
+  }
+  // マイルストーンは入らない
+  for (const WeeklyItem& it : r.nextFinish.items) CHECK(p.comp.T.kind[static_cast<std::size_t>(it.index)] == Kind::Task);
+  // 先週のレポートでは、次の期間は「今週」
+  WeeklyOptions lw;
+  lw.period = WeeklyPeriod::LastWeek;
+  const WeeklyReport rl = p.report(lw);
+  CHECK(fmtIso(rl.next.from) == "2026-10-19");
+  CHECK(fmtIso(rl.next.to) == "2026-10-25");
+}
+
+TEST_CASE("weekly: 遅れ・余裕小は余裕が負または 10 日以内。先行を 1 つ付ける") {
+  Proj p = Proj::make(basic());
+  const WeeklyReport r = p.report();
+  // G と H は期限（11/6）に間に合わない
+  REQUIRE(p.row("9").floatDays < 0);
+  const std::vector<std::string> names = didsOf(p, r.risks);
+  CHECK(std::find(names.begin(), names.end(), "H") != names.end());
+  CHECK(std::find(names.begin(), names.end(), "G") != names.end());
+  CHECK(std::find(names.begin(), names.end(), "F") == names.end());  // 余裕が十分
+  for (std::size_t i = 1; i < r.risks.items.size(); ++i) CHECK(r.risks.items[i - 1].floatDays <= r.risks.items[i].floatDays);
+  for (const WeeklyItem& it : r.risks.items) {
+    if (it.name == "H") {
+      CHECK(it.predIndex == p.idx("8"));  // H の開始を決めているのは G
+      CHECK(it.predName == "G");
+      CHECK(it.predFinish == p.row("8").asapFinish);
+    }
+    if (it.name == "G") CHECK(it.predIndex == -1);  // 先行なし
+  }
+}
+
+TEST_CASE("weekly: 余裕 10 日は含み、11 日は含まない") {
+  // 1 つの作業の期限を動かして、余裕がちょうど 10 日・11 日になる日を探す
+  std::vector<Spec> v;
+  v.push_back({"1", "X", "田中", "To Do", "", "Task", "", "", "", 1, {}});
+  Proj base = Proj::make(v);
+  const Day f = base.row("1").asapFinish;
+  for (int want : {9, 10, 11, 12}) {
+    v[0].deadline = fmtIso(base.cal.workday(f, want));
+    Proj p = Proj::make(v);
+    REQUIRE(p.row("1").floatDays == want);
+    const WeeklyReport r = p.report();
+    CHECK((r.risks.total == 1) == (want <= 10));
+  }
+  // 余裕 0（期限ちょうど）と −1（遅れ）
+  v[0].deadline = fmtIso(f);
+  CHECK(Proj::make(v).report().risks.total == 1);
+  v[0].deadline = fmtIso(base.cal.workday(f, -1));
+  const Proj late = Proj::make(v);
+  REQUIRE(late.row("1").floatDays < 0);
+  CHECK(late.report().risks.total == 1);
+}
+
+TEST_CASE("weekly: マイルストーンは、期間内に達成したものと未達成のもの。期限と見込みの差を持つ") {
+  Proj p = Proj::make(basic());
+  const WeeklyReport r = p.report();
+  REQUIRE(r.milestones.size() == 2);
+  // 達成（期間内）が先
+  CHECK(r.milestones[0].name == "設計完了");
+  CHECK(r.milestones[0].achieved);
+  CHECK(fmtIso(r.milestones[0].forecast) == "2026-10-22");
+  CHECK(r.milestones[0].diffDays == 1);  // 期限 10/23 より 1 営業日早い
+  CHECK(r.milestones[1].name == "リリース");
+  CHECK_FALSE(r.milestones[1].achieved);
+  REQUIRE(r.milestones[1].deadline);
+  CHECK(fmtIso(*r.milestones[1].deadline) == "2026-11-06");
+  CHECK(r.milestones[1].diffDays == p.cal.floatDays(r.milestones[1].forecast, D("2026-11-06")));
+  CHECK(r.milestones[1].diffDays < 0);
+  // 前の期の達成（10/5）は入らない
+  for (const WeeklyMilestone& m : r.milestones) CHECK(m.name != "前期");
+  CHECK(r.summary.milestones == 3);
+  CHECK(r.summary.msDone == 2);
+}
+
+TEST_CASE("weekly: 担当別は名前順（順位にしない）で、未割当は最後。来週の負荷を持つ") {
+  Proj p = Proj::make(basic());
+  const WeeklyReport r = p.report();
+  REQUIRE(r.assignees.size() == 3);
+  CHECK(r.assignees[0].name == "田中");
+  CHECK(r.assignees[1].name == "鈴木");
+  CHECK(r.assignees[2].name == "");
+  CHECK(r.assignees[0].doneInPeriod == 2);
+  CHECK(r.assignees[0].inProgress == 1);
+  CHECK(r.assignees[0].open == 1);
+  CHECK(r.assignees[1].doneInPeriod == 0);
+  CHECK(r.assignees[1].open == 2);
+  CHECK(r.assignees[1].late >= 1);
+  CHECK(r.assignees[2].open == 1);
+  // 負荷（来週）: 鈴木は G が来週に 5 日分
+  CHECK(r.assignees[1].loadNextPercent == 100);
+  CHECK(r.assignees[0].loadNextPercent >= 0);
+  CHECK(r.assigneesTotal == 3);
+}
+
+TEST_CASE("weekly: サマリーは統計と一致する") {
+  Proj p = Proj::make(basic());
+  const WeeklyReport r = p.report();
+  CHECK(r.summary.tasks == p.stats.tasks);
+  CHECK(r.summary.done == p.stats.done);
+  CHECK(r.summary.late == p.stats.late);
+  CHECK(r.summary.tight == p.stats.tight);
+  CHECK(r.summary.progress == doctest::Approx(p.stats.progress()));
+  CHECK(r.summary.hasFinish == p.stats.hasFinish);
+  CHECK(r.summary.finish == p.stats.finish);
+  CHECK_FALSE(r.summary.hasPrev);
+  CHECK_FALSE(r.changes.available);
+}
+
+TEST_CASE("weekly: 上限を超えたら件数だけ数える") {
+  std::vector<Spec> v;
+  v.push_back({"1", "全体", "", "To Do", "", "Epic", "", "", "2026-12-25", 1, {}});
+  for (int i = 0; i < 30; ++i) v.push_back({std::to_string(i + 2), "T" + std::to_string(i), "田中", "Done", "1", "Task", "2026-10-20", "", "", 1, {}});
+  Proj p = Proj::make(v);
+  WeeklyOptions o;
+  o.maxItems = 10;
+  const WeeklyReport r = p.report(o);
+  CHECK(r.done.items.size() == 10);
+  CHECK(r.done.total == 30);
+  CHECK(r.done.omitted() == 20);
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "ほか 20 件"));
+  CHECK(has(md, "（30 件）"));
+}
+
+// ---------------------------------------------------------------- 空・完了日なし
+TEST_CASE("weekly: 課題がないプロジェクト") {
+  Computed c;
+  auto t = buildTree({}, ProjectMeta{});
+  REQUIRE(t.ok());
+  c.T = std::move(t).value();
+  const std::vector<Issue> issues;
+  const std::vector<ScheduleRow> rows;
+  const Calendar cal;
+  const ProjectStats st = computeStats(c.T, issues, rows, D("2026-10-21"));
+  const LoadReport ld = computeLoad(c.T, issues, rows, cal, D("2026-10-21"), ResourceLimit{});
+  WeeklyInput in(c.T, issues, rows, cal, st, ld);
+  in.base = D("2026-10-21");
+  in.projectName = "空";
+  const WeeklyReport r = buildWeeklyReport(in, WeeklyOptions{});
+  CHECK(r.empty);
+  CHECK(r.done.items.empty());
+  CHECK(r.assignees.empty());
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "課題がありません"));
+  CHECK(has(md, "# 空 週次レポート"));
+  const std::string html = weeklyHtml(r);
+  CHECK(has(html, "課題がありません"));
+  CHECK(makeWeeklySnapshot(in).items.empty());
+}
+
+TEST_CASE("weekly: 大きさの合わない入力は空として扱い、範囲外を読まない") {
+  Proj p = Proj::make(basic());
+  std::vector<ScheduleRow> shortRows(p.comp.R.begin(), p.comp.R.begin() + 3);
+  WeeklyInput in(p.comp.T, p.issues, shortRows, p.cal, p.stats, p.load);
+  in.base = p.base;
+  CHECK(buildWeeklyReport(in, WeeklyOptions{}).empty);
+  std::vector<Issue> few(p.issues.begin(), p.issues.begin() + 2);
+  WeeklyInput in2(p.comp.T, few, p.comp.R, p.cal, p.stats, p.load);
+  CHECK(buildWeeklyReport(in2, WeeklyOptions{}).empty);
+  CHECK(makeWeeklySnapshot(in2).items.empty());
+}
+
+TEST_CASE("weekly: 全部完了・未完了なし") {
+  std::vector<Spec> v;
+  v.push_back({"1", "全体", "", "To Do", "", "Epic", "", "", "", 1, {}});
+  v.push_back({"2", "A", "田中", "Done", "1", "Task", "2026-10-20", "", "", 1, {}});
+  Proj p = Proj::make(v);
+  const WeeklyReport r = p.report();
+  CHECK(r.summary.done == 1);
+  CHECK_FALSE(r.summary.hasFinish);
+  CHECK(r.progress.items.empty());
+  CHECK(r.risks.items.empty());
+  CHECK(r.nextStart.items.empty());
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "未完了の作業はありません"));
+  CHECK(has(md, "- なし"));
+}
+
+TEST_CASE("weekly: 担当者なし・件名が空の課題") {
+  std::vector<Spec> v = basic();
+  v[1].name = "";
+  Proj p = Proj::make(v);
+  const WeeklyReport r = p.report();
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "担当: 未割当"));
+  CHECK(weeklyHtml(r).size() > 100);
+}
+
+// ---------------------------------------------------------------- Markdown のエスケープ
+TEST_CASE("weekly: escapeMarkdown は構文になる文字を打ち消す") {
+  CHECK(escapeMarkdown("a|b") == "a\\|b");
+  CHECK(escapeMarkdown("[x](http://e.com)") == "\\[x\\](http://e.com)");
+  CHECK(escapeMarkdown("`code`") == "\\`code\\`");
+  CHECK(escapeMarkdown("<script>") == "\\<script\\>");
+  CHECK(escapeMarkdown("A & B") == "A \\& B");
+  CHECK(escapeMarkdown("a*b*c") == "a\\*b\\*c");
+  CHECK(escapeMarkdown("snake_case") == "snake\\_case");
+  CHECK(escapeMarkdown("~~x~~") == "\\~\\~x\\~\\~");
+  CHECK(escapeMarkdown("back\\slash") == "back\\\\slash");
+  // 行頭の # - + > と、番号つきリスト
+  CHECK(escapeMarkdown("# 見出し") == "\\# 見出し");
+  CHECK(escapeMarkdown("- 項目") == "\\- 項目");
+  CHECK(escapeMarkdown("+ 項目") == "\\+ 項目");
+  CHECK(escapeMarkdown("> 引用") == "\\> 引用");
+  CHECK(escapeMarkdown("1. 手順") == "1\\. 手順");
+  CHECK(escapeMarkdown("12) 手順") == "12\\) 手順");
+  CHECK(escapeMarkdown("1. ") == "1\\.");  // 空白は前後を落とす
+  CHECK(escapeMarkdown("1.2.3 件名") == "1.2.3 件名");  // 記号のあとが空白でなければ番号つきリストではない
+  CHECK(escapeMarkdown("v1.2 は対象") == "v1.2 は対象");  // 行頭が数字ではない
+  CHECK(escapeMarkdown("2026年") == "2026年");
+  CHECK(escapeMarkdown("a-b") == "a-b");  // 行頭以外の - はそのまま
+  CHECK(escapeMarkdown("C# 移行") == "C# 移行");
+  CHECK(escapeMarkdown("見出し #") == "見出し \\#");  // 末尾の # は閉じ記号になりうる
+  // 改行・タブ・制御文字
+  CHECK(escapeMarkdown("a\nb\r\nc\td") == "a b  c d");
+  CHECK(escapeMarkdown(std::string("a\0b", 3)) == "ab");
+  CHECK(escapeMarkdown("a\xE2\x80\xAE" "b") == "ab");  // 向きを入れ替える制御文字
+  CHECK(escapeMarkdown("a\xFF" "b") == "a\xEF\xBF\xBD" "b");
+  CHECK(text::isValidUtf8(escapeMarkdown("\xE3\x81\xFF\xC0")));
+  // 前後の空白（行頭の空白 4 つはコードブロックになる）
+  CHECK(escapeMarkdown("    code") == "code");
+  CHECK(escapeMarkdown("") == "");
+  // 長すぎる文字列は切る
+  const std::string longName(1000, 'a');
+  const std::string e = escapeMarkdown(longName);
+  CHECK(text::codepointCount(e) == kWeeklyMaxNameChars + 1);
+  CHECK(e.substr(e.size() - 3) == "…");
+  CHECK(text::isValidUtf8(escapeMarkdown(std::string(300, '\xE3') + "x")));
+}
+
+TEST_CASE("weekly: 件名・担当者名に Markdown の記号が入っても、表と箇条書きが壊れない") {
+  std::vector<Spec> v = basic();
+  v[1].name = "A|B [リンク](http://evil.example) `x` <b>太字</b> & #1\n2行目";
+  v[1].who = "山田|太郎\n- 注入";
+  v[2].name = "# 見出しにしたい";
+  v[8].name = "> 引用にしたい | 表を崩す";
+  v[8].who = "鈴木|2";
+  Proj p = Proj::make(v);
+  const WeeklyReport r = p.report();
+  const std::string md = weeklyMarkdown(r);
+  // 生の "<" は出力に残らない（所感の "<" も打ち消す）
+  CHECK_FALSE(has(md, "<b>"));
+  CHECK_FALSE(has(md, "<script"));
+  // リンクは [ ] が打ち消されて、リンクにならない
+  CHECK_FALSE(has(md, "[リンク]("));
+  CHECK(has(md, "\\[リンク\\]"));
+  // 改行が行を増やさない（「2行目」は同じ行の中）
+  bool found = false;
+  for (const std::string& ln : lines(md))
+    if (has(ln, "2行目")) {
+      found = true;
+      CHECK(has(ln, "A\\|B"));
+    }
+  CHECK(found);
+  // 件名の "# 見出しにしたい" は行頭にならない（表示 ID が先に付く）。見出しの行になるのは自分で作ったものだけ
+  CHECK(has(md, "見出しにしたい"));
+  CHECK_FALSE(has(md, "\n# 見出しにしたい"));
+  CHECK(rawLt(md) == 0);
+  CHECK(has(md, "\\> 引用にしたい \\| 表を崩す"));
+  // 表の行: 打ち消されていない | の数は列の数 + 1
+  int tables = 0;
+  for (const std::string& ln : lines(md)) {
+    if (ln.rfind("| ", 0) != 0) continue;
+    ++tables;
+    {
+      const int pipes = rawPipes(ln);
+      CHECK((pipes == 6 || pipes == 7));
+    }
+  }
+  CHECK(tables > 0);
+  // 担当者名の中の "- 注入" が箇条書きの行を増やさない
+  for (const std::string& ln : lines(md)) CHECK_FALSE(ln.rfind("- 注入", 0) == 0);
+  CHECK(has(md, "山田\\|太郎 - 注入"));
+}
+
+TEST_CASE("weekly: 担当別の表の行は列の数どおり") {
+  std::vector<Spec> v = basic();
+  v[1].who = "a|b|c";
+  Proj p = Proj::make(v);
+  const std::string md = weeklyMarkdown(p.report());
+  std::size_t head = 0;
+  for (const std::string& ln : lines(md)) {
+    if (ln.rfind("| 担当 |", 0) == 0) head = static_cast<std::size_t>(rawPipes(ln));
+  }
+  REQUIRE(head > 0);
+  CHECK(head == 7);  // 6 列
+  for (const std::string& ln : lines(md))
+    if (has(ln, "a\\|b\\|c") && ln.rfind("| ", 0) == 0) CHECK(static_cast<std::size_t>(rawPipes(ln)) == head);
+}
+
+TEST_CASE("weekly: プロジェクト名と所感の扱い") {
+  Proj p = Proj::make(basic());
+  p.name = "# 名前|[x]";
+  WeeklyOptions o;
+  o.notes = "- 良かった点\n- 課題 <script>alert(1)</script>\n\n## お願い\n連絡はこちら";
+  const std::string md = weeklyMarkdown(p.report(o));
+  CHECK(md.rfind("# \\# 名前\\|\\[x\\] 週次レポート\n", 0) == 0);
+  // 所感は Markdown のまま（箇条書き・見出しを書ける）。ただし "<" は打ち消す
+  CHECK(has(md, "\n- 良かった点\n- 課題 \\<script>alert(1)\\</script>\n\n## お願い\n連絡はこちら"));
+  CHECK(rawLt(md) == 0);
+  // 所感が空なら見出しだけ
+  const std::string md2 = weeklyMarkdown(p.report());
+  CHECK(md2.size() >= 12);
+  CHECK(md2.substr(md2.size() - std::string("## 所感・課題・お願い\n").size()) == "## 所感・課題・お願い\n");
+}
+
+TEST_CASE("weekly: 所感の下ごしらえ（制御文字・長さ・不正な UTF-8）") {
+  CHECK(weeklySanitizeNotes("a\r\nb") == "a\nb");
+  CHECK(weeklySanitizeNotes(std::string("a\0b\x01", 4)) == "ab");
+  CHECK(weeklySanitizeNotes("a\tb") == "a\tb");
+  CHECK(weeklySanitizeNotes("a\xE2\x80\xAE" "b") == "ab");
+  CHECK(text::isValidUtf8(weeklySanitizeNotes("\xFF\xFE\xE3\x81")));
+  const std::string big(kWeeklyMaxNoteBytes + 100, 'x');
+  CHECK(weeklySanitizeNotes(big).size() == kWeeklyMaxNoteBytes);
+  // 文字の途中では切らない（3 バイトの文字を並べて上限をまたぐ）
+  std::string jp;
+  while (jp.size() < kWeeklyMaxNoteBytes + 10) jp += "あ";
+  const std::string cut = weeklySanitizeNotes(jp);
+  CHECK(cut.size() <= kWeeklyMaxNoteBytes);
+  CHECK(cut.size() % 3 == 0);
+  CHECK(text::isValidUtf8(cut));
+}
+
+TEST_CASE("weekly: 項目ごとのオン・オフ") {
+  Proj p = Proj::make(basic());
+  WeeklyOptions o;
+  const std::string all = weeklyMarkdown(p.report(o));
+  for (const char* h : {"## サマリー", "## 今週の完了", "## 進行中", "## 来週の予定", "## 遅れ・余裕小", "## マイルストーン", "## 担当別", "## 所感・課題・お願い"})
+    CHECK(has(all, h));
+  o.sections = WeeklySections{};
+  o.sections.summary = o.sections.done = o.sections.progress = o.sections.next = o.sections.risks = false;
+  o.sections.milestones = o.sections.assignees = o.sections.notes = false;
+  const std::string none = weeklyMarkdown(p.report(o));
+  for (const char* h : {"## サマリー", "## 今週の完了", "## 進行中", "## 来週の予定", "## 遅れ・余裕小", "## マイルストーン", "## 担当別", "## 所感・課題・お願い"})
+    CHECK_FALSE(has(none, h));
+  CHECK(has(none, "週次レポート"));  // 表題と期間は残る
+  o.sections.done = true;
+  const std::string one = weeklyMarkdown(p.report(o));
+  CHECK(has(one, "## 今週の完了"));
+  CHECK_FALSE(has(one, "## 進行中"));
+  CHECK(WeeklySections{}.any());
+  WeeklySections off;
+  off.summary = off.done = off.progress = off.next = off.risks = off.milestones = off.assignees = off.changes = off.notes = false;
+  CHECK_FALSE(off.any());
+  // 期間によって見出しが変わる
+  o = WeeklyOptions{};
+  o.period = WeeklyPeriod::LastWeek;
+  const std::string lw = weeklyMarkdown(p.report(o));
+  CHECK(has(lw, "## 先週の完了"));
+  CHECK(has(lw, "## 今週の予定"));
+  o.period = WeeklyPeriod::Custom;
+  o.from = D("2026-10-01");
+  o.to = D("2026-10-10");
+  const std::string cu = weeklyMarkdown(p.report(o));
+  CHECK(has(cu, "## 期間内の完了"));
+  CHECK(has(cu, "## 次の7日間の予定"));
+}
+
+TEST_CASE("weekly: Markdown の見た目（改行コード・末尾・見出しの前後）") {
+  Proj p = Proj::make(basic());
+  const std::string md = weeklyMarkdown(p.report());
+  CHECK(md.find('\r') == std::string::npos);
+  CHECK(md.back() == '\n');
+  CHECK(md[md.size() - 2] != '\n');  // 末尾に空行を残さない
+  CHECK(md.find("\n\n\n") == std::string::npos);  // 空行は続けない
+  CHECK(md.rfind("# テストプロジェクト 週次レポート\n", 0) == 0);
+  CHECK(has(md, "期間: 2026/10/19(月) 〜 2026/10/25(日)（営業日 5 日）"));
+  CHECK(has(md, "基準日: 2026/10/21(水)"));
+  // 見出しの前は空行
+  const std::vector<std::string> ls = lines(md);
+  for (std::size_t i = 1; i < ls.size(); ++i)
+    if (ls[i].rfind("## ", 0) == 0) CHECK(ls[i - 1].empty());
+}
+
+// ---------------------------------------------------------------- HTML
+TEST_CASE("weekly: HTML は件名・担当者名・所感をエスケープし、外部のものを読まない") {
+  std::vector<Spec> v = basic();
+  v[1].name = "<script>alert(1)</script>\"onload=\"x";
+  v[1].who = "<img src=x onerror=alert(1)>";
+  v[8].name = "A & B <b>";
+  Proj p = Proj::make(v);
+  p.name = "<h1>名前</h1>";
+  WeeklyOptions o;
+  o.notes = "<script>evil()</script>\n2行目 & <b>x</b>";
+  const std::string h = weeklyHtml(p.report(o));
+  CHECK_FALSE(has(h, "<script"));
+  CHECK_FALSE(has(h, "<img"));
+  CHECK_FALSE(has(h, "<b>x"));
+  CHECK_FALSE(has(h, "onerror=alert(1)>"));
+  CHECK(has(h, "&lt;script&gt;alert(1)&lt;/script&gt;&quot;onload=&quot;x"));
+  CHECK(has(h, "&lt;img src=x onerror=alert(1)&gt;"));
+  CHECK(has(h, "A &amp; B &lt;b&gt;"));
+  CHECK(has(h, "&lt;script&gt;evil()&lt;/script&gt;<br>\n2行目 &amp; &lt;b&gt;x&lt;/b&gt;"));
+  CHECK(has(h, "<title>&lt;h1&gt;名前&lt;/h1&gt; - 週次レポート</title>"));
+  // 外部のファイル・スクリプトを使わない（利用者のデータを含まない出力で確かめる）
+  const std::string clean = weeklyHtml(Proj::make(basic()).report());
+  for (const char* bad : {"<script", "<link", "src=", "href=", "http://", "https://", "@import", "url("}) CHECK_FALSE(has(clean, bad));
+  CHECK(has(h, "<!doctype html>"));
+  CHECK(has(h, "<meta charset=\"utf-8\">"));
+  // 出力に生の "<" は、出力側で作ったタグだけ
+  for (std::size_t q = h.find('<'); q != std::string::npos; q = h.find('<', q + 1)) {
+    std::size_t e = q + 1;
+    if (e < h.size() && h[e] == '/') ++e;
+    std::string tag;
+    while (e < h.size() && ((h[e] >= 'a' && h[e] <= 'z') || (h[e] >= '0' && h[e] <= '9') || h[e] == '!')) tag += h[e++];
+    static const char* const ok[] = {"html", "head", "meta", "title", "style", "body", "div", "header", "main", "section", "footer", "h1", "h2",
+                                     "h3", "p", "b", "span", "small", "table", "thead", "tbody", "tr", "th", "td", "br", "!doctype"};
+    bool known = false;
+    for (const char* k : ok) known |= tag == k;
+    CHECK_MESSAGE(known, "未知のタグ: ", tag);
+  }
+}
+
+TEST_CASE("weekly: HTML の項目ごとのオン・オフと、期間・営業日の表示") {
+  Proj p = Proj::make(basic());
+  FixedClock clk(LocalTime{2026, 10, 21, 9, 5, 0});
+  WeeklyOptions o;
+  const std::string h = weeklyHtml(p.report(o), &clk);
+  CHECK(has(h, "<h2>サマリー</h2>"));
+  CHECK(has(h, "<h2>今週の完了<small>2 件</small></h2>"));
+  CHECK(has(h, "期間 <b>2026/10/19(月) 〜 2026/10/25(日)</b>（営業日 5 日）"));
+  CHECK(has(h, "出力 <b>2026/10/21 09:05</b>"));
+  CHECK(has(h, "<h2>所感・課題・お願い</h2>"));
+  CHECK(has(h, "（未記入）"));
+  o.sections.done = o.sections.risks = false;
+  const std::string h2 = weeklyHtml(p.report(o));
+  CHECK_FALSE(has(h2, "<h2>今週の完了"));
+  CHECK_FALSE(has(h2, "<h2>遅れ・余裕小"));
+  CHECK_FALSE(has(h2, "出力 <b>"));
+  CHECK(has(h2, "<h2>進行中"));
+  // 全部オフ
+  o.sections = WeeklySections{};
+  o.sections.summary = o.sections.done = o.sections.progress = o.sections.next = o.sections.risks = false;
+  o.sections.milestones = o.sections.assignees = o.sections.changes = o.sections.notes = false;
+  CHECK(has(weeklyHtml(p.report(o)), "出す項目が選ばれていません"));
+}
+
+// ---------------------------------------------------------------- スナップショット
+TEST_CASE("weekly: スナップショットは課題ごとの状況・見込みの完了日・遅れを持つ") {
+  Proj p = Proj::make(basic());
+  const WeeklySnapshot s = makeWeeklySnapshot(p.input());
+  CHECK(s.base == p.base);
+  CHECK(s.tasks == p.stats.tasks);
+  CHECK(s.done == p.stats.done);
+  CHECK(s.finish == p.stats.finish);
+  // 作業（葉でマイルストーンでない）だけ
+  CHECK(s.items.size() == static_cast<std::size_t>(p.stats.tasks));
+  const auto find = [&](const char* id) -> const WeeklySnapItem* {
+    for (const WeeklySnapItem& it : s.items)
+      if (it.id == id) return &it;
+    return nullptr;
+  };
+  REQUIRE(find("2"));
+  CHECK(find("2")->st == 'd');
+  CHECK(find("2")->finish == D("2026-10-19"));  // 完了日
+  CHECK_FALSE(find("2")->late);
+  REQUIRE(find("6"));
+  CHECK(find("6")->st == 'd');
+  CHECK_FALSE(find("6")->finish.has_value());  // 完了日なし
+  REQUIRE(find("7"));
+  CHECK(find("7")->st == 'p');
+  REQUIRE(find("9"));
+  CHECK(find("9")->st == 't');
+  CHECK(find("9")->late);
+  CHECK(find("9")->finish == p.row("9").asapFinish);
+  CHECK(find("1") == nullptr);   // 親
+  CHECK(find("11") == nullptr);  // マイルストーン
+}
+
+TEST_CASE("weekly: スナップショットの往復（JSON）") {
+  Proj p = Proj::make(basic());
+  WeeklyMemo m;
+  m.notes = "所感\n2行目 \"引用\" \\ 日本語";
+  weeklyPutSnapshot(m, makeWeeklySnapshot(p.input()));
+  const auto j = weeklyToJson(m);
+  const WeeklyMemo back = weeklyFromJson(j);
+  CHECK(back == m);
+  // 文字列にして読み戻しても同じ
+  const WeeklyMemo back2 = weeklyFromJson(nlohmann::ordered_json::parse(j.dump()));
+  CHECK(back2 == m);
+  CHECK(back2.snaps.size() == 1);
+  CHECK(back2.snaps[0].items.size() == m.snaps[0].items.size());
+  // 空
+  CHECK(WeeklyMemo{}.empty());
+  CHECK(weeklyFromJson(nlohmann::ordered_json()) == WeeklyMemo{});
+}
+
+TEST_CASE("weekly: 壊れた値は読み飛ばす（読み込み時の検証）") {
+  using J = nlohmann::ordered_json;
+  // 型が違う
+  CHECK(weeklyFromJson(J(5)).empty());
+  CHECK(weeklyFromJson(J("x")).empty());
+  CHECK(weeklyFromJson(J::array()).empty());
+  CHECK(weeklyFromJson(J{{"notes", 5}, {"snaps", "x"}}).empty());
+  // 所感だけ生きる
+  const WeeklyMemo a = weeklyFromJson(J{{"notes", "ok"}, {"snaps", J::array({5, "x", J::object()})}});
+  CHECK(a.notes == "ok");
+  CHECK(a.snaps.empty());
+  // 日付が不正・存在しない日
+  CHECK(weeklyFromJson(J{{"snaps", J::array({J{{"base", "2026-02-30"}}})}}).snaps.empty());
+  CHECK(weeklyFromJson(J{{"snaps", J::array({J{{"base", "abc"}}})}}).snaps.empty());
+  CHECK(weeklyFromJson(J{{"snaps", J::array({J{{"base", 20261021}}})}}).snaps.empty());
+  CHECK(weeklyFromJson(J{{"snaps", J::array({J{{"tasks", 1}}})}}).snaps.empty());  // base がない
+  // 数の範囲
+  CHECK(weeklyFromJson(J{{"snaps", J::array({J{{"base", "2026-10-21"}, {"tasks", -1}}})}}).snaps.empty());
+  CHECK(weeklyFromJson(J{{"snaps", J::array({J{{"base", "2026-10-21"}, {"tasks", 1.5}}})}}).snaps.empty());
+  CHECK(weeklyFromJson(J{{"snaps", J::array({J{{"base", "2026-10-21"}, {"done", 99999999999LL}}})}}).snaps.empty());
+  CHECK(weeklyFromJson(J{{"snaps", J::array({J{{"base", "2026-10-21"}, {"progress", "x"}}})}}).snaps.empty());
+  const WeeklyMemo prog = weeklyFromJson(J{{"snaps", J::array({J{{"base", "2026-10-21"}, {"progress", 7.5}}})}});
+  REQUIRE(prog.snaps.size() == 1);
+  CHECK(prog.snaps[0].progress == 1.0);  // 0〜1 に丸める
+  CHECK(weeklyFromJson(J{{"snaps", J::array({J{{"base", "2026-10-21"}, {"finish", "xx"}}})}}).snaps.empty());
+  CHECK(weeklyFromJson(J{{"snaps", J::array({J{{"base", "2026-10-21"}, {"items", 5}}})}}).snaps.empty());
+  // 壊れた項目だけ読み飛ばす
+  const J items = J::array({"1\tp\t2026-11-01\t0", 5, "bad", "2\tx\t2026-11-01\t0", "3\tt\t2026-13-01\t0", "4\tt\t\t2", "\tt\t\t0",
+                            "5\td\t2026-10-20\t1", "1\tt\t\t0", "6\tt\t\t1", "a\tb\tc\td\te"});
+  const WeeklyMemo b = weeklyFromJson(J{{"snaps", J::array({J{{"base", "2026-10-21"}, {"items", items}}})}});
+  REQUIRE(b.snaps.size() == 1);
+  std::vector<std::string> ids;
+  for (const WeeklySnapItem& it : b.snaps[0].items) ids.push_back(it.id);
+  CHECK(ids == std::vector<std::string>{"1", "5", "6"});  // 重複の "1" は 1 つ目だけ
+  CHECK(b.snaps[0].items[0].st == 'p');
+  CHECK(b.snaps[0].items[1].st == 'd');
+  CHECK_FALSE(b.snaps[0].items[1].late);  // 完了は遅れにしない
+  CHECK(b.snaps[0].items[2].late);
+  // 長すぎる id・制御文字の id
+  const J bad = J::array({std::string(kWeeklyMaxIdBytes + 1, 'a') + "\tt\t\t0", std::string(kWeeklyMaxIdBytes, 'a') + "\tt\t\t0",
+                          std::string("a\x01") + "b\tt\t\t0"});
+  const WeeklyMemo c = weeklyFromJson(J{{"snaps", J::array({J{{"base", "2026-10-21"}, {"items", bad}}})}});
+  REQUIRE(c.snaps.size() == 1);
+  CHECK(c.snaps[0].items.size() == 1);
+}
+
+TEST_CASE("weekly: スナップショットの件数の上限") {
+  using J = nlohmann::ordered_json;
+  J items = J::array();
+  for (std::size_t i = 0; i < kWeeklyMaxSnapshotItems + 50; ++i) items.push_back(std::to_string(i) + "\tt\t\t0");
+  const WeeklyMemo m = weeklyFromJson(J{{"snaps", J::array({J{{"base", "2026-10-21"}, {"items", items}}})}});
+  REQUIRE(m.snaps.size() == 1);
+  CHECK(m.snaps[0].items.size() == kWeeklyMaxSnapshotItems);
+  CHECK(m.snaps[0].truncated);
+  // 書き込み側
+  WeeklySnapshot s;
+  s.base = D("2026-10-21");
+  for (std::size_t i = 0; i < kWeeklyMaxSnapshotItems + 10; ++i) s.items.push_back({std::to_string(i), 't', std::nullopt, false});
+  WeeklyMemo w;
+  weeklyPutSnapshot(w, s);
+  CHECK(w.snaps[0].items.size() == kWeeklyMaxSnapshotItems);
+  CHECK(w.snaps[0].truncated);
+  // 作業が上限より多いプロジェクトのスナップショット
+  std::vector<Spec> v;
+  v.push_back({"1", "全体", "", "To Do", "", "Epic", "", "", "2027-12-25", 1, {}});
+  for (std::size_t i = 0; i < kWeeklyMaxSnapshotItems + 20; ++i) v.push_back({std::to_string(i + 2), "T", "", "To Do", "1", "Task", "", "", "", 1, {}});
+  Proj p = Proj::make(v);
+  const WeeklySnapshot big = makeWeeklySnapshot(p.input());
+  CHECK(big.items.size() == kWeeklyMaxSnapshotItems);
+  CHECK(big.truncated);
+}
+
+TEST_CASE("weekly: スナップショットは週ごとに 1 つ、古い週のものから捨てる") {
+  WeeklyMemo m;
+  const auto snap = [](const char* iso) {
+    WeeklySnapshot s;
+    s.base = D(iso);
+    return s;
+  };
+  weeklyPutSnapshot(m, snap("2026-10-14"));  // 水
+  weeklyPutSnapshot(m, snap("2026-10-16"));  // 同じ週（金）→ 置き換え
+  REQUIRE(m.snaps.size() == 1);
+  CHECK(fmtIso(m.snaps[0].base) == "2026-10-16");
+  weeklyPutSnapshot(m, snap("2026-10-21"));
+  weeklyPutSnapshot(m, snap("2026-10-28"));
+  REQUIRE(m.snaps.size() == kWeeklyMaxSnapshots);
+  CHECK(fmtIso(m.snaps[0].base) == "2026-10-21");
+  CHECK(fmtIso(m.snaps[1].base) == "2026-10-28");
+  // 前の週のスナップショット: 基準日の週より前のうち一番新しい
+  CHECK(fmtIso(weeklyPreviousSnapshot(m, D("2026-10-28"))->base) == "2026-10-21");
+  CHECK(fmtIso(weeklyPreviousSnapshot(m, D("2026-11-04"))->base) == "2026-10-28");
+  CHECK(weeklyPreviousSnapshot(m, D("2026-10-21")) == nullptr);  // 同じ週・それより前のものはない
+  CHECK(weeklyPreviousSnapshot(m, D("2026-10-25")) == nullptr);  // 日曜も同じ週
+  CHECK(fmtIso(weeklyPreviousSnapshot(m, D("2026-10-26"))->base) == "2026-10-21");  // 月曜は次の週
+  CHECK(weeklyPreviousSnapshot(WeeklyMemo{}, D("2026-10-21")) == nullptr);
+  // 年またぎ: 12/31（木）の週と 1/4（月）の週は別
+  WeeklyMemo y;
+  weeklyPutSnapshot(y, snap("2026-12-31"));
+  CHECK(weeklyPreviousSnapshot(y, D("2027-01-04")) != nullptr);
+  CHECK(weeklyPreviousSnapshot(y, D("2027-01-03")) == nullptr);
+}
+
+TEST_CASE("weekly: settings.json の weekly は往復し、未知のキーを壊さず、壊れた値を読み飛ばす") {
+  FixedClock clk(LocalTime{2026, 10, 21, 9, 0, 0});
+  Proj p = Proj::make(basic());
+  ProjectRecord rec;
+  rec.settings.id = "p1";
+  rec.settings.name = "P";
+  rec.settings.baseDate = "2026-10-21";
+  rec.settings.holidays = "";
+  rec.settings.weekly.notes = "メモ";
+  weeklyPutSnapshot(rec.settings.weekly, makeWeeklySnapshot(p.input()));
+  rec.settings.unknown["futureKey"] = Json{{"a", 1}};
+  const Json j = settingsToJson(rec);
+  REQUIRE(j.contains("weekly"));
+  CHECK(j["futureKey"]["a"] == 1);
+  const ProjectRecord back = recordFromSettingsJson(j, "", "stem", clk);
+  CHECK(back.settings.weekly == rec.settings.weekly);
+  CHECK(back.settings.unknown["futureKey"]["a"] == 1);
+  CHECK_FALSE(back.settings.unknown.contains("weekly"));  // 既知のキーは unknown に入れない
+  // 文字列にして読み戻す
+  const ProjectRecord back2 = recordFromSettingsJson(Json::parse(dumpJs(j)), "", "stem", clk);
+  CHECK(back2.settings.weekly == rec.settings.weekly);
+  // 空なら書かない
+  ProjectRecord empty = rec;
+  empty.settings.weekly = WeeklyMemo{};
+  CHECK_FALSE(settingsToJson(empty).contains("weekly"));
+  // 壊れた weekly
+  Json broken = j;
+  broken["weekly"] = "壊れた";
+  CHECK(recordFromSettingsJson(broken, "", "stem", clk).settings.weekly.empty());
+  broken["weekly"] = Json{{"notes", 5}, {"snaps", Json::array({1, 2})}};
+  CHECK(recordFromSettingsJson(broken, "", "stem", clk).settings.weekly.empty());
+}
+
+// ---------------------------------------------------------------- 先週との比較
+TEST_CASE("weekly: 先週との比較（完了・新たに遅れた・見込みの動き・増減）") {
+  std::vector<Spec> v0;
+  v0.push_back({"1", "全体", "", "To Do", "", "Epic", "", "", "2026-12-25", 1, {}});
+  v0.push_back({"2", "X", "田中", "Done", "1", "Task", "2026-10-12", "", "", 1, {}});
+  v0.push_back({"3", "Y", "田中", "To Do", "1", "Task", "", "", "", 1, {}});
+  v0.push_back({"4", "P", "鈴木", "To Do", "1", "Task", "", "", "", 1, {"5"}});
+  v0.push_back({"5", "Z", "鈴木", "To Do", "1", "Task", "", "", "", 1, {}});
+  v0.push_back({"6", "W", "鈴木", "To Do", "1", "Task", "", "", "", 1, {}});
+  v0.push_back({"7", "Q", "鈴木", "To Do", "1", "Task", "", "", "", 1, {}});
+  Proj p0 = Proj::make(v0);
+  const WeeklySnapshot snap = makeWeeklySnapshot(p0.input());
+
+  std::vector<Spec> v1 = v0;
+  v1[2].status = "Done";  // Y 完了
+  v1[2].resolved = "2026-10-22";
+  v1[3].weeks = 2;        // P が延びる → Z が後ろへ
+  v1[5].deadline = "2026-10-22";  // W の期限が厳しくなる
+  v1.erase(v1.begin() + 6);       // Q を削除
+  v1.push_back({"8", "R", "田中", "To Do", "1", "Task", "", "", "", 1, {}});  // R を追加
+  Proj p1 = Proj::make(v1);
+  REQUIRE(p1.row("6").floatDays < 0);
+  REQUIRE(p0.row("6").floatDays >= 0);
+  const WeeklyReport r = p1.report({}, &snap);
+
+  REQUIRE(r.changes.available);
+  CHECK(r.changes.since == p0.base);
+  CHECK(didsOf(p1, r.changes.newlyDone) == std::vector<std::string>{"Y"});
+  CHECK(didsOf(p1, r.changes.newlyLate) == std::vector<std::string>{"W"});
+  CHECK(r.changes.added == 1);    // R
+  CHECK(r.changes.removed == 1);  // Q
+  // 見込みの完了日が動いたのは P と Z。W は期限だけ変わったので動かない
+  std::vector<std::string> moved;
+  for (const WeeklyFinishMove& mv : r.changes.finishMoved) {
+    moved.push_back(mv.name);
+    CHECK(mv.shiftDays == p1.cal.floatDays(mv.from, mv.to));
+    CHECK(mv.shiftDays > 0);
+  }
+  std::sort(moved.begin(), moved.end());
+  CHECK(moved == std::vector<std::string>{"P", "Z"});
+  CHECK(r.changes.finishMovedTotal == 2);
+  // 動きの大きい順
+  CHECK(r.changes.finishMoved[0].shiftDays >= r.changes.finishMoved[1].shiftDays);
+  // サマリー
+  CHECK(r.summary.hasPrev);
+  CHECK(r.summary.doneDelta == 1);
+  CHECK(r.summary.lateDelta == p1.stats.late - p0.stats.late);
+  CHECK(r.summary.progressDelta == doctest::Approx(p1.stats.progress() - p0.stats.progress()));
+  // Markdown・HTML に出る
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "## 先週から変わったこと"));
+  CHECK(has(md, "### 新しく完了した課題（1 件）"));
+  CHECK(has(md, "### 新たに遅れた課題（1 件）"));
+  CHECK(has(md, "増えた作業: 1 件 ／ 無くなった作業: 1 件"));
+  CHECK(has(md, "進み: "));
+  CHECK(has(md, "（先週から "));
+  CHECK(has(weeklyHtml(r), "<h2>先週から変わったこと</h2>"));
+  // 比較をオフにすると出ない。スナップショットがなければ出ない
+  WeeklyOptions off;
+  off.sections.changes = false;
+  CHECK_FALSE(has(weeklyMarkdown(p1.report(off, &snap)), "先週から変わったこと"));
+  CHECK_FALSE(has(weeklyMarkdown(p1.report()), "先週から変わったこと"));
+  CHECK_FALSE(has(weeklyMarkdown(p1.report()), "先週から"));
+}
+
+TEST_CASE("weekly: 比べる相手が空・一部だけのとき") {
+  Proj p = Proj::make(basic());
+  WeeklySnapshot empty;
+  empty.base = D("2026-10-14");
+  const WeeklyReport r = p.report({}, &empty);
+  CHECK(r.changes.available);
+  CHECK(r.changes.added == p.stats.tasks);
+  CHECK(r.changes.finishMoved.empty());
+  WeeklySnapshot part = empty;
+  part.truncated = true;
+  const WeeklyReport rt = p.report({}, &part);
+  CHECK(rt.changes.truncated);
+  CHECK(rt.changes.added == 0);  // 一部だけなので「増えた」は数えない
+  CHECK(has(weeklyMarkdown(rt), "一部の課題だけです"));
+}
+
+// ---------------------------------------------------------------- ファイル
+TEST_CASE("weekly: 既定のファイル名と保存先の検査") {
+  CHECK(weeklyFileName("案件A", D("2026-10-19"), false) == "案件A_週報_2026-10-19.md");
+  CHECK(weeklyFileName("案件A", D("2026-10-19"), true) == "案件A_週報_2026-10-19.html");
+  CHECK(weeklyFileName("a/b:c*d", D("2026-10-19"), false) == "a_b_c_d_週報_2026-10-19.md");
+  CHECK(weeklyFileName("", D("2026-10-19"), false) == "報告_週報_2026-10-19.md");
+  CHECK(weeklyFileName("CON", D("2026-10-19"), false) == "_CON_週報_2026-10-19.md");
+  CHECK(weeklyFileName(std::string(300, 'a'), D("2026-10-19"), true).size() < 100);
+  CHECK(checkWeeklyPath("out/r.md", false).ok());
+  CHECK(checkWeeklyPath("out/r.MD", false).ok());
+  CHECK(checkWeeklyPath("out/r.markdown", false).ok());
+  CHECK(checkWeeklyPath("out/r.txt", false).ok());
+  CHECK_FALSE(checkWeeklyPath("out/r.html", false).ok());
+  CHECK(checkWeeklyPath("out/r.html", true).ok());
+  CHECK(checkWeeklyPath("out/r.htm", true).ok());
+  CHECK_FALSE(checkWeeklyPath("out/r.md", true).ok());
+  CHECK_FALSE(checkWeeklyPath("", false).ok());
+  CHECK_FALSE(checkWeeklyPath("out/", false).ok());
+  CHECK_FALSE(checkWeeklyPath("out/.md", false).ok());
+  CHECK_FALSE(checkWeeklyPath("a\n.md", false).ok());
+  CHECK_FALSE(checkWeeklyPath("a\xFF.md", false).ok());
+  CHECK_FALSE(checkWeeklyPath(std::string(40000, 'a') + ".md", false).ok());
+  CHECK_FALSE(checkWeeklyPath("out/r.exe", false).ok());
+}
+
+TEST_CASE("weekly: writeWeekly は検査して IFileStore に書く（失敗は戻り値）") {
+  MemFileStore fs;
+  CHECK(fs.makeDirs("out").ok());
+  CHECK(writeWeekly(fs, "out/r.md", "# x\n", false).ok());
+  CHECK(fs.content("out/r.md") == "# x\n");
+  const int w = fs.writeCount();
+  CHECK_FALSE(writeWeekly(fs, "out/r.html", "x", false).ok());
+  CHECK_FALSE(writeWeekly(fs, "out/r.exe", "x", true).ok());
+  CHECK(fs.writeCount() == w);
+  CHECK(fs.makeDirs("dir.md").ok());
+  CHECK_FALSE(writeWeekly(fs, "dir.md", "x", false).ok());
+  fs.setFailWrites(true);
+  const auto fail = writeWeekly(fs, "out/r2.md", "x", false);
+  CHECK_FALSE(fail.ok());
+  CHECK_FALSE(fail.error().empty());
+  CHECK_FALSE(fs.exists("out/r2.md"));
+}
+
+TEST_CASE("weekly: 文言の補助") {
+  CHECK(cleanText("a\nb\tc\x01" "d") == "a b cd");
+  Proj p = Proj::make(basic());
+  const WeeklyReport r = p.report();
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "- 進み: "));
+  CHECK(has(md, "- 作業: 全体 9 件（完了 5・進行中 1・未着手 3）"));
+  CHECK(has(md, "完了日のない完了済みの作業が 1 件あります"));
+  CHECK(has(md, "**遅れ** "));
+  CHECK(has(md, "名前順です（順位ではありません）"));
+}

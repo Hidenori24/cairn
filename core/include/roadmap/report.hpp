@@ -75,9 +75,16 @@ std::vector<VisibleRow> reportRows(const ExportInput& in, ReportScope scope);
 // 向きを変える制御文字は取り除く。壊れた UTF-8 は U+FFFD にする。改行・タブは空白にする
 std::string escapeXml(std::string_view s);
 
+// 本文に入れる文字列の下ごしらえ（エスケープはしない）: 制御文字（NUL など）と向きを変える制御文字は取り除き、
+// 壊れた UTF-8 は U+FFFD、改行・タブ・行区切りは空白にする。Markdown など HTML 以外の出力でも使う
+std::string cleanText(std::string_view s);
+
 // 既定のファイル名 "<プロジェクト名>_<日付>.html"。使えない文字（\ / : * ? " < > |・制御文字）は "_"、
 // Windows の予約名と末尾の "."・空白は避ける。名前が空なら "報告"
 std::string reportFileName(const std::string& projectName, const std::string& isoDate);
+
+// 保存先の検査（拡張子の候補は小文字で "." つき。extHint = 違っていたときに案内する拡張子）。週次レポートも使う
+Status checkSavePath(const std::string& path, const std::vector<std::string>& exts, const std::string& extHint);
 
 // 保存先のパスの検査: 空でない・制御文字を含まない・ファイル名がある・拡張子が .html か .htm
 Status checkReportPath(const std::string& path);

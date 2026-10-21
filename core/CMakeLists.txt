@@ -36,6 +36,10 @@ add_library(roadmap_core STATIC
   src/report_gantt.cpp
   src/report_stats.cpp
   src/report_list.cpp
+  src/weekly_state.cpp
+  src/weekly.cpp
+  src/weekly_md.cpp
+  src/weekly_html.cpp
   src/gen.cpp
   ${_gen}/sample_hierarchy.cpp
   ${_gen}/sample_leveling.cpp

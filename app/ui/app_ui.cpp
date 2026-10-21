@@ -666,6 +666,7 @@ void drawTopBar(Frame& f) {
     if (ImGui::MenuItem("読み込み時の注意", nullptr, false, s != nullptr)) openDialog(f, Dlg::Warnings);
     ImGui::Separator();
     if (ImGui::MenuItem("HTML に書き出す…", nullptr, false, s != nullptr && s->tree() != nullptr)) openDialog(f, Dlg::ExportHtml);
+    if (ImGui::MenuItem("週次レポート…", nullptr, false, s != nullptr && s->tree() != nullptr)) openDialog(f, Dlg::Weekly);
     ImGui::Separator();
     ImGui::TextDisabled("テーマ");
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"auto", "自動"}, {"light", "ライト"}, {"dark", "ダーク"}})

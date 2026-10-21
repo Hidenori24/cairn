@@ -197,6 +197,18 @@ bool Session::isCollapsed(const std::string& id) const {
 
 void Session::touchUi() { persist(); }
 
+void Session::setWeeklyNotes(const std::string& notes) {
+  const std::string clean = weeklySanitizeNotes(notes);
+  if (clean == P_.settings.weekly.notes) return;
+  P_.settings.weekly.notes = clean;
+  persist();
+}
+
+void Session::putWeeklySnapshot(WeeklySnapshot s) {
+  weeklyPutSnapshot(P_.settings.weekly, std::move(s));
+  persist();
+}
+
 std::vector<std::string> Session::applyInherit(Issue& o, const std::string& parentId, const std::string& afterId,
                                                bool& fromSibling) const {
   std::vector<std::string> got;

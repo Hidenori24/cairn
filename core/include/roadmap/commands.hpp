@@ -158,6 +158,10 @@ class Session {
   const AttachmentMap& attachments() const { return P_.settings.attachments; }
   AttachmentMap& attachments() { return P_.settings.attachments; }
   void touchAttachments() { persist(); }  // attachments() を書き換えたら呼ぶ（保存の予約）
+  // 週次レポートの所感とスナップショット（取り消しの対象外で、保存はする。Issue #43）
+  const WeeklyMemo& weekly() const { return P_.settings.weekly; }
+  void setWeeklyNotes(const std::string& notes);  // 変わったときだけ保存を予約する。長すぎる・壊れた文字は直す
+  void putWeeklySnapshot(WeeklySnapshot s);
   // 置き換えの取り込み（Undo で戻せる）
   void replaceIssues(std::vector<Issue> issues, ProjectMeta meta, std::vector<std::string> warns);
 

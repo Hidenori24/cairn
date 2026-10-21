@@ -6,6 +6,7 @@
 #include <shobjidl.h>
 
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -147,6 +148,41 @@ std::optional<std::string> Win32Platform::clipboardText() {
   }
   CloseClipboard();
   return out;
+}
+
+// クリップボードに CF_UNICODETEXT で書く。大きすぎる（8MB 超）・確保できない・開けないときは false
+bool Win32Platform::setClipboardText(const std::string& text) {
+  constexpr std::size_t kMaxChars = 4u * 1024 * 1024;
+  std::wstring w = widen(text);
+  if (w.size() > kMaxChars) return false;
+  // 改行は CRLF にそろえる（メモ帳など古いアプリでも改行される）
+  std::wstring crlf;
+  crlf.reserve(w.size() + w.size() / 16);
+  for (std::size_t i = 0; i < w.size(); ++i) {
+    if (w[i] == L'\n' && (i == 0 || w[i - 1] != L'\r')) crlf += L'\r';
+    crlf += w[i];
+  }
+  if (crlf.size() > kMaxChars) return false;
+  w = std::move(crlf);
+  const SIZE_T bytes = (w.size() + 1) * sizeof(wchar_t);
+  HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+  if (!mem) return false;
+  void* dst = GlobalLock(mem);
+  if (!dst) {
+    GlobalFree(mem);
+    return false;
+  }
+  std::memcpy(dst, w.c_str(), bytes);
+  GlobalUnlock(mem);
+  if (!OpenClipboard(hwnd_)) {
+    GlobalFree(mem);
+    return false;
+  }
+  bool ok = false;
+  if (EmptyClipboard() && SetClipboardData(CF_UNICODETEXT, mem)) ok = true;  // 成功したら所有権はクリップボードへ移る
+  if (!ok) GlobalFree(mem);
+  CloseClipboard();
+  return ok;
 }
 
 std::optional<std::string> Win32Platform::pickFolder(const std::string& start) {

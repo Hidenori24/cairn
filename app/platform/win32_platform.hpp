@@ -35,6 +35,7 @@ class Win32Platform final : public ui::IPlatform {
   bool systemDark() override { return systemDarkMode(); }
   void requestQuit() override { quit_ = true; }
   std::optional<std::string> clipboardText() override;
+  bool setClipboardText(const std::string& text) override;
   bool quitRequested() const { return quit_; }
   void setHwnd(HWND h) { hwnd_ = h; }
   void setDevice(ID3D11Device* d) { device_ = d; }  // 画像のテクスチャを作る先（描画に使うデバイス）

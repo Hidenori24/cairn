@@ -553,3 +553,107 @@ TEST_CASE("controller: 報告（HTML）の書き出し — 範囲・既定のフ
   const int id = e.c.toasts().back().id;
   e.c.runToastAction(id);
 }
+
+// ---------------------------------------------------------------- 週次レポート（Issue #43）
+TEST_CASE("controller: 週次レポートの組み立て・保存・所感とスナップショットを設定に覚える") {
+  Env e;
+  e.c.start();
+  // プロジェクトを開く前は組み立てられない（落ちない）
+  CHECK_FALSE(e.c.buildWeekly(WeeklyOptions{}).ok());
+  CHECK_FALSE(e.c.renderWeekly(WeeklyOptions{}, false).ok());
+  CHECK(e.c.weeklyNotes().empty());
+  e.c.setWeeklyNotes("無視される");  // 落ちない
+  e.c.recordWeekly(WeeklyOptions{});
+  e.c.createProject(SampleKind::Hierarchy, "階層/デモ", "DEV");
+  REQUIRE(e.c.session());
+  CHECK(e.c.session()->baseDay() == *parseIso("2026-10-19"));
+  CHECK(e.c.weeklyNotes().empty());
+
+  WeeklyOptions opt;
+  opt.notes = "- 良かった点\n- 課題 <x>";
+  // 既定のファイル名は期間の最初の日（今週の月曜）
+  CHECK(e.c.weeklyFileName(opt, false) == "階層_デモ_週報_2026-10-19.md");
+  CHECK(e.c.weeklyFileName(opt, true) == "階層_デモ_週報_2026-10-19.html");
+  opt.period = WeeklyPeriod::LastWeek;
+  CHECK(e.c.weeklyFileName(opt, false) == "階層_デモ_週報_2026-10-12.md");
+  opt.period = WeeklyPeriod::ThisWeek;
+
+  const auto md = e.c.renderWeekly(opt, false);
+  REQUIRE(md.ok());
+  CHECK(md.value().find("# 階層/デモ 週次レポート") == 0);
+  CHECK(md.value().find("## サマリー") != std::string::npos);
+  CHECK(md.value().find("課題 \\<x>") != std::string::npos);
+  const auto html = e.c.renderWeekly(opt, true);
+  REQUIRE(html.ok());
+  CHECK(html.value().find("<h1>階層/デモ 週次レポート</h1>") != std::string::npos);
+  CHECK(html.value().find("出力 <b>2026/10/19 18:36</b>") != std::string::npos);  // 出力日時は IClock から
+  // プレビューには副作用がない（スナップショットも所感も残さない）
+  CHECK(e.c.session()->weekly().snaps.empty());
+  CHECK(e.c.weeklyNotes().empty());
+
+  // 保存: 書いて、「フォルダを開く」つきで通知し、所感とスナップショットを覚える
+  CHECK(e.fs.makeDirs("out").ok());
+  CHECK(e.c.exportWeekly("out/週報.md", opt, false).ok());
+  REQUIRE(e.fs.exists("out/週報.md"));
+  CHECK(e.fs.content("out/週報.md") == md.value());
+  CHECK(e.c.toasts().back().action == NoticeAction::OpenFolder);
+  CHECK(e.c.toasts().back().arg == "out");
+  CHECK(e.c.toasts().back().text.find("書き出しました") == 0);
+  CHECK(e.c.weeklyNotes() == opt.notes);
+  REQUIRE(e.c.session()->weekly().snaps.size() == 1);
+  CHECK(e.c.session()->weekly().snaps[0].base == *parseIso("2026-10-19"));
+  CHECK_FALSE(e.c.session()->weekly().snaps[0].items.empty());
+  // 同じ週にもう一度書き出しても、スナップショットは増えない
+  CHECK(e.c.exportWeekly("out/週報.html", opt, true).ok());
+  CHECK(e.c.session()->weekly().snaps.size() == 1);
+
+  // 失敗は戻り値と通知で返す（落とさない・古いファイルを壊さない・覚えない）
+  const std::string before = e.fs.content("out/週報.md");
+  WeeklyOptions changed = opt;
+  changed.notes = "書き換えた所感";
+  e.fs.setFailWrites(true);
+  CHECK_FALSE(e.c.exportWeekly("out/週報.md", changed, false).ok());
+  CHECK(e.c.toasts().back().text.find("書き出せません") == 0);
+  CHECK(e.fs.content("out/週報.md") == before);
+  CHECK(e.c.weeklyNotes() == opt.notes);
+  e.fs.setFailWrites(false);
+  // 拡張子が違う保存先は断る
+  CHECK_FALSE(e.c.exportWeekly("out/週報.exe", changed, false).ok());
+  CHECK_FALSE(e.c.exportWeekly("out/週報.html", changed, false).ok());  // Markdown を html の名前には書かない
+  CHECK_FALSE(e.c.exportWeekly("out/週報.md", changed, true).ok());
+  CHECK_FALSE(e.fs.exists("out/週報.exe"));
+  CHECK(e.c.weeklyNotes() == opt.notes);
+
+  // 設定に書かれ、開き直しても残る
+  e.step(500);
+  std::string settingsPath;
+  for (const std::string& p : e.fs.paths())
+    if (p.size() > 21 && p.compare(p.size() - 21, 21, "project.settings.json") == 0) settingsPath = p;
+  REQUIRE_FALSE(settingsPath.empty());
+  CHECK(e.fs.content(settingsPath).find("\"weekly\"") != std::string::npos);
+  {
+    AppController c2{e.fs, e.clk, "data", "roadmap_prefs.json"};
+    c2.start();
+    REQUIRE(c2.session());
+    CHECK(c2.weeklyNotes() == opt.notes);
+    CHECK(c2.session()->weekly().snaps.size() == 1);
+  }
+
+  // 次の週になったら、前の週のスナップショットと比べる
+  const auto same = e.c.buildWeekly(WeeklyOptions{});
+  REQUIRE(same.ok());
+  CHECK_FALSE(same.value().changes.available);  // 同じ週のスナップショットは比べる相手にしない
+  e.c.session()->setBaseDate("2026-10-26");
+  const auto next = e.c.buildWeekly(WeeklyOptions{});
+  REQUIRE(next.ok());
+  CHECK(next.value().changes.available);
+  CHECK(next.value().changes.since == *parseIso("2026-10-19"));
+  CHECK(next.value().summary.hasPrev);
+
+  // 所感だけ変える（変わったときだけ保存を予約する）
+  const auto v = e.c.session()->version();
+  e.c.setWeeklyNotes(opt.notes);
+  CHECK(e.c.session()->version() == v);
+  e.c.setWeeklyNotes(std::string("a\0b", 3) + "\xFF");
+  CHECK(e.c.weeklyNotes() == "ab\xEF\xBF\xBD");  // 制御文字を捨て、壊れた UTF-8 を直す
+}

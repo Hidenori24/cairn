@@ -825,6 +825,91 @@ int main(int argc, char** argv) {
       dumpHtml("html_escape.html", x);
     }
   }
+  // 週次レポート（Issue #43）: ダイアログと、書き出した Markdown・HTML（ブラウザで開いて確かめる）
+  {
+    const auto dumpWeekly = [&](const std::string& stem, const WeeklyOptions& opt) {
+      for (const bool html : {false, true}) {
+        const auto text = c.renderWeekly(opt, html);
+        if (!text.ok()) {
+          std::fprintf(stderr, "週次レポートを作れません: %s\n", text.error().c_str());
+          return;
+        }
+        const std::string file = stem + (html ? ".html" : ".md");
+        std::ofstream o(out + "/" + file, std::ios::binary);
+        o << text.value();
+        std::printf("wrote %s/%s (%zu KB)\n", out.c_str(), file.c_str(), text.value().size() / 1024);
+      }
+    };
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    c.createProject(app::SampleKind::Hierarchy, "階層デモ（セキュアブート）", "DEV");
+    c.setView(app::View::Gantt);
+    c.clearSelection();
+    Session* ws = c.session();
+    // 先週の状態（基準日 10/12）を書き出して覚えてから、基準日を進めて変更を入れる
+    ws->setBaseDate("2026-10-12");
+    WeeklyOptions first;
+    first.period = WeeklyPeriod::ThisWeek;
+    c.recordWeekly(first);
+    ws->setBaseDate("2026-10-19");
+    {
+      // 未完了の作業のうち先頭の 2 件を、今週の月・水に完了にする
+      std::vector<std::string> pick;
+      for (int id : ws->tree()->leafOrder) {
+        const std::size_t k = static_cast<std::size_t>(id);
+        if (ws->tree()->kind[k] == Kind::Ms || ws->rows()->at(k).done) continue;
+        pick.push_back(ws->tree()->ids[k]);
+        if (pick.size() >= 2) break;
+      }
+      const char* const when[] = {"2026-10-19", "2026-10-21"};
+      for (std::size_t q = 0; q < pick.size(); ++q) {
+        ws->setStatus(pick[q], "Done");
+        ws->setField(pick[q], [&](Issue& is) { is.resolved = parseIso(when[q]); });
+      }
+    }
+    c.setWeeklyNotes("- 良かった点: 署名検証の方式設計が前倒しで完了\n- 課題: 鍵管理の外部レビューが未定。来週早めに日程を決めたい\n- お願い: 量産移管チームの担当者を確認してください");
+    u.dlg = ui::Dlg::Weekly;
+    u.dlgOpening = true;
+    shot("63_weekly_dialog");
+    u.wkPeriod = 1;
+    u.wk.sections.risks = false;
+    shot("63b_weekly_dialog_last_week");
+    u.dlg = ui::Dlg::None;
+    frames(2);
+    WeeklyOptions o;
+    o.notes = c.weeklyNotes();
+    dumpWeekly("weekly_hierarchy_this", o);
+    o.period = WeeklyPeriod::LastWeek;
+    dumpWeekly("weekly_hierarchy_last", o);
+    o.period = WeeklyPeriod::Custom;
+    o.from = *parseIso("2026-10-01");
+    o.to = *parseIso("2026-10-18");
+    dumpWeekly("weekly_hierarchy_custom", o);
+    // 階層デモの基準日を年末にして、休業日・年またぎ
+    ws->setBaseDate("2026-12-30");
+    WeeklyOptions ye;
+    dumpWeekly("weekly_hierarchy_yearend", ye);
+    // 組込みの雛形
+    c.createProject(app::SampleKind::EmbeddedSw, "組込みソフトウェア開発", "DEV");
+    WeeklyOptions emb;
+    dumpWeekly("weekly_embedded", emb);
+    // 危険な文字を入れた件名・担当者・所感
+    {
+      const std::string csv =
+          "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Resolved,Duration (weeks),Deadline,Outward issue link (Blocks)\n"
+          "1,Epic,\"<script>alert(1)</script>\",,\"\"\"onmouseover=\"\"alert(2)\",,High,,,,\n"
+          "2,Task,\"A | B [リンク](http://evil.example) `x` <b>太字</b> & #1\",1,\"田中 | 鈴木\",Done,High,2026-10-20,2,,3\n"
+          "3,Task,\"# 見出し風 > 引用風\",1,\"<img src=x onerror=alert(3)>\",In Progress,Highest,,3,2026-10-30,\n";
+      c.importText(csv, "<危険>&名前|[x]", app::ImportMode::New);
+      c.session()->setBaseDate("2026-10-21");
+      WeeklyOptions x;
+      x.notes = "<script>alert(4)</script>\n- 所感の箇条書き | 表";
+      dumpWeekly("weekly_escape", x);
+    }
+    // 空のプロジェクト
+    c.createProject(app::SampleKind::Empty, "空", "");
+    dumpWeekly("weekly_empty", WeeklyOptions{});
+  }
   ImGui::DestroyContext();
   return 0;
 }
