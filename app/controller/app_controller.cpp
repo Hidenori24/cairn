@@ -655,6 +655,79 @@ Status AppController::exportReport(const std::string& path, const ExportOptions&
   return okStatus();
 }
 
+// ---------------------------------------------------------------- 週次レポート
+std::string AppController::weeklyNotes() const { return session_ ? session_->weekly().notes : std::string(); }
+
+void AppController::setWeeklyNotes(const std::string& notes) {
+  if (!session_) return;
+  session_->setWeeklyNotes(notes);
+  afterEdit();
+}
+
+Result<WeeklyReport> AppController::buildWeekly(const WeeklyOptions& opt) const {
+  const Session* s = session_.get();
+  if (!s || !s->tree() || !s->rows()) return Error{"プロジェクトが開かれていません"};
+  const Tree& T = *s->tree();
+  const std::vector<Issue>& issues = s->viewIssues();
+  const std::vector<ScheduleRow>& rows = *s->rows();
+  const Day base = s->baseDay();
+  const ProjectStats stats = computeStats(T, issues, rows, base);
+  const LoadReport load = computeLoad(T, issues, rows, s->calendar(), base, s->settings().resource);
+  WeeklyInput in(T, issues, rows, s->calendar(), stats, load);
+  in.base = base;
+  in.projectName = s->settings().name;
+  in.prev = weeklyPreviousSnapshot(s->weekly(), base);
+  return buildWeeklyReport(in, opt);
+}
+
+Result<std::string> AppController::renderWeekly(const WeeklyOptions& opt, bool html) const {
+  const auto r = buildWeekly(opt);
+  if (!r.ok()) return Error{r.error()};
+  return html ? weeklyHtml(r.value(), &clock_) : weeklyMarkdown(r.value());
+}
+
+std::string AppController::weeklyFileName(const WeeklyOptions& opt, bool html) const {
+  const Day base = session_ ? session_->baseDay() : clock_.today();
+  return roadmap::weeklyFileName(session_ ? session_->settings().name : std::string(),
+                                 weeklyRange(base, opt.period, opt.from, opt.to).from, html);
+}
+
+void AppController::recordWeekly(const WeeklyOptions& opt) {
+  Session* s = session_.get();
+  if (!s || !s->tree() || !s->rows()) return;
+  const Tree& T = *s->tree();
+  const std::vector<Issue>& issues = s->viewIssues();
+  const std::vector<ScheduleRow>& rows = *s->rows();
+  const Day base = s->baseDay();
+  const ProjectStats stats = computeStats(T, issues, rows, base);
+  const LoadReport load = computeLoad(T, issues, rows, s->calendar(), base, s->settings().resource);
+  WeeklyInput in(T, issues, rows, s->calendar(), stats, load);
+  in.base = base;
+  WeeklySnapshot snap = makeWeeklySnapshot(in);
+  s->setWeeklyNotes(opt.notes);
+  s->putWeeklySnapshot(std::move(snap));
+  afterEdit();
+}
+
+Status AppController::exportWeekly(const std::string& path, const WeeklyOptions& opt, bool html) {
+  const auto text = renderWeekly(opt, html);
+  if (!text.ok()) {
+    toast("書き出せません: " + text.error());
+    return Error{text.error()};
+  }
+  const Status st = writeWeekly(fs_, path, text.value(), html);
+  if (!st.ok()) {
+    toast("書き出せません: " + st.error());
+    return st;
+  }
+  recordWeekly(opt);
+  const std::string folder = parentFolder(path);
+  const std::size_t slash = path.find_last_of("/\\");
+  const std::string file = slash == std::string::npos ? path : path.substr(slash + 1);
+  toast("書き出しました: " + file, folder.empty() ? NoticeAction::None : NoticeAction::OpenFolder, folder);
+  return okStatus();
+}
+
 void AppController::releaseFrame() {
   retiredSessions_.clear();
   if (session_) session_->releaseFrame();

@@ -11,25 +11,15 @@
 namespace roadmap {
 
 // ---------------------------------------------------------------- エスケープ
-std::string escapeXml(std::string_view s) {
+std::string cleanText(std::string_view s) {
   std::string out;
-  out.reserve(s.size() + s.size() / 8 + 8);
+  out.reserve(s.size());
   for (std::size_t i = 0; i < s.size();) {
     const auto b = static_cast<unsigned char>(s[i]);
     if (b < 0x80) {
       ++i;
-      switch (b) {
-        case '&': out += "&amp;"; break;
-        case '<': out += "&lt;"; break;
-        case '>': out += "&gt;"; break;
-        case '"': out += "&quot;"; break;
-        case '\'': out += "&#39;"; break;
-        case '\t':
-        case '\n':
-        case '\r': out += ' '; break;
-        default:
-          if (b >= 0x20 && b != 0x7F) out += static_cast<char>(b);  // 他の制御文字（NUL など）は捨てる
-      }
+      if (b == '\t' || b == '\n' || b == '\r') out += ' ';
+      else if (b >= 0x20 && b != 0x7F) out += static_cast<char>(b);  // 他の制御文字（NUL など）は捨てる
       continue;
     }
     const std::size_t before = i;
@@ -47,6 +37,23 @@ std::string escapeXml(std::string_view s) {
     if ((cp >= 0x202A && cp <= 0x202E) || (cp >= 0x2066 && cp <= 0x2069)) continue;  // 表示の向きを入れ替える制御文字
     if (cp == 0xFEFF || cp == 0xFFFE || cp == 0xFFFF) continue;
     out.append(s.data() + before, i - before);
+  }
+  return out;
+}
+
+std::string escapeXml(std::string_view s) {
+  const std::string clean = cleanText(s);
+  std::string out;
+  out.reserve(clean.size() + clean.size() / 8 + 8);
+  for (char ch : clean) {
+    switch (ch) {
+      case '&': out += "&amp;"; break;
+      case '<': out += "&lt;"; break;
+      case '>': out += "&gt;"; break;
+      case '"': out += "&quot;"; break;
+      case '\'': out += "&#39;"; break;
+      default: out += ch;
+    }
   }
   return out;
 }
@@ -87,7 +94,7 @@ std::string reportFileName(const std::string& projectName, const std::string& is
   return name + (date.empty() ? "" : "_" + date) + ".html";
 }
 
-Status checkReportPath(const std::string& path) {
+Status checkSavePath(const std::string& path, const std::vector<std::string>& exts, const std::string& extHint) {
   if (path.empty()) return Error{"保存先が空です"};
   if (path.size() > 32000) return Error{"保存先のパスが長すぎます"};
   for (char ch : path)
@@ -97,13 +104,12 @@ Status checkReportPath(const std::string& path) {
   const std::string file = slash == std::string::npos ? path : path.substr(slash + 1);
   if (file.empty()) return Error{"保存先のファイル名がありません"};
   const std::string lower = text::asciiLower(file);
-  const auto ends = [&](const char* ext) {
-    const std::size_t n = std::char_traits<char>::length(ext);
-    return lower.size() > n && lower.compare(lower.size() - n, n, ext) == 0;
-  };
-  if (!ends(".html") && !ends(".htm")) return Error{"保存先のファイル名は .html にしてください"};
-  return okStatus();
+  for (const std::string& ext : exts)
+    if (lower.size() > ext.size() && lower.compare(lower.size() - ext.size(), ext.size(), ext) == 0) return okStatus();
+  return Error{"保存先のファイル名は " + extHint + " にしてください"};
 }
+
+Status checkReportPath(const std::string& path) { return checkSavePath(path, {".html", ".htm"}, ".html"); }
 
 Status writeReport(IFileStore& fs, const std::string& path, const std::string& html) {
   if (Status s = checkReportPath(path); !s.ok()) return s;
@@ -261,8 +267,7 @@ unsigned riskInk(const ThemeColors& k, Risk r) {
 // ---------------------------------------------------------------- ページ全体
 namespace {
 
-std::string css(const report::Ctx& cx) {
-  const ThemeColors& k = cx.k;
+std::string css(const ThemeColors& k) {
   const std::string page = report::hex(k.dark ? k.bg : k.surface);
   std::string c;
   c += ":root{color-scheme:" + std::string(k.dark ? "dark" : "light") + ";--bg:" + page + ";--card:" + report::hex(k.surface) +
@@ -333,6 +338,11 @@ std::string fmtDateTime(const IClock& clk) {
 
 }  // namespace
 
+namespace report {
+std::string pageCss(const ThemeColors& k) { return css(k); }
+std::string dateTimeText(const IClock& clk) { return fmtDateTime(clk); }
+}  // namespace report
+
 std::string exportHtml(const ExportInput& in, const ExportOptions& opt) {
   const ThemeColors& k = opt.dark ? darkColors() : lightColors();
   const Tree& T = in.tree;
@@ -345,7 +355,7 @@ std::string exportHtml(const ExportInput& in, const ExportOptions& opt) {
   h.reserve(1 << 16);
   h += "<!doctype html>\n<html lang=\"ja\">\n<head>\n<meta charset=\"utf-8\">\n";
   h += "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n";
-  h += "<title>" + escapeXml(title) + " - 報告</title>\n<style>\n" + css(cx) + "</style>\n</head>\n<body>\n<div class=\"page\">\n";
+  h += "<title>" + escapeXml(title) + " - 報告</title>\n<style>\n" + css(k) + "</style>\n</head>\n<body>\n<div class=\"page\">\n";
 
   // ヘッダ: プロジェクト名・基準日・出力した日時
   h += "<header>\n<h1>" + escapeXml(title) + "</h1>\n<p class=\"meta\">基準日 <b>" + escapeXml(fmtLong(in.base)) + "</b>";

@@ -44,6 +44,15 @@ struct NullPlatform : ui::IPlatform {
   void requestQuit() override {}
   std::optional<std::string> clip;  // クリップボードの代わり（テストが差し替える）
   std::optional<std::string> clipboardText() override { return clip; }
+  // クリップボードへの書き込みの代わり（週次レポートの「Markdown をコピー」。clipFail で失敗を差し込める）
+  std::vector<std::string> clipSet;
+  bool clipFail = false;
+  bool setClipboardText(const std::string& text) override {
+    if (clipFail) return false;
+    clipSet.push_back(text);
+    clip = text;
+    return true;
+  }
   int created = 0, released = 0;  // テクスチャ（本物は作らず、重ならない目印の値を返す）
   ImTextureID createTexture(const unsigned char* rgba, int w, int h) override {
     if (!rgba || w <= 0 || h <= 0) return nullptr;
@@ -1589,6 +1598,193 @@ int main() {
     h.c.deleteCurrentProject();
     h.frame(2);
   }
+  // 週次レポート（Issue #43）: コマンドパレット → ダイアログ（プレビュー・期間・項目・所感）→ コピー・保存（スタブ）→ 通知
+  {
+    h.c.createProject(app::SampleKind::Hierarchy, "週報/テスト", "WK");
+    h.c.setView(app::View::Gantt);
+    h.c.clearSelection();
+    h.p.saveAsked.clear();
+    h.p.pickedSave.reset();
+    h.frame(3);
+    const auto dlgWindow = [&]() { return ImGui::FindWindowByName("###dlg"); };
+    const auto openWeekly = [&]() {
+      h.u.paletteOpen = true;
+      h.u.paletteFocus = true;
+      h.u.paletteQuery = "週次";
+      h.frame(3);
+      h.key(ImGuiKey_Enter);
+      h.frame(3);
+    };
+    openWeekly();
+    check(h.u.dlg == ui::Dlg::Weekly, "コマンドパレットの「週次レポート…」でダイアログが開く");
+    check(!h.u.paletteOpen, "パレットは閉じる");
+    check(h.u.wkPreview.find("# 週報/テスト 週次レポート") == 0, "プレビューに Markdown の下書きが出る");
+    check(h.u.wkPreview.find("## サマリー") != std::string::npos && h.u.wkPreview.find("## 今週の完了") != std::string::npos, "既定は今週・全項目");
+    check(h.u.wkError.empty(), "エラーなし");
+    check(h.u.wk.notes.empty() && h.c.weeklyNotes().empty(), "所感は空から始まる");
+    // 期間の切り替え
+    h.u.wkPeriod = 1;
+    h.frame(2);
+    check(h.u.wkPreview.find("## 先週の完了") != std::string::npos && h.u.wkPreview.find("## 今週の予定") != std::string::npos, "先週に切り替わる");
+    h.u.wkPeriod = 2;
+    h.u.wkFrom = "2026-10-01";
+    h.u.wkTo = "2026-10-10";
+    h.frame(2);
+    check(h.u.wkPreview.find("## 期間内の完了") != std::string::npos, "任意の範囲");
+    check(h.u.wkPreview.find("2026/10/1(木) 〜 2026/10/10(土)") != std::string::npos, "入力した範囲");
+    h.u.wkTo = "あいう";  // 壊れた日付: 落ちず、今週の範囲を使う
+    h.frame(2);
+    check(h.u.wkPreview.find("## 期間内の完了") != std::string::npos && h.u.wkPreview.find("2026/10/19(月) 〜 2026/10/25(日)") != std::string::npos,
+          "壊れた日付は今週の範囲にする");
+    h.u.wkFrom = "2026-10-20";
+    h.u.wkTo = "2026-10-01";  // 逆順
+    h.frame(2);
+    check(h.u.wkPreview.find("2026/10/1(木) 〜 2026/10/20(火)") != std::string::npos, "逆の範囲は入れ替える");
+    h.u.wkPeriod = 0;
+    h.frame(2);
+    // 項目ごとのオン・オフ
+    h.u.wk.sections.done = false;
+    h.u.wk.sections.risks = false;
+    h.frame(2);
+    check(h.u.wkPreview.find("## 今週の完了") == std::string::npos && h.u.wkPreview.find("## 遅れ・余裕小") == std::string::npos, "オフにした項目は出ない");
+    check(h.u.wkPreview.find("## 進行中") != std::string::npos, "ほかは残る");
+    h.u.wk.sections.done = true;
+    h.u.wk.sections.risks = true;
+    // 所感を書くとプレビューに出る
+    h.u.wk.notes = "- 来週は結合試験\n- 課題 <未定>";
+    h.frame(2);
+    check(h.u.wkPreview.find("- 来週は結合試験") != std::string::npos && h.u.wkPreview.find("\\<未定>") != std::string::npos, "所感がプレビューに出る");
+
+    // ボタンの位置は字の幅に左右されるので、窓の下の行を探して押す。右から: Markdown をコピー・Markdown を保存…・HTML を保存…・閉じる
+    const auto btnEffect = [&](float x, float y, const std::function<bool()>& effect) {
+      h.click(x, y);
+      return effect();
+    };
+    ImGuiWindow* w = dlgWindow();
+    check(w != nullptr, "ダイアログの窓");
+    float rowY = -1, rowDy = 0, xMd = -1, xHtml = -1;
+    if (w) {
+      const std::size_t clips0 = h.p.clipSet.size();
+      for (float dy = 8; dy < 50 && rowY < 0 && h.u.dlg == ui::Dlg::Weekly; dy += 4)
+        if (btnEffect(w->Pos.x + w->Size.x - 45, w->Pos.y + w->Size.y - dy, [&] { return h.p.clipSet.size() > clips0; })) {
+          rowY = w->Pos.y + w->Size.y - dy;
+          rowDy = dy;
+        }
+      check(rowY > 0, "「Markdown をコピー」を押せる");
+      check(h.p.clipSet.size() == clips0 + 1, "クリップボードに書く（1回）");
+      if (h.p.clipSet.size() > clips0) {
+        const std::string& md = h.p.clipSet.back();
+        check(md == h.u.wkPreview, "コピーした内容はプレビューと同じ");
+        check(md.find("# 週報/テスト 週次レポート") == 0, "コピーした Markdown");
+      }
+      check(h.u.dlg == ui::Dlg::Weekly, "コピーしてもダイアログは開いたまま");
+      check(!h.c.toasts().empty() && h.c.toasts().back().text.find("コピーしました") != std::string::npos, "コピーの通知");
+      check(h.c.weeklyNotes() == h.u.wk.notes, "コピーすると所感をプロジェクトに覚える");
+      check(h.c.session()->weekly().snaps.size() == 1, "コピーするとスナップショットを覚える");
+      // 左へ探す
+      const std::size_t saved0 = h.p.saveAsked.size();
+      for (float x = w->Pos.x + w->Size.x - 12 - 150; x > w->Pos.x + 100 && xMd < 0; x -= 4)
+        if (btnEffect(x, rowY, [&] { return h.p.saveAsked.size() > saved0; })) xMd = x;
+      check(xMd > 0, "「Markdown を保存…」を押せる");
+      check(h.p.saveAsked.size() == saved0 + 1 && h.p.saveAsked.back() == "週報_テスト_週報_2026-10-19.md|md", "保存ダイアログの既定の名前は <プロジェクト名>_週報_<月曜>.md");
+      const std::size_t saved1 = h.p.saveAsked.size();
+      for (float x = xMd - 4; x > w->Pos.x + 60 && xHtml < 0; x -= 4)
+        if (btnEffect(x, rowY, [&] { return h.p.saveAsked.size() > saved1 && h.p.saveAsked.back().find("|html") != std::string::npos; })) xHtml = x;
+      check(xHtml > 0, "「HTML を保存…」を押せる");
+      check(h.p.saveAsked.back() == "週報_テスト_週報_2026-10-19.html|html", "HTML の既定の名前");
+      check(h.u.dlg == ui::Dlg::Weekly, "保存ダイアログをやめてもダイアログは開いたまま");
+    }
+    // 保存先を選ぶと IFileStore に書く
+    check(h.fs.makeDirs("out").ok(), "保存先のフォルダ");
+    if (rowY > 0 && xMd > 0 && xHtml > 0) {
+      h.p.pickedSave = "out/週報.md";
+      h.click(xMd, rowY);
+      check(h.fs.exists("out/週報.md"), "Markdown を選んだ保存先に書く");
+      if (h.fs.exists("out/週報.md")) check(h.fs.content("out/週報.md") == h.u.wkPreview, "保存した内容はプレビューと同じ");
+      check(!h.c.toasts().empty() && h.c.toasts().back().action == NoticeAction::OpenFolder && h.c.toasts().back().arg == "out", "通知に「フォルダを開く」");
+      h.p.pickedSave = "out/週報.html";
+      h.click(xHtml, rowY);
+      check(h.fs.exists("out/週報.html"), "HTML を選んだ保存先に書く");
+      if (h.fs.exists("out/週報.html")) {
+        const std::string& html = h.fs.content("out/週報.html");
+        check(html.compare(0, 15, "<!doctype html>") == 0 && html.find("<script") == std::string::npos, "HTML（スクリプトなし）");
+        check(html.find("&lt;未定&gt;") != std::string::npos, "所感の < はエスケープされる");
+      }
+      // 失敗（書き込めない）は通知で知らせ、落とさない・古いファイルを壊さない
+      const std::string before = h.fs.content("out/週報.md");
+      h.u.wk.notes = "書き換えた所感";
+      h.frame(2);
+      h.p.pickedSave = "out/週報.md";
+      h.fs.setFailWrites(true);
+      h.click(xMd, rowY);
+      h.fs.setFailWrites(false);
+      check(!h.c.toasts().empty() && h.c.toasts().back().text.find("書き出せません") == 0, "失敗の理由を通知する");
+      check(h.fs.content("out/週報.md") == before, "古いファイルは壊さない");
+      // 拡張子が違う保存先は断る
+      h.p.pickedSave = "out/週報.exe";
+      h.click(xMd, rowY);
+      check(!h.fs.exists("out/週報.exe") && h.c.toasts().back().text.find("書き出せません") == 0, "拡張子が違えば書かない");
+      h.p.pickedSave.reset();
+      // クリップボードに書けないときは通知する（覚えない）
+      h.p.clipFail = true;
+      const std::size_t clips1 = h.p.clipSet.size();
+      h.u.wk.notes = "コピー失敗の所感";
+      h.click(w->Pos.x + w->Size.x - 45, rowY);
+      h.p.clipFail = false;
+      check(h.p.clipSet.size() == clips1, "書けなければ何も入らない");
+      check(!h.c.toasts().empty() && h.c.toasts().back().text.find("コピーできませんでした") != std::string::npos, "コピー失敗の通知");
+      // 項目が全部オフならコピーしない
+      h.u.wk.sections = WeeklySections{};
+      h.u.wk.sections.summary = h.u.wk.sections.done = h.u.wk.sections.progress = h.u.wk.sections.next = h.u.wk.sections.risks = false;
+      h.u.wk.sections.milestones = h.u.wk.sections.assignees = h.u.wk.sections.changes = h.u.wk.sections.notes = false;
+      h.frame(2);
+      h.click(w->Pos.x + w->Size.x - 45, w->Pos.y + w->Size.y - rowDy);  // 所感の欄が消えて窓が縮むので、下端からの位置で押す
+      check(h.u.dlg == ui::Dlg::Weekly, "押してもダイアログは開いたまま");
+      check(h.p.clipSet.size() == clips1, "項目が空ならコピーしない");
+      h.u.wk.sections = WeeklySections{};
+      h.frame(2);
+    }
+    // Esc で閉じると、所感をプロジェクトに覚える
+    h.u.wk.notes = "閉じるときの所感";
+    h.frame(2);
+    h.key(ImGuiKey_Escape);
+    check(h.u.dlg == ui::Dlg::None, "Esc で閉じる");
+    check(h.c.weeklyNotes() == "閉じるときの所感", "閉じるときに所感を覚える");
+    // 開き直すと前回の所感が下書きに残る
+    openWeekly();
+    check(h.u.dlg == ui::Dlg::Weekly && h.u.wk.notes == "閉じるときの所感", "前回の所感が下書きに残る");
+    check(h.u.wkPreview.find("閉じるときの所感") != std::string::npos, "プレビューにも出る");
+    // ダイアログを開いたまま課題を消しても落ちない（描画のあとで書く）
+    h.c.select("11");
+    h.c.deleteSelection();
+    h.frame(3);
+    check(h.u.dlg == ui::Dlg::Weekly && h.u.wkError.empty(), "課題を消してもプレビューは作り直される");
+    h.u.dlg = ui::Dlg::None;
+    h.frame(2);
+    // 「…」メニューにも項目がある（無効にならない）。ダークテーマでも描ける
+    h.u.t = &ui::darkTokens();
+    ui::applyStyle(*h.u.t, h.u.m);
+    openWeekly();
+    h.frame(2);
+    check(h.u.dlg == ui::Dlg::Weekly, "ダークでも開く");
+    h.u.dlg = ui::Dlg::None;
+    h.u.t = &ui::lightTokens();
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(2);
+    h.c.deleteCurrentProject();
+    h.frame(2);
+    // 空のプロジェクトでも開ける（案内を出す）
+    h.c.createProject(app::SampleKind::Empty, "空の週報", "");
+    h.frame(3);
+    h.u.dlg = ui::Dlg::Weekly;
+    h.u.dlgOpening = true;
+    h.frame(3);
+    check(h.u.dlg == ui::Dlg::Weekly && h.u.wkPreview.find("課題がありません") != std::string::npos, "課題がないプロジェクトの週報");
+    h.u.dlg = ui::Dlg::None;
+    h.frame(2);
+    h.c.deleteCurrentProject();
+    h.frame(2);
+  }
   // 空のプロジェクト
   h.c.createProject(app::SampleKind::Empty, "空", "");
   h.frame(3);
@@ -1600,7 +1796,7 @@ int main() {
     const char* files[] = {"app/ui/app_ui.cpp", "app/ui/view_list.cpp", "app/ui/view_gantt.cpp", "app/ui/view_board.cpp",
                            "app/ui/view_goals.cpp", "app/ui/view_stats.cpp", "app/ui/panel_detail.cpp", "app/ui/panel_attach.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
                            "app/ui/widgets.cpp", "app/ui/strings.hpp", "app/controller/app_controller.cpp",
-                           "core/src/report.cpp", "core/src/report_gantt.cpp", "core/src/report_stats.cpp", "core/src/report_list.cpp", "core/src/gantt_geom.cpp",
+                           "core/src/report.cpp", "core/src/weekly.cpp", "core/src/weekly_md.cpp", "core/src/weekly_html.cpp", "core/src/weekly_state.cpp", "core/src/report_gantt.cpp", "core/src/report_stats.cpp", "core/src/report_list.cpp", "core/src/gantt_geom.cpp",
                            "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp", "core/src/attachments.cpp", "core/src/load.cpp"};
     for (const char* rel : files) {
       std::ifstream in(std::string(ROADMAP_SOURCE_DIR) + "/" + rel, std::ios::binary);

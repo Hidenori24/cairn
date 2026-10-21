@@ -108,6 +108,7 @@ std::vector<Cmd> buildCommands(Frame& f) {
     openDialog(f, Dlg::Export);
   });
   if (s && s->tree()) add("プロジェクト", "HTML に書き出す…", nullptr, [&f] { openDialog(f, Dlg::ExportHtml); });
+  if (s && s->tree()) add("プロジェクト", "週次レポート…", nullptr, [&f] { openDialog(f, Dlg::Weekly); });
   add("プロジェクト", "全プロジェクトをバックアップ", nullptr, [&f] {
     f.u.exportKind = "backup";
     openDialog(f, Dlg::Export);

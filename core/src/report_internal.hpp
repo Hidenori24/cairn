@@ -70,6 +70,10 @@ std::string renderGantt(const Ctx& cx);
 std::string renderStats(const Ctx& cx);
 std::string renderList(const Ctx& cx);
 
+// ページ全体の CSS（週次レポートの HTML も同じ見た目にするため共有する）と、出力日時の "2026/10/19 18:36"
+std::string pageCss(const ThemeColors& k);
+std::string dateTimeText(const IClock& clk);
+
 // 状況の分類に応じた文字色
 unsigned catInk(const ThemeColors& k, Cat c);
 // 余裕の見出し（"完了" "−2週" "5日"）。遅れは先頭に "!" を付ける（色だけに頼らない）

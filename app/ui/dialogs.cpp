@@ -37,6 +37,7 @@ const char* titleOf(Dlg d) {
     case Dlg::AttachOpenWarn: return "実行できるファイルです";
     case Dlg::AttachPreview: return "画像のプレビュー";
     case Dlg::ExportHtml: return "HTML に書き出す";
+    case Dlg::Weekly: return "週次レポート";
     default: return "";
   }
 }
@@ -51,6 +52,7 @@ float widthOf(const UiState& u, Dlg d) {
     case Dlg::Import:
     case Dlg::ExportHtml:
     case Dlg::Export: return u.m.s(640);
+    case Dlg::Weekly: return u.m.s(820);
     case Dlg::Folder: return u.m.s(600);
     case Dlg::Settings: return u.m.s(620);
     case Dlg::AppSettings: return u.m.s(640);
@@ -63,6 +65,8 @@ float widthOf(const UiState& u, Dlg d) {
 }
 
 void close(Frame& f) {
+  // 週次レポートの所感はプロジェクトに覚える（次の週の下書きに前回の所感を残す）
+  if (f.u.dlg == Dlg::Weekly && f.c.currentId() == f.u.wkProject) f.c.setWeeklyNotes(f.u.wk.notes);
   f.u.dlg = Dlg::None;
   f.u.paste = Outline{};  // 貼り付けた内容は残さない
   f.u.pasteParent.clear();
@@ -375,6 +379,162 @@ void dlgExportHtml(Frame& f) {
   } else if (b == 1) {
     close(f);
   }
+}
+
+// 週次レポート（Issue #43）。期間・項目・所感を選ぶと、Markdown のプレビューが出る。コピー・保存は明示的な操作
+void dlgWeekly(Frame& f) {
+  UiState& u = f.u;
+  app::AppController& c = f.c;
+  Session* s = c.session();
+  if (!s || !s->tree()) return close(f);
+  WeeklyOptions& o = u.wk;
+  if (ImGui::IsWindowAppearing()) {
+    u.wkProject = c.currentId();
+    o = WeeklyOptions{};
+    o.notes = c.weeklyNotes();  // 前回の所感を下書きに残す
+    u.wkPeriod = 0;
+    const WeeklyRange tw = weeklyRange(s->baseDay(), WeeklyPeriod::ThisWeek, 0, 0);
+    u.wkFrom = fmtIso(tw.from);
+    u.wkTo = fmtIso(tw.to);
+    u.wkPreviewKey.clear();
+  }
+  if (c.currentId() != u.wkProject) return close(f);  // 開いたあとにプロジェクトが切り替わった
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextUnformatted("今週の完了・来週の予定・遅れ・リスクを、数字と一覧は自動で、所感だけ自分で書く週報の下書きにします。");
+  ImGui::PopTextWrapPos();
+
+  ImGui::SeparatorText("期間（月曜始まり。基準日に合わせます）");
+  ImGui::RadioButton("今週", &u.wkPeriod, 0);
+  ImGui::SameLine(0, u.m.s(16));
+  ImGui::RadioButton("先週", &u.wkPeriod, 1);
+  ImGui::SameLine(0, u.m.s(16));
+  ImGui::RadioButton("任意の範囲", &u.wkPeriod, 2);
+  o.period = u.wkPeriod == 1 ? WeeklyPeriod::LastWeek : u.wkPeriod == 2 ? WeeklyPeriod::Custom : WeeklyPeriod::ThisWeek;
+  if (o.period == WeeklyPeriod::Custom) {
+    ImGui::SetNextItemWidth(u.m.s(120));
+    ImGui::InputText("##wkfrom", &u.wkFrom);
+    ImGui::SameLine();
+    ImGui::TextUnformatted("〜");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(u.m.s(120));
+    ImGui::InputText("##wkto", &u.wkTo);
+    ImGui::SameLine();
+    ImGui::TextDisabled("（例 2026-10-19）");
+    const OptDay a = parseIso(text::trim(u.wkFrom)), b = parseIso(text::trim(u.wkTo));
+    if (a && b) {
+      o.from = *a;
+      o.to = *b;
+    } else {
+      const WeeklyRange tw = weeklyRange(s->baseDay(), WeeklyPeriod::ThisWeek, 0, 0);
+      o.from = tw.from;
+      o.to = tw.to;
+      ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
+      ImGui::TextUnformatted("日付を YYYY-MM-DD の形で入力してください（入力できるまで今週の範囲を使います）。");
+      ImGui::PopStyleColor();
+    }
+  }
+  {
+    const WeeklyRange g = weeklyRange(s->baseDay(), o.period, o.from, o.to);
+    int wd = 0;
+    for (Day d = g.from; d <= g.to; ++d)
+      if (s->calendar().isWork(d)) ++wd;
+    ImGui::TextDisabled("%s 〜 %s（営業日 %d 日）／ 基準日 %s", fmtLong(g.from).c_str(), fmtLong(g.to).c_str(), wd, fmtLong(s->baseDay()).c_str());
+  }
+
+  ImGui::SeparatorText("入れる項目");
+  WeeklySections& sec = o.sections;
+  ImGui::Checkbox("サマリー", &sec.summary);
+  ImGui::SameLine(0, u.m.s(16));
+  ImGui::Checkbox("完了", &sec.done);
+  ImGui::SameLine(0, u.m.s(16));
+  ImGui::Checkbox("進行中", &sec.progress);
+  ImGui::SameLine(0, u.m.s(16));
+  ImGui::Checkbox("次の予定", &sec.next);
+  ImGui::SameLine(0, u.m.s(16));
+  ImGui::Checkbox("遅れ・余裕小", &sec.risks);
+  ImGui::Checkbox("マイルストーン", &sec.milestones);
+  ImGui::SameLine(0, u.m.s(16));
+  ImGui::Checkbox("担当別", &sec.assignees);
+  ImGui::SameLine(0, u.m.s(16));
+  ImGui::Checkbox("先週から変わったこと", &sec.changes);
+  ImGui::SameLine(0, u.m.s(16));
+  ImGui::Checkbox("所感・課題・お願い", &sec.notes);
+  const bool any = sec.any();
+
+  if (sec.notes) {
+    ImGui::SeparatorText("所感・課題・お願い（自由に書きます。プロジェクトに覚え、次回の下書きに残ります）");
+    ImGui::InputTextMultiline("##wknotes", &o.notes, ImVec2(-1, u.m.s(72)));
+    if (ImGui::IsItemDeactivatedAfterEdit()) c.setWeeklyNotes(o.notes);
+    if (o.notes.size() > kWeeklyMaxNoteBytes) {
+      ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->tight));
+      ImGui::TextUnformatted("長すぎる分は切って出力します。");
+      ImGui::PopStyleColor();
+    }
+  }
+
+  // プレビュー（条件が変わったときだけ作り直す）
+  std::string key = std::to_string(s->version()) + "|" + std::to_string(u.wkPeriod) + "|" + std::to_string(o.from) + "|" + std::to_string(o.to) + "|";
+  for (bool b : {sec.summary, sec.done, sec.progress, sec.next, sec.risks, sec.milestones, sec.assignees, sec.changes, sec.notes}) key += b ? '1' : '0';
+  key += "|" + o.notes;
+  if (key != u.wkPreviewKey) {
+    const auto r = c.renderWeekly(o, false);
+    u.wkPreview = r.ok() ? r.value() : std::string();
+    u.wkError = r.ok() ? std::string() : r.error();
+    u.wkPreviewKey = key;
+  }
+  ImGui::SeparatorText("プレビュー（Markdown）");
+  if (!u.wkError.empty()) {
+    ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
+    ImGui::TextWrapped("作れません: %s", u.wkError.c_str());
+    ImGui::PopStyleColor();
+  } else if (!any) {
+    ImGui::TextDisabled("入れる項目を1つ以上選んでください。");
+  }
+  ImGui::PushFont(u.fontMono);
+  ImGui::InputTextMultiline("##wkprev", &u.wkPreview, ImVec2(-1, u.m.s(200)), ImGuiInputTextFlags_ReadOnly);
+  ImGui::PopFont();
+
+  ImGui::Spacing();
+  ImGui::PushTextWrapPos(0);
+  ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->tight));
+  ImGui::TextUnformatted("担当者名・件名が出力に入ります。チャットや共有フォルダに置く前に、内容を確かめてください。");
+  ImGui::PopStyleColor();
+  ImGui::PopTextWrapPos();
+  ImGui::TextDisabled("コピー・保存すると、そのときの課題の状況を覚えておき、次回の「先週から変わったこと」に使います。");
+
+  const bool ok = any && u.wkError.empty();
+  const int b = buttons(f, {"Markdown をコピー", "閉じる", "HTML を保存…", "Markdown を保存…"}, false, ok);
+  if (b == 1) return close(f);
+  if (b < 0) return;
+  if (!ok) {
+    c.toast("入れる項目を1つ以上選んでください");
+    return;
+  }
+  WeeklyOptions opt = o;
+  c.setWeeklyNotes(opt.notes);
+  if (b == 0) {
+    // クリップボードへ。描画が終わってから行う（設定への記録が描画中の参照に触れないように）
+    deferAfterFrame(f, [&f, opt] {
+      const auto md = f.c.renderWeekly(opt, false);
+      if (!md.ok()) {
+        f.c.toast("コピーできません: " + md.error());
+      } else if (f.p.setClipboardText(md.value())) {
+        f.c.recordWeekly(opt);
+        f.c.toast("Markdown をクリップボードにコピーしました");
+      } else {
+        f.c.toast("コピーできませんでした（クリップボードを使えません）");
+      }
+    });
+    return;
+  }
+  const bool html = b == 2;
+  const std::string name = c.weeklyFileName(opt, html);
+  // 保存先を選んで書く（OS の保存ダイアログが出る間、画面の参照を持たないよう描画のあとに行う）
+  deferAfterFrame(f, [&f, opt, html, name] {
+    const auto path = f.p.pickSaveFile(name, html ? "html" : "md", html ? "HTML ファイル" : "Markdown ファイル");
+    if (!path) return;  // やめた
+    (void)f.c.exportWeekly(*path, opt, html);
+  });
 }
 
 // 以前の平置きのプロジェクトがあるときだけ出す。自動では動かさず、ここで押したときに移す
@@ -1145,6 +1305,7 @@ void drawDialogs(Frame& f) {
     case Dlg::AttachOpenWarn: dlgAttachOpenWarn(f); break;
     case Dlg::AttachPreview: dlgAttachPreview(f); break;
     case Dlg::ExportHtml: dlgExportHtml(f); break;
+    case Dlg::Weekly: dlgWeekly(f); break;
     default: close(f); break;
   }
   if (!open) close(f);

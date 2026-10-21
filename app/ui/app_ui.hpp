@@ -13,6 +13,7 @@
 
 #include "app_controller.hpp"
 #include "roadmap/report.hpp"
+#include "roadmap/weekly.hpp"
 #include "ui/theme.hpp"
 
 namespace roadmap::ui {
@@ -38,6 +39,12 @@ class IPlatform {
   // クリップボードのテキスト（UTF-8）。テキストがない・読めないときは nullopt。
   // 貼り付けた内容は個人情報を含みうるので、ログには出さない
   virtual std::optional<std::string> clipboardText() { return std::nullopt; }
+  // クリップボードにテキスト（UTF-8）を書く。成功したら true。書けない・大きすぎるときは false
+  // （週次レポートの「Markdown をコピー」。内容は個人情報を含みうるので、ログには出さない）
+  virtual bool setClipboardText(const std::string& text) {
+    (void)text;
+    return false;
+  }
   // 関連付けられたアプリでファイルを開く（添付の「開く」。実行ファイルの警告は UI が先に出す）。パスは UTF-8
   virtual void openFile(const std::string& path) { (void)path; }
   // 画像（RGBA 8bit）をテクスチャにする（サムネイル・プレビュー）。作れなければ nullptr。不要になったら releaseTexture
@@ -57,7 +64,7 @@ class IPlatform {
 enum class Dlg {
   None, NewProject, EditProject, ConfirmDelete, Import, Export, Folder, Settings, Workload, Warnings, Shortcuts,
   TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete, PasteChildren, AttachOpenWarn, AttachPreview,
-  ExportHtml
+  ExportHtml, Weekly
 };
 
 enum class EditField { None, Name, Assignee, Dur, Pred };
@@ -152,6 +159,13 @@ struct UiState {
   // 「HTML に書き出す」ダイアログの選択（開くたびに画面の状態から初期化する）
   ExportOptions rep;
   int repScope = 0;  // 0 = 全体 1 = 今の表示のまま 2 = 選んだ課題の配下
+  // 「週次レポート」ダイアログ（開くたびに初期化する。Issue #43）
+  WeeklyOptions wk;
+  int wkPeriod = 0;               // 0 = 今週 1 = 先週 2 = 任意の範囲
+  std::string wkFrom, wkTo;       // 任意の範囲（YYYY-MM-DD の入力欄）
+  std::string wkPreview;          // Markdown のプレビュー（wkPreviewKey が変わったときだけ作り直す）
+  std::string wkPreviewKey, wkError;
+  std::string wkProject;          // ダイアログを開いたときのプロジェクト（切り替わっていたら所感を書き込まない）
   std::string importName;
   bool importReplace = false;
   std::string importError;
