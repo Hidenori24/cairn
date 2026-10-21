@@ -1687,6 +1687,33 @@ int main() {
         h.frame(30);
         check(!tooltipOn(), "sha256 がない古い項目には詳細を出さない");
       }
+      // 読めない画像（壊れた PNG）のアイコンの上: エラーの説明は消えず、詳細（SHA-256）と 1 つのツールチップにまとまる
+      h.c.session()->attachments()["11"][0].sha256 = h.c.attachmentsOf("11")[1].sha256;  // 1 行目も詳細を持つ状態に戻す
+      h.fs.put("ext/bad.png", "壊れたファイル");
+      h.c.attachFiles("11", {"ext/bad.png"});
+      io.AddMousePosEvent(700, 880);
+      h.frame(12);  // デコードは 1 フレームに 1 枚。失敗の結果が出るまで待つ
+      check(h.u.attachRows.size() == 7, "壊れた画像を足した添付タブの行が 7 つ");
+      if (h.u.attachRows.size() == 7) {
+        const auto tipHeight = [&](ImVec2 pos) {
+          io.AddMousePosEvent(700, 880);
+          h.frame(5);
+          io.AddMousePosEvent(pos.x, pos.y);
+          h.frame(1);
+          ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+          const bool early = tip && tip->Active;  // 待つ前（エラーの説明だけがすぐ出る）
+          h.frame(30);
+          tip = ImGui::FindWindowByName("##Tooltip_00");
+          return std::pair<bool, float>(early, tip && tip->Active ? tip->Size.y : 0.f);
+        };
+        const auto& bad = h.u.attachRows[6];
+        const auto failed = tipHeight(ImVec2(bad.first.x + 20, (bad.first.y + bad.second.y) / 2));
+        const auto& plain = h.u.attachRows[0];  // 画像でない行（詳細だけの 1 行）
+        const auto hashOnly = tipHeight(ImVec2(plain.first.x + 150, (plain.first.y + plain.second.y) / 2));
+        check(failed.first, "読めない画像のアイコンでは、待たずにエラーの説明が出る");
+        check(!hashOnly.first, "詳細は少し待ってから出る");
+        check(hashOnly.second > 0.f && failed.second > hashOnly.second, "待ったあとも、エラーの説明が詳細に置き換わらず両方が出る");
+      }
       io.AddMousePosEvent(700, 880);
       h.u.detailOpen = false;
       h.frame(5);

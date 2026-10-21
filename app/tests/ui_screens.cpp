@@ -736,8 +736,8 @@ int main(int argc, char** argv) {
         frames(30);
         shot("49_attach_hash");
       }
+      // 詳細パネルは開いたままにする（このあとのドラッグ・サムネイルの大きさの画面が添付タブを映すため）
       hio.AddMousePosEvent(5, 890);
-      u.detailOpen = false;
       frames(4);
     }
     // サムネイルをつかんで別の課題の行へ（移動／Ctrl でコピー）と、サムネイルを大きくした一覧

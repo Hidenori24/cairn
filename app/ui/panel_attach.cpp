@@ -481,6 +481,7 @@ void drawAttachTab(Frame& f, int i) {
     const float box = thumbBox;
     const ImVec2 b0(p.x + u.m.s(2), p.y + (rowH - box) / 2), b1(b0.x + box, b0.y + box);
     const bool isImg = isImageFile(a.name);
+    bool failedHover = false;  // 読めない画像のアイコンの上（エラーの説明を出す）
     const UiState::ImageTex* img = isImg ? attachmentImage(f, id, k, kThumbPx) : nullptr;
     if (img && img->tex) {
       dl->AddRectFilled(b0, b1, u.t->surface3, u.m.s(3));
@@ -504,11 +505,10 @@ void drawAttachTab(Frame& f, int i) {
         ImGui::EndTooltip();
       }
     } else {
+      failedHover = img && img->failed && ImGui::IsMouseHoveringRect(b0, b1) && ImGui::IsWindowHovered();
       const char* icon = risky ? "warn" : (isImg ? "image" : "file");
       const ImU32 col = risky ? u.t->tight : (img && img->failed ? u.t->late : u.t->muted);
       drawIcon(dl, icon, ImVec2(b0.x + (box - u.m.s(18)) / 2, b0.y + (box - u.m.s(18)) / 2), u.m.s(18), col);
-      if (img && img->failed && ImGui::IsMouseHoveringRect(b0, b1) && ImGui::IsWindowHovered())
-        ImGui::SetTooltip("画像として読めません（壊れているか、対応していない形式です）");
     }
     if (grabbed && !u.attachDrag.active && !u.attachDragCancelled && ImGui::IsMouseDragging(ImGuiMouseButton_Left, dragPx)) {
       u.attachDrag.active = true;
@@ -527,9 +527,17 @@ void drawAttachTab(Frame& f, int i) {
     dl->AddText(ImVec2(tx, ty + ImGui::GetTextLineHeight() + u.m.s(2)), u.t->muted,
                 ellipsize(meta, W - btns - box - u.m.s(12)).c_str());
     if (beingDragged) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + rowH), withAlpha(u.t->surface, 0.55f));  // つかんでいる行は薄く
-    // 行にマウスを載せたら詳細（本体の SHA-256 の先頭 12 文字。画像のサムネイルの上は、サムネイルのツールチップに含める）
-    if (hovDetail && !u.attachDrag.active)
-      if (const std::string h = shortHashLine(a); !h.empty()) ImGui::SetTooltip("%s", h.c_str());
+    // 行にマウスを載せたら詳細（本体の SHA-256 の先頭 12 文字。画像のサムネイルの上は、サムネイルのツールチップに含める）。
+    // 読めない画像のアイコンの上は、エラーの説明（すぐ出す）と詳細（待ってから足す）を 1 つのツールチップにまとめる
+    // （ツールチップを 2 回作ると、あとのもので説明が消える）
+    const std::string hashLine = shortHashLine(a);
+    const bool showHash = hovDetail && !u.attachDrag.active && !hashLine.empty();
+    if (failedHover || showHash) {
+      ImGui::BeginTooltip();
+      if (failedHover) ImGui::TextUnformatted("画像として読めません（壊れているか、対応していない形式です）");
+      if (showHash) ImGui::TextDisabled("%s", hashLine.c_str());
+      ImGui::EndTooltip();
+    }
     ImGui::SetCursorScreenPos(ImVec2(p.x + W - btns + u.m.s(4), p.y + (rowH - ImGui::GetFrameHeight()) / 2));
     if (ImGui::SmallButton("開く")) open = k;
     if (risky) tip("実行ファイルやスクリプトです。開く前に確認します");
