@@ -199,6 +199,16 @@ struct UiState {
     float xl = 0, xr = 0, cy = 0;
   };
   std::vector<BarGeom> barGeom;
+  // 前のフレームの統計ビューの負荷ヒートマップ（画面の座標。見えている行のセルだけ）と、集計の行数。
+  // 煙テストが描画の有無と当たり位置を知るために使う
+  struct StatsLoadCell {
+    std::string who;
+    int week = 0;
+    ImVec2 a{0, 0}, b{0, 0};
+    int percent = 0;
+  };
+  std::vector<StatsLoadCell> statsLoadCells;
+  int statsLoadRows = 0, statsDoneRows = 0;
   struct RowDrag {
     std::string id;
     bool active = false;

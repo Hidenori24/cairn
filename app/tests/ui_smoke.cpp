@@ -1,6 +1,7 @@
 // UI の煙テスト: ImGui をヘッドレスで動かし、各ビュー・ダイアログ・パレットを描いて落ちないこと・assert しないことを確かめる。
 // Win32・DX11 は使わない（フォントのテクスチャを作るだけ）。
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -1144,6 +1145,23 @@ int main() {
     h.frame(5);
     h.c.setView(app::View::List);
     h.frame(3);
+    // 統計ビュー（集計は毎フレーム。5,000 件でも 1 フレームが重くならない）
+    h.c.setView(app::View::Stats);
+    h.frame(3);
+    check(h.u.statsLoadRows > 0, "5000件でも負荷のヒートマップを集計する");
+    {
+      const auto t0 = std::chrono::steady_clock::now();
+      h.frame(10);
+      const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 10;
+      std::fprintf(stderr, "ui_smoke: 5000件の統計ビュー 1フレーム %.1f ms\n", ms);
+#ifdef ROADMAP_SANITIZED
+      check(ms < 400, "5000件の統計ビューが重くない（サニタイザ付き）");
+#else
+      check(ms < 100, "5000件の統計ビューが重くない");
+#endif
+    }
+    h.c.setView(app::View::List);
+    h.frame(2);
   }
   // マウス: ガントの行をクリック・ダブルクリック
   h.c.setView(app::View::Gantt);
@@ -1311,6 +1329,112 @@ int main() {
     h.u.detailOpen = false;
     h.frame(2);
   }
+  // 統計ビュー: 担当者別の負荷（週×担当のヒートマップ）と完了の推移
+  {
+    const std::string csvText =
+        "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Resolved,Duration (weeks),Outward issue link (Blocks)\n"
+        "1,Task,設計,,田中,To Do,High,,2,\n"
+        "2,Task,実装,,田中,To Do,Medium,,1,\n"
+        "3,Task,評価,,鈴木,In Progress,Medium,,3,\n"
+        "4,Task,調整,,,To Do,Low,,1,\n"
+        "5,Task,調査,,鈴木,Done,Medium,2026-10-13,1,\n"
+        "6,Task,準備,,田中,Done,Medium,2026-10-06,2,\n"
+        "7,Task,下見,,,Done,Low,2026-09-22,1,\n";
+    check(h.c.importText(csvText, "統計の確認", app::ImportMode::New).ok, "統計の確認用の取り込み");
+    h.u.t = &ui::lightTokens();
+    h.u.m.compact = false;
+    h.u.m.scale = 1.0f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.c.filter() = Filter{};
+    h.c.setView(app::View::Stats);
+    h.clk.advanceMs(15000);  // 取り込みの通知（左下）が消えるまで待つ。マウスの当たりを邪魔する
+    h.frame(3);
+    check(h.u.statsLoadRows == 3, "負荷の行（田中・鈴木・担当なし）");
+    check(h.u.statsDoneRows == 3, "完了の行（田中・鈴木・担当なし）");
+    ImGuiIO& io = ImGui::GetIO();
+    const auto findCell = [&](const std::string& who, int week) -> const ui::UiState::StatsLoadCell* {
+      for (const auto& c : h.u.statsLoadCells)
+        if (c.who == who && c.week == week && c.a.y > 120 && c.b.y < 860) return &c;  // ウィンドウの中に完全に見えるもの
+      return nullptr;
+    };
+    io.AddMousePosEvent(700, 450);
+    for (int k = 0; k < 60 && !(findCell("田中", 0) && findCell("", 0)); ++k) {  // ヒートマップが見える位置までスクロール
+      io.AddMouseWheelEvent(0, -3);
+      h.frame(2);
+    }
+    const auto* tanaka = findCell("田中", 0);
+    check(tanaka != nullptr, "ヒートマップのセルが見える");
+    if (tanaka) {
+      check(tanaka->percent == 200, "同じ週に 2 件が重なる田中の初週は 200%（設計 5 日 + 実装 5 日 ÷ 営業日 5）");
+      const ImVec2 mid((tanaka->a.x + tanaka->b.x) / 2, (tanaka->a.y + tanaka->b.y) / 2);
+      io.AddMousePosEvent(mid.x, mid.y);
+      h.frame(3);
+      ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+      check(tip && tip->Active, "セルにマウスを載せると内訳のツールチップが出る");
+      io.AddMousePosEvent(5, 5);
+      h.frame(2);
+      tip = ImGui::FindWindowByName("##Tooltip_00");
+      check(!(tip && tip->Active), "マウスを外すとツールチップが消える");
+      h.click(mid.x, mid.y);
+      h.frame(2);
+      check(h.c.view() == app::View::List, "セルを押すとリストが開く");
+      check(h.c.filter().asg == AsgFilter::Name && h.c.filter().asgName == "田中", "セルを押すとその担当者で絞る");
+    }
+    // 担当なしの行 → 「担当なし」で絞る
+    h.c.filter() = Filter{};
+    h.c.setView(app::View::Stats);
+    h.frame(3);
+    io.AddMousePosEvent(700, 450);
+    for (int k = 0; k < 60 && !findCell("", 0); ++k) {
+      io.AddMouseWheelEvent(0, -3);
+      h.frame(2);
+    }
+    if (const auto* none = findCell("", 0)) {
+      const ImVec2 mid((none->a.x + none->b.x) / 2, (none->a.y + none->b.y) / 2);
+      io.AddMousePosEvent(mid.x, mid.y);
+      h.frame(2);
+      h.click(mid.x, mid.y);
+      h.frame(2);
+      check(h.c.view() == app::View::List && h.c.filter().asg == AsgFilter::Unassigned, "担当なしの行を押すと未割当で絞る");
+    } else {
+      check(false, "担当なしの行が見える");
+    }
+    // ダーク・コンパクト・高DPI でも描ける
+    h.u.t = &ui::darkTokens();
+    h.u.m.compact = true;
+    h.u.m.scale = 1.5f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.c.setView(app::View::Stats);
+    h.frame(4);
+    h.u.t = &ui::lightTokens();
+    h.u.m.compact = false;
+    h.u.m.scale = 1.0f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    // 作業がすべて完了: 負荷は空（説明の一文）、完了だけ出る
+    const std::string doneOnly =
+        "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Resolved,Duration (weeks),Outward issue link (Blocks)\n"
+        "1,Task,完了だけ,,田中,Done,Medium,2026-10-13,1,\n";
+    check(h.c.importText(doneOnly, "完了だけ", app::ImportMode::New).ok, "完了だけの取り込み");
+    h.c.setView(app::View::Stats);
+    h.frame(3);
+    check(h.u.statsLoadRows == 0 && h.u.statsLoadCells.empty(), "未完了がなければ負荷の行は出ない");
+    check(h.u.statsDoneRows == 1, "完了だけでも完了の行は出る");
+    // 完了日がない・範囲外の完了だけ: 完了の行は出ない
+    const std::string noResolved =
+        "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Resolved,Duration (weeks),Outward issue link (Blocks)\n"
+        "1,Task,日付なし,,田中,To Do,Medium,,1,\n"
+        "2,Task,古い完了,,田中,Done,Medium,2025-01-06,1,\n";
+    check(h.c.importText(noResolved, "完了なし", app::ImportMode::New).ok, "完了なしの取り込み");
+    h.c.setView(app::View::Stats);
+    h.frame(3);
+    check(h.u.statsLoadRows == 1 && h.u.statsDoneRows == 0, "過去 8 週に完了がなければ完了の行は出ない");
+    h.c.deleteCurrentProject();
+    h.c.deleteCurrentProject();
+    h.c.deleteCurrentProject();
+    h.u.t = &ui::darkTokens();
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(2);
+  }
   // 空のプロジェクト
   h.c.createProject(app::SampleKind::Empty, "空", "");
   h.frame(3);
@@ -1320,9 +1444,9 @@ int main() {
   {
     std::set<ImWchar> have(ui::uiGlyphs().begin(), ui::uiGlyphs().end());
     const char* files[] = {"app/ui/app_ui.cpp", "app/ui/view_list.cpp", "app/ui/view_gantt.cpp", "app/ui/view_board.cpp",
-                           "app/ui/view_goals.cpp", "app/ui/panel_detail.cpp", "app/ui/panel_attach.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
+                           "app/ui/view_goals.cpp", "app/ui/view_stats.cpp", "app/ui/panel_detail.cpp", "app/ui/panel_attach.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
                            "app/ui/widgets.cpp", "app/ui/strings.hpp", "app/controller/app_controller.cpp",
-                           "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp", "core/src/attachments.cpp"};
+                           "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp", "core/src/attachments.cpp", "core/src/load.cpp"};
     for (const char* rel : files) {
       std::ifstream in(std::string(ROADMAP_SOURCE_DIR) + "/" + rel, std::ios::binary);
       std::stringstream ss;
