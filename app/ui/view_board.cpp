@@ -110,7 +110,7 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, const 
     }
     if (const int na = static_cast<int>(c.attachmentCount(sid)); na > 0) {
       bool clicked = false;
-      x += drawAttachBadge(f, ImVec2(x, y + u.m.s(1)), y + lh / 2 + u.m.s(1), na, &clicked) + u.m.s(8);
+      x += drawAttachBadge(f, sid, ImVec2(x, y + u.m.s(1)), y + lh / 2 + u.m.s(1), na, &clicked) + u.m.s(8);
       if (clicked) openDetail(f, sid, 3);
     }
     ImGui::PushFont(u.fontMono);
