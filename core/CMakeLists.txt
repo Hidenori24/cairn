@@ -29,6 +29,7 @@ add_library(roadmap_core STATIC
   src/attachments.cpp
   src/jira_check.cpp
   src/stats.cpp
+  src/load.cpp
   src/gen.cpp
   ${_gen}/sample_hierarchy.cpp
   ${_gen}/sample_leveling.cpp

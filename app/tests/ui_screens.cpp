@@ -663,6 +663,56 @@ int main(int argc, char** argv) {
   shot("17_embedded_template");
   c.setView(app::View::Stats);
   shot("17b_embedded_stats");
+  // 統計ビューの担当者別の負荷（ヒートマップ）と完了の推移: 組込み雛形・階層デモ × ライト・ダーク
+  {
+    // 統計のページをスクロールして、ヒートマップの先頭の行が y の位置に来るようにする
+    const auto scrollStatsTo = [&](float y) {
+      c.setView(app::View::Stats);
+      clk.advanceMs(15000);  // 通知が消えるまで待つ
+      frames(3);
+      ImGui::GetIO().AddMousePosEvent(700, 450);
+      for (int k = 0; k < 120; ++k) {
+        if (!u.statsLoadCells.empty() && u.statsLoadCells.front().a.y < y) break;
+        ImGui::GetIO().AddMouseWheelEvent(0, -1);
+        frames(2);
+      }
+    };
+    const auto statsShots = [&](const std::string& name) {
+      scrollStatsTo(360);
+      shot(name + "_load");
+      for (int k = 0; k < 14; ++k) {
+        ImGui::GetIO().AddMouseWheelEvent(0, -1);
+        frames(2);
+      }
+      shot(name + "_done");
+      // セルにマウスを載せたときのツールチップ
+      scrollStatsTo(360);
+      if (!u.statsLoadCells.empty()) {
+        std::size_t best = 0;
+        for (std::size_t k = 0; k < u.statsLoadCells.size(); ++k)
+          if (u.statsLoadCells[k].percent > u.statsLoadCells[best].percent) best = k;
+        const auto& cell = u.statsLoadCells[best];
+        ImGui::GetIO().AddMousePosEvent((cell.a.x + cell.b.x) / 2, (cell.a.y + cell.b.y) / 2);
+        frames(2);
+        shot(name + "_tooltip");
+        ImGui::GetIO().AddMousePosEvent(5, 5);
+        frames(2);
+      }
+    };
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    statsShots("50_stats_load_embedded_light");
+    u.t = &ui::darkTokens();
+    ui::applyStyle(*u.t, u.m);
+    statsShots("51_stats_load_embedded_dark");
+    c.createProject(app::SampleKind::Hierarchy, "階層デモ（統計）", "DEV");
+    statsShots("52_stats_load_hierarchy_dark");
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    c.session()->setResource({true, 1});
+    c.afterEdit();
+    statsShots("53_stats_load_hierarchy_light_resource");
+  }
   ImGui::DestroyContext();
   return 0;
 }
