@@ -131,6 +131,12 @@ std::vector<Cmd> buildCommands(Frame& f) {
 }
 }  // namespace
 
+std::vector<std::string> paletteTitles(Frame& f) {
+  std::vector<std::string> v;
+  for (const Cmd& c : buildCommands(f)) v.push_back(c.title);
+  return v;
+}
+
 void drawPalette(Frame& f) {
   app::AppController& c = f.c;
   UiState& u = f.u;

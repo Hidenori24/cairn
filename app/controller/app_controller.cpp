@@ -1106,11 +1106,11 @@ void AppController::recordHistory(HistoryTrigger why) {
 }
 
 // ---------------------------------------------------------------- 週の頭のスナップショット
-// 自動のスナップショットを取る入口はここだけ。今は読み取り専用で開く仕組みがないので常に取れるが、将来（#62 のロックなど）
-// 読み取り専用のときはここで何もせず返す。保存は設定だけを書く（元の CSV は書き換えない。afterEdit が選ぶ）
+// 自動のスナップショットを取る入口はここだけ。読み取り専用（他の人のロック。Issue #62）のときは何もしない。
+// 保存は設定だけを書く（元の CSV は書き換えない。afterEdit が選ぶ）
 void AppController::recordWeeklyAuto(WeeklyAutoTrigger why) {
   Session* s = session_.get();
-  if (!s) return;
+  if (!s || readOnly()) return;
   if (why == WeeklyAutoTrigger::Rebase && weeklyAutoOpenedId_ != currentId_) return;  // 開いたときに取っていなければ、取り直すものがない
   const auto r = s->recordWeeklyAuto(why == WeeklyAutoTrigger::Open ? WeeklyAutoMode::IfMissing : WeeklyAutoMode::Replace);
   weeklyAutoOpenedId_ = why == WeeklyAutoTrigger::Open && r.ok() && r.value() == WeeklyAutoResult::Recorded ? currentId_ : std::string();

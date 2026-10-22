@@ -295,7 +295,17 @@ void readOnlyScenario(bool stale) {
     r.u.dlg = ui::Dlg::None;
     r.frame(2);
   }
-  // コマンドパレット（変更するコマンドは並ばない）
+  // コマンドパレット（変更するコマンドは並ばない。ロックのコマンドが並ぶ）
+  {
+    ui::Frame fr{r.c, r.u, r.p};
+    const std::vector<std::string> titles = ui::paletteTitles(fr);
+    const auto has = [&](const std::string& t) { return std::find(titles.begin(), titles.end(), t) != titles.end(); };
+    check(!has("課題を追加（最上位）") && !has("削除") && !has("元に戻す") && !has("基準日を今日にする") && !has("名前・キーを変更") &&
+              !has("同時作業の制限のオン/オフ") && !has("ベースラインを保存…"),
+          "読み取り専用では、変更するコマンドをパレットに並べない");
+    check(has("ロックを再確認（編集できる状態にする）") && has("ガントを表示") && has("複製"), "見るコマンドとロックのコマンドは並ぶ");
+    check(has("編集を引き継ぐ…") == (r.c.lockStatus().kind == app::AppController::LockKind::Other), "引き継ぎのコマンド");
+  }
   r.key(ImGuiKey_K, true);
   r.u.paletteQuery = "追加";
   r.frame(2);
@@ -348,6 +358,11 @@ void readOnlyScenario(bool stale) {
     r.frame(3);
     check(!r.c.readOnly() && !r.u.roBandShown, "再確認で編集できる状態になり、帯が消える");
     check(r.fs.exists(lockPath), "自分のロックができる");
+    {
+      ui::Frame fr{r.c, r.u, r.p};
+      const std::vector<std::string> titles = ui::paletteTitles(fr);
+      check(std::find(titles.begin(), titles.end(), "課題を追加（最上位）") != titles.end(), "編集できるときは、変更するコマンドが並ぶ");
+    }
     r.c.setView(app::View::List);
     r.c.select("9");
     r.frame(2);

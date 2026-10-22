@@ -83,6 +83,7 @@ class FolderWatch {
     if (dirHandle_ == INVALID_HANDLE_VALUE || WaitForSingleObject(event_, 0) != WAIT_OBJECT_0) return false;
     DWORD bytes = 0;
     bool relevant = true;
+    pending_ = false;  // 通知が届いた（このあと arm で次を頼む）
     if (!GetOverlappedResult(dirHandle_, &ov_, &bytes, FALSE)) {
       close();  // 取れなくなった（ドライブが外れた など）。次の watch で作り直す
       retryAt_ = GetTickCount64() + 5000;
@@ -111,19 +112,23 @@ class FolderWatch {
     ZeroMemory(&ov_, sizeof(ov_));
     ov_.hEvent = event_;
     ResetEvent(event_);
-    return ReadDirectoryChangesW(dirHandle_, buf_, sizeof(buf_), TRUE,
-                                 FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE |
-                                     FILE_NOTIFY_CHANGE_SIZE,
-                                 nullptr, &ov_, nullptr) != 0;
+    pending_ = ReadDirectoryChangesW(dirHandle_, buf_, sizeof(buf_), TRUE,
+                                     FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE |
+                                         FILE_NOTIFY_CHANGE_SIZE,
+                                     nullptr, &ov_, nullptr) != 0;
+    return pending_;
   }
   void close() {
     if (dirHandle_ != INVALID_HANDLE_VALUE) {
-      CancelIo(dirHandle_);
-      // 取り消しの完了を待ってから、バッファ（このオブジェクトの中）を手放す
-      DWORD n = 0;
-      GetOverlappedResult(dirHandle_, &ov_, &n, TRUE);
+      if (pending_) {
+        CancelIo(dirHandle_);
+        // 取り消しの完了を待ってから、バッファ（このオブジェクトの中）を手放す
+        DWORD n = 0;
+        GetOverlappedResult(dirHandle_, &ov_, &n, TRUE);
+      }
       CloseHandle(dirHandle_);
     }
+    pending_ = false;
     dirHandle_ = INVALID_HANDLE_VALUE;
     if (event_) CloseHandle(event_);
     event_ = nullptr;
@@ -132,6 +137,7 @@ class FolderWatch {
   HANDLE dirHandle_ = INVALID_HANDLE_VALUE;
   HANDLE event_ = nullptr;
   OVERLAPPED ov_{};
+  bool pending_ = false;  // ReadDirectoryChangesW を頼んで、まだ届いていない
   alignas(DWORD) BYTE buf_[64 * 1024];
   ULONGLONG retryAt_ = 0;
 };

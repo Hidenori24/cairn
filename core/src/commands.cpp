@@ -265,6 +265,7 @@ Result<HistoryResult> Session::recordHistory(HistoryMode mode) {
 }
 
 Result<WeeklyAutoResult> Session::recordWeeklyAuto(WeeklyAutoMode mode) {
+  if (readOnly_) return Error{"読み取り専用で開いているため、週の頭のスナップショットを取れません"};
   if (!comp_) return Error{"日程を計算できていないため、週の頭のスナップショットを取れません"};
   WeeklyAuto& a = P_.settings.weeklyAuto;
   const Day today = todayDay();

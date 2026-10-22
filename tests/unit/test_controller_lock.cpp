@@ -216,6 +216,8 @@ TEST_CASE("ロック: 読み取り専用では編集系の入口がすべて断�
   s->setNameKey("N", "K");
   s->setWeeklyNotes("x");
   CHECK_FALSE(s->recordHistory(HistoryMode::Replace).ok());
+  CHECK_FALSE(s->recordWeeklyAuto(WeeklyAutoMode::Replace).ok());
+  CHECK_FALSE(s->recordWeeklyAuto(WeeklyAutoMode::IfMissing).ok());
   CHECK_FALSE(s->addBaseline("b").ok());
   CHECK_FALSE(s->undo());
   s->replaceIssues({}, ProjectMeta{}, {});
@@ -677,9 +679,14 @@ TEST_CASE("ロック: 窓口を渡さなければ今までどおり（ロック�
   CHECK(c.readOnlyBand().empty());
 }
 
-TEST_CASE("ロック: 自動の基準日・履歴の記録は、読み取り専用で開いたときには何もしない") {
+TEST_CASE("ロック: 自動の基準日・履歴・週の頭のスナップショットは、読み取り専用で開いたときには何もしない") {
   Env e;
   e.aliceCreates();
+  const std::size_t points = e.a->c.session()->history().points.size();
+  const std::size_t snaps = e.a->c.session()->weeklyAuto().snaps.size();
+  const std::string base0 = e.a->c.session()->settings().baseDate;
+  // 翌週に開く（編集できるなら、その週の点とスナップショットを足し、基準日を今日に合わせる）
+  e.clk.set(LocalTime{2026, 11, 2, 9, 0, 0});
   e.startB(",\"autoBaseToday\":true");
   AppController& b = e.b->c;
   REQUIRE(b.readOnly());
@@ -688,5 +695,15 @@ TEST_CASE("ロック: 自動の基準日・履歴の記録は、読み取り専�
   e.step(2'000);
   CHECK(e.fs.writeCount() == w);
   CHECK_FALSE(hasToast(b, "基準日を今日"));
-  CHECK(b.session()->history().points.size() == e.a->c.session()->history().points.size());
+  CHECK(b.session()->settings().baseDate == base0);
+  CHECK(b.session()->history().points.size() == points);
+  CHECK(b.session()->weeklyAuto().snaps.size() == snaps);
+  // 同じ状況で、ロックを取れるなら足す（上の「何もしない」が、ロックのおかげだと確かめる）
+  e.a.reset();
+  b.recheckLock();
+  REQUIRE_FALSE(b.readOnly());
+  b.openProject(b.currentId());
+  e.step(2'000);
+  CHECK(b.session()->history().points.size() == points + 1);
+  CHECK(b.session()->weeklyAuto().snaps.size() == snaps + 1);
 }
