@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 #include "roadmap/clock.hpp"
@@ -100,6 +101,8 @@ class Session {
   // ---- 計算と取り消し ----
   // 再計算する。エラーなら文字列を返す
   std::optional<std::string> rebuild();
+  // 課題を編集する入口（Undo の 1 手）。編集の前後を比べて、新しい課題に Created、中身が変わった課題に Updated を自動で入れる
+  // （core/stamps。Issue #66）。置き換えの取り込み（replaceIssues）・Undo/Redo・設定の変更では記録しない
   bool mutate(const std::function<void(ProjectData&)>& fn, const std::function<void(Session&)>& post = {});
   bool canUndo() const { return !undo_.empty(); }
   bool canRedo() const { return !redo_.empty(); }
@@ -227,6 +230,8 @@ class Session {
     bool operator==(const Snapshot&) const = default;
   };
   Snapshot snapshot() const { return {P_.issues, P_.meta, P_.settings.scenario}; }
+  // 編集の前後を比べて、新しい課題に Created、中身が変わった課題に Updated を入れる（mutate が 1 か所で呼ぶ。Issue #66）
+  void stampEdits(const Snapshot& before, const std::unordered_set<std::string>* only);
   void restore(Snapshot s);
   void persist() { ++version_; }
   Issue newIssue(const std::string& parentId, const std::string& name) const;
@@ -259,6 +264,7 @@ class Session {
   std::uint64_t contentVersion_ = 0;
   int batchDepth_ = 0;
   std::optional<Snapshot> batchSnap_;
+  std::optional<std::unordered_set<std::string>> stampOnly_;  // 次の mutate で Updated を入れる課題を限る（setDeadline）
 };
 
 // 日本語を意識した簡易照合（カタカナをひらがなに寄せてからコードポイント順。SPEC 14-2）
