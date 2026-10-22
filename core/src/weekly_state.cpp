@@ -105,6 +105,13 @@ bool readCount(const Json& j, const char* key, int& out) {
   return true;
 }
 
+bool isKnownSnapshotKey(const std::string& k) {
+  static const char* const kKnown[] = {"base", "progress", "tasks", "done", "late", "tight", "finish", "truncated", "items"};
+  for (const char* x : kKnown)
+    if (k == x) return true;
+  return false;
+}
+
 bool snapshotFromJson(const Json& j, WeeklySnapshot& out) {
   if (!j.is_object()) return false;
   WeeklySnapshot s;
@@ -149,8 +156,41 @@ bool snapshotFromJson(const Json& j, WeeklySnapshot& out) {
       s.items.push_back(std::move(it));
     }
   }
+  // 未知のキーは捨てずに持つ（書き戻す）
+  for (auto it = j.begin(); it != j.end(); ++it)
+    if (!isKnownSnapshotKey(it.key())) s.extra[it.key()] = it.value();
   out = std::move(s);
   return true;
+}
+
+// 同じ週のものを置き換えて入れ、基準日の昇順にそろえる（手動・自動で共通）。上限を超えたぶんは古いものから落とす
+void putSnapshot(std::vector<WeeklySnapshot>& snaps, WeeklySnapshot s, std::size_t maxSnaps) {
+  clampCounts(s);
+  normalizeItems(s);
+  const Day week = weeklyMondayOf(s.base);
+  snaps.erase(std::remove_if(snaps.begin(), snaps.end(), [&](const WeeklySnapshot& x) { return weeklyMondayOf(x.base) == week; }), snaps.end());
+  snaps.push_back(std::move(s));
+  std::stable_sort(snaps.begin(), snaps.end(), [](const WeeklySnapshot& a, const WeeklySnapshot& b) { return a.base < b.base; });
+  while (snaps.size() > maxSnaps) snaps.erase(snaps.begin());
+}
+
+Json snapshotToJson(const WeeklySnapshot& s) {
+  Json o = Json::object();
+  o["base"] = fmtIso(s.base);
+  o["progress"] = std::round(s.progress * 10000.0) / 10000.0;
+  o["tasks"] = s.tasks;
+  o["done"] = s.done;
+  o["late"] = s.late;
+  o["tight"] = s.tight;
+  o["finish"] = s.finish ? Json(fmtIso(*s.finish)) : Json(nullptr);
+  o["truncated"] = s.truncated;
+  Json items = Json::array();
+  for (const WeeklySnapItem& it : s.items) items.push_back(itemToString(it));
+  o["items"] = std::move(items);
+  if (s.extra.is_object())
+    for (auto it = s.extra.begin(); it != s.extra.end(); ++it)
+      if (!isKnownSnapshotKey(it.key())) o[it.key()] = it.value();  // 未知のキーはそのまま書き戻す
+  return o;
 }
 
 }  // namespace
@@ -176,16 +216,7 @@ std::string weeklySanitizeNotes(const std::string& in) {
   return out;
 }
 
-void weeklyPutSnapshot(WeeklyMemo& m, WeeklySnapshot s) {
-  clampCounts(s);
-  normalizeItems(s);
-  const Day week = weeklyMondayOf(s.base);
-  m.snaps.erase(std::remove_if(m.snaps.begin(), m.snaps.end(), [&](const WeeklySnapshot& x) { return weeklyMondayOf(x.base) == week; }),
-                m.snaps.end());
-  m.snaps.push_back(std::move(s));
-  std::stable_sort(m.snaps.begin(), m.snaps.end(), [](const WeeklySnapshot& a, const WeeklySnapshot& b) { return a.base < b.base; });
-  while (m.snaps.size() > kWeeklyMaxSnapshots) m.snaps.erase(m.snaps.begin());
-}
+void weeklyPutSnapshot(WeeklyMemo& m, WeeklySnapshot s) { putSnapshot(m.snaps, std::move(s), kWeeklyMaxSnapshots); }
 
 const WeeklySnapshot* weeklyPreviousSnapshot(const WeeklyMemo& m, Day base) {
   const Day week = weeklyMondayOf(base);
@@ -199,21 +230,7 @@ Json weeklyToJson(const WeeklyMemo& m) {
   Json j = Json::object();
   j["notes"] = m.notes;
   Json snaps = Json::array();
-  for (const WeeklySnapshot& s : m.snaps) {
-    Json o = Json::object();
-    o["base"] = fmtIso(s.base);
-    o["progress"] = std::round(s.progress * 10000.0) / 10000.0;
-    o["tasks"] = s.tasks;
-    o["done"] = s.done;
-    o["late"] = s.late;
-    o["tight"] = s.tight;
-    o["finish"] = s.finish ? Json(fmtIso(*s.finish)) : Json(nullptr);
-    o["truncated"] = s.truncated;
-    Json items = Json::array();
-    for (const WeeklySnapItem& it : s.items) items.push_back(itemToString(it));
-    o["items"] = std::move(items);
-    snaps.push_back(std::move(o));
-  }
+  for (const WeeklySnapshot& s : m.snaps) snaps.push_back(snapshotToJson(s));
   j["snaps"] = std::move(snaps);
   return j;
 }
@@ -230,6 +247,58 @@ WeeklyMemo weeklyFromJson(const Json& j) {
     }
   }
   return m;
+}
+
+// ---------------------------------------------------------------- 自動のスナップショット（Issue #70）
+bool weeklyAutoHasWeek(const WeeklyAuto& a, Day d) { return weeklyAutoOfWeek(a, weeklyMondayOf(d)) != nullptr; }
+
+void weeklyAutoPut(WeeklyAuto& a, WeeklySnapshot s) { putSnapshot(a.snaps, std::move(s), kWeeklyAutoMaxSnapshots); }
+
+const WeeklySnapshot* weeklyAutoOfWeek(const WeeklyAuto& a, Day monday) {
+  const Day week = weeklyMondayOf(monday);
+  for (const WeeklySnapshot& s : a.snaps)
+    if (weeklyMondayOf(s.base) == week) return &s;
+  return nullptr;
+}
+
+const WeeklySnapshot* weeklyAutoAtOrBefore(const WeeklyAuto& a, Day d) {
+  const WeeklySnapshot* best = nullptr;
+  for (const WeeklySnapshot& s : a.snaps)
+    if (weeklyMondayOf(s.base) <= d && (!best || s.base > best->base)) best = &s;
+  return best;
+}
+
+const WeeklySnapshot* weeklyAutoBefore(const WeeklyAuto& a, Day d) {
+  const Day week = weeklyMondayOf(d);
+  const WeeklySnapshot* best = nullptr;
+  for (const WeeklySnapshot& s : a.snaps)
+    if (weeklyMondayOf(s.base) < week && (!best || s.base > best->base)) best = &s;
+  return best;
+}
+
+Json weeklyAutoToJson(const WeeklyAuto& a) {
+  Json j = Json::object();
+  Json snaps = Json::array();
+  for (const WeeklySnapshot& s : a.snaps) snaps.push_back(snapshotToJson(s));
+  j["snaps"] = std::move(snaps);
+  if (a.extra.is_object())
+    for (auto it = a.extra.begin(); it != a.extra.end(); ++it)
+      if (it.key() != "snaps") j[it.key()] = it.value();  // 未知のキーはそのまま書き戻す
+  return j;
+}
+
+WeeklyAuto weeklyAutoFromJson(const Json& j) {
+  WeeklyAuto a;
+  if (!j.is_object()) return a;
+  for (auto it = j.begin(); it != j.end(); ++it)
+    if (it.key() != "snaps") a.extra[it.key()] = it.value();
+  if (!j.contains("snaps") || !j["snaps"].is_array()) return a;
+  for (const Json& x : j["snaps"]) {
+    WeeklySnapshot s;
+    if (!snapshotFromJson(x, s)) continue;  // 壊れたスナップショットは読み飛ばす
+    weeklyAutoPut(a, std::move(s));
+  }
+  return a;
 }
 
 }  // namespace roadmap

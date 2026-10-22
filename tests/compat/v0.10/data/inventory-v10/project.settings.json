@@ -40,6 +40,24 @@
    "crit": false
   }
  },
+ "weeklyAuto": {
+  "snaps": [
+   {
+    "base": "2026-10-19",
+    "progress": 0.5,
+    "tasks": 2,
+    "done": 1,
+    "late": 0,
+    "tight": 0,
+    "finish": "2026-11-06",
+    "truncated": false,
+    "items": [
+     "3\td\t2026-10-09\t0",
+     "4\tp\t2026-11-06\t0"
+    ]
+   }
+  ]
+ },
  "history": {
   "points": [
    {

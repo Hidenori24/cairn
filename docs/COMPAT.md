@@ -26,7 +26,7 @@ Issue #84 の方針を文書にしたもので、保存形式を変える変更�
 | # | 約束 | 今 |
 |---|---|---|
 | 1 | **古いデータをそのまま開ける。** 1.x の新しい版は、古い 1.x と、1.0 の直前の 0.9.x 以降のデータを、手を加えずに開ける（警告なし）。0.3.x 以降の見本で自動で確かめている | 満たしている（0.3.x 以降の見本で確認） |
-| 2 | **開いただけ・取り込み → 書き出しだけでは、CSV のバイト列を変えない。** 設定だけが変わったとき（履歴の記録・表示の切り替えなど）は `project.settings.json` だけを書き、CSV は書き換えない（0.9.0〜） | 満たしている |
+| 2 | **開いただけ・取り込み → 書き出しだけでは、CSV のバイト列を変えない。** 設定だけが変わったとき（履歴の記録・表示の切り替えなど）は `project.settings.json` だけを書き、CSV は書き換えない（0.9.0〜）。なお、プロジェクトを開くと、週に 1 回までは設定が書き換わる（`history`〔0.9.0〜〕・`weeklyAuto`〔0.10.0〜〕の記録。CSV は触らない） | 満たしている |
 | 3 | **古い版が知らないキーを、消さずに書き戻す。** 設定・CSV の列・prefs のどれでも | **一部だけ**（下の表。穴は 5 章） |
 | 4 | **壊す変更は 2.0 まで入れない。** 壊す変更とは、読めなくなる・意味が変わる・キーや列を消す・名前を変える変更。やむを得ない場合は、自動の移行（古い形を読んで新しい形に書き直す）と、移行前のバックアップを必ず付ける（3 章） | 方針（ここで決める） |
 | 5 | **新しいキーは、既存の意味を変えず、読み飛ばせる形で足す**（4 章） | 方針 |
@@ -42,7 +42,8 @@ Issue #84 の方針を文書にしたもので、保存形式を変える変更�
 | `project.settings.json` のトップレベル | **残る** | `ProjectSettings::unknown` |
 | `ui` の中（`ui.cols` の中も） | **残る** | `ui` は JSON のまま持つ |
 | `links` の各項目の中 | **残る** | `Link::extra` |
-| `res`・`attachments` の各項目・`weekly`（全体・スナップショット）・`baselines`（全体・項目）・`history`（全体・点） | **消える**（読んだ値だけを書き直す） | 既知の穴。テストは `should_fail` で追跡 |
+| `weekly` のスナップショットの中・`weeklyAuto`（直下・スナップショットの中） | **残る** | `WeeklySnapshot::extra`・`WeeklyAuto::extra`（#70 で追加） |
+| `res`・`attachments` の各項目・`weekly` の直下・`baselines`（直下・項目）・`history`（直下・点） | **消える**（読んだ値だけを書き直す） | 既知の穴。テストは `should_fail` で追跡 |
 | CSV の未知の列 | **残る** | 見出しと値をそのまま往復する（`Issue::extra`） |
 | `roadmap_prefs.json` のトップレベル | **残る** | `Prefs::unknown` |
 | `roadmap_prefs.json` の入れ子（`window`・`inherit`・`templates` の項目）の中 | **消える** | 既知の穴 |
@@ -75,7 +76,7 @@ Issue #84 の方針を文書にしたもので、保存形式を変える変更�
 3. **足す場所は、いまのところ `project.settings.json` のトップレベルの新しいキーか `ui` の中**（2 章の表）。既存の項目の中に足すときは、先にその項目が未知のキーを保つようにする。
 4. **空・既定のときは書かない**（`attachments` などは空なら書かない）。その機能を使っていない利用者のファイルを変えない。
 5. **CSV に足すのは、末尾の未知の列として**。JIRA の標準の列名と衝突させない。値が 1 件もないときは列を作らない（`Resolved`・`Created`/`Updated` と同じ）。取り込み → 書き出しだけでは増やさない。
-6. **共有・バックアップ JSON には、環境依存のもの（パス・URL）や個人情報を入れない**（`links`・`baselines`・`history`・`weekly` は入れていない）。
+6. **共有・バックアップ JSON には、環境依存のもの（パス・URL）や個人情報を入れない**（`links`・`baselines`・`history`・`weekly`・`weeklyAuto` は入れていない）。
 7. 上限と検証を決める（件数・長さ・Issue Id は `isSafePathComponent`）。
 
 ## 5. 既知の穴と要確認
@@ -83,7 +84,7 @@ Issue #84 の方針を文書にしたもので、保存形式を変える変更�
 約束を満たしていない点と、確かめられていない点です。1.0.0 の前に直すか、方針を決めます。
 
 **穴（テストで追跡している）**
-1. **未知のキーが消える場所がある**（2 章の表）。`res`・`attachments`・`weekly`・`baselines`・`history` の中と、prefs の入れ子。`test_compat.cpp` の `should_fail` のテストが、直ったとき（＝テストが「失敗しなくなった」とき）に知らせる。直し方の案: 各項目の型に `extra`（`Link` と同じ）を持たせて書き戻す。
+1. **未知のキーが消える場所がある**（2 章の表）。`res`・`attachments` の項目・`weekly` の直下・`baselines`・`history` の中と、prefs の入れ子。`test_compat.cpp` の `should_fail` のテストが、直ったとき（＝テストが「失敗しなくなった」とき）に知らせる。直し方の案: 各項目の型に `extra`（`Link` と同じ）を持たせて書き戻す。
 2. **共有・バックアップ JSON から取り込んだプロジェクトの `project.settings.json` に、`csv`（CSV の全文の写し）と `v` が書かれる**。`parseBackup` が JSON の枠のキーを「未知のキー」として設定に入れるため。CSV の本体（`project.csv`）は壊れないが、設定が大きくなり、古い写しが残る。
 
 **要確認（分からない・確かめていない）**
@@ -133,7 +134,7 @@ CHANGELOG と、各版のタグ（`v0.5.0`・`v0.7.0`・`v0.9.0` など）のコ
 | `ui.attachThumb` | 0.6.0〜 | |
 | `baselines`・`links`・`history` | 0.9.0〜 | |
 | `ui.cols.plan` | 0.9.0〜 | 「計画との差」の列 |
-| （設定のキーの追加なし） | 0.10.0 | CSV に `Created`・`Updated` の列が増える |
+| `weeklyAuto` | 0.10.0〜 | 開いたときに自動で取る週の頭のスナップショット（`snaps`）。`weekly` とは別のキー。CSV には `Created`・`Updated` の列も増える |
 
 ### `roadmap_prefs.json` のキー
 
@@ -156,7 +157,7 @@ CHANGELOG と、各版のタグ（`v0.5.0`・`v0.7.0`・`v0.9.0` など）のコ
 
 ### 共有・バックアップの JSON
 
-`{"app": "regroadmap", "version": 3, "exported", "projects": [{"v": 3, "id", "name", "key", "base", "hol", "scn", "scenarios", "ui", "res", "csv"}], "templates"}`。**0.1.0 から形は変わっていません**。`attachments`・`weekly`・`baselines`・`links`・`history` は入れません。
+`{"app": "regroadmap", "version": 3, "exported", "projects": [{"v": 3, "id", "name", "key", "base", "hol", "scn", "scenarios", "ui", "res", "csv"}], "templates"}`。**0.1.0 から形は変わっていません**。`attachments`・`weekly`・`weeklyAuto`・`baselines`・`links`・`history` は入れません。
 
 ## 8. 版ごとの見本とテスト
 
@@ -168,7 +169,7 @@ CHANGELOG と、各版のタグ（`v0.5.0`・`v0.7.0`・`v0.9.0` など）のコ
 | `v0.5/` | 0.5.x | フォルダ構成。`attachments`（`sha256` なし）・`weekly`・`ui.cols.pred`・`ui.dep` |
 | `v0.7/` | 0.7.x | `ui.attachThumb`・`attachments[].sha256`（古い添付も混ぜる）。CSV に JIRA の日時の `Created`/`Updated` と `Sprint` |
 | `v0.9/` | 0.9.x | `baselines`・`links`・`history`・`ui.cols.plan`。CSV に `Attachment`・`Outward issue link (Relates)`・コメント |
-| `v0.10/` | 0.10.x | CSV に `Created`/`Updated`（アプリが足す形） |
+| `v0.10/` | 0.10.x | `weeklyAuto`。CSV に `Created`/`Updated`（アプリが足す形） |
 
 各フォルダに `data/…`（プロジェクト）、`roadmap_prefs.json`、`share.json`（共有 JSON）があります。**その版が書かなかったキーは書いていません。** 設定・prefs・共有 JSON の形は、その版のタグのコードを見て揃え、今の版が書き直したときに**1 バイトも変わらない**ことで確かめています。CSV は、`csv.cpp` が 0.1.0 から変わっていないので、今の `rmcli import-export` で作りました。`.gitattributes` で `tests/compat/**` は改行を変換しません（CRLF を含めてバイトで比べるため）。
 

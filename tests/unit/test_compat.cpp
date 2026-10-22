@@ -178,11 +178,13 @@ TEST_CASE("compat: その版が書いたキーが、今の版で読める値に�
     CHECK(st.ui["cols"]["plan"] == true);
     CHECK(st.attachments.at("6")[0].name == "draft.docx");
   }
-  {  // 0.10.x: 設定のキーは 0.9 と同じ。CSV に Created / Updated が増える
+  {  // 0.10.x: weeklyAuto が増える。CSV に Created / Updated が増える
     Opened o(kSamples[4]);
     const ProjectSettings& st = o.entry().rec.settings;
     CHECK(st.links.size() == 1);
     CHECK(st.history.points.size() == 1);
+    CHECK(st.weeklyAuto.snaps.size() == 1);  // 開いたときに自動で取る週の頭のスナップショット（#70）
+    CHECK(st.weekly.empty());
   }
 }
 
@@ -244,6 +246,8 @@ std::optional<std::string> pointerFor(const std::string& kind, const Json& j) {
   else if (kind == "attachments") p = firstItem("attachments");
   else if (kind == "weekly") p = "/weekly";
   else if (kind == "weekly.snap") p = "/weekly/snaps/0";
+  else if (kind == "weeklyAuto") p = "/weeklyAuto";
+  else if (kind == "weeklyAuto.snap") p = "/weeklyAuto/snaps/0";
   else if (kind == "baselines") p = "/baselines";
   else if (kind == "baselines.item") p = "/baselines/list/0";
   else if (kind == "history") p = "/history";
@@ -306,9 +310,9 @@ bool allKept(const std::vector<std::string>& kinds, int& n) {
 
 }  // namespace
 
-TEST_CASE("compat: 未知のキーが消えない（設定のトップレベル・ui・関連リンクの項目）") {
+TEST_CASE("compat: 未知のキーが消えない（設定のトップレベル・ui・関連リンクの項目・週次レポートのスナップショット）") {
   int n = 0;
-  CHECK(allKept({"top", "ui", "ui.cols", "links"}, n));
+  CHECK(allKept({"top", "ui", "ui.cols", "links", "weekly.snap", "weeklyAuto", "weeklyAuto.snap"}, n));
   CHECK(n >= 5 * 3);  // 見本が減ってもテストが空にならないこと
 }
 
@@ -324,9 +328,9 @@ TEST_CASE("compat: 未知のキー: 添付 attachments の項目の中" * doctes
   CHECK(allKept({"attachments"}, n));
   CHECK(n > 0);
 }
-TEST_CASE("compat: 未知のキー: 週次レポート weekly（全体・スナップショット）" * doctest::should_fail()) {
+TEST_CASE("compat: 未知のキー: 週次レポート weekly の直下" * doctest::should_fail()) {
   int n = 0;
-  CHECK(allKept({"weekly", "weekly.snap"}, n));
+  CHECK(allKept({"weekly"}, n));
   CHECK(n > 0);
 }
 TEST_CASE("compat: 未知のキー: ベースライン baselines（全体・項目）" * doctest::should_fail()) {
