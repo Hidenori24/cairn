@@ -13,6 +13,7 @@
 
 #include "app_controller.hpp"
 #include "roadmap/report.hpp"
+#include "roadmap/trends.hpp"
 #include "roadmap/weekly.hpp"
 #include "ui/theme.hpp"
 
@@ -291,6 +292,31 @@ struct UiState {
   };
   std::vector<StatsLoadCell> statsLoadCells;
   int statsLoadRows = 0, statsDoneRows = 0;
+  // 統計ビューの「推移」（Issue #54 の A）: 絞り込みの選択（プロジェクトごと。切り替えたら初期化）と、
+  // 前のフレームの描画の結果（煙テストが当たり位置と件数を知るために使う）
+  struct StatsTrend {
+    std::string projectId;       // この選択がどのプロジェクトのものか
+    TrendFilter::Who who = TrendFilter::Who::All;
+    std::string name;            // who == Name のときの担当者名
+    bool standalone = false;     // ルート課題: 親のない単独の課題
+    std::string rootId;          // ルート課題の Issue Id（空 = すべて）
+    // ---- 前のフレームの描画 ----
+    bool drawn = false;
+    int items = 0, weeks = 0, leadN = 0, agingN = 0;
+    bool forecastOk = false;
+    struct Col {
+      ImVec2 a{0, 0}, b{0, 0};
+    };
+    std::vector<Col> weekCols;   // 週ごとの当たり（過去の週だけ）
+    Col lastCol;                 // 予測の週も含めた最後の列
+    float chartX1 = 0;           // 図の右端（画面の座標）。列がここに収まっていることを煙テストが確かめる
+    struct AgingRow {
+      std::string id;
+      ImVec2 a{0, 0}, b{0, 0};
+    };
+    std::vector<AgingRow> agingRows;
+    ImVec2 whoA{0, 0}, whoB{0, 0}, rootA{0, 0}, rootB{0, 0};  // 担当者・ルート課題の選択欄
+  } statsTrend;
   struct RowDrag {
     std::string id;
     bool active = false;

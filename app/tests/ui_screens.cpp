@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -204,8 +205,22 @@ int main(int argc, char** argv) {
       ImGui::Render();
     }
   };
+  // 環境変数 ROADMAP_SHOT_ONLY があれば、その文字で始まる名前の画像だけを書く（ディスクと時間の節約。状態は同じだけ進める）
+  std::string onlyBuf;
+#ifdef _MSC_VER
+  {
+    char* v = nullptr;
+    std::size_t n = 0;
+    if (_dupenv_s(&v, &n, "ROADMAP_SHOT_ONLY") == 0 && v) onlyBuf = v;
+    std::free(v);
+  }
+#else
+  if (const char* v = std::getenv("ROADMAP_SHOT_ONLY")) onlyBuf = v;
+#endif
+  const char* const only = onlyBuf.empty() ? nullptr : onlyBuf.c_str();
   const auto shot = [&](const std::string& name) {
     frames(3);
+    if (only && name.rfind(only, 0) != 0) return;
     render(ImGui::GetDrawData(), tex, out + "/" + name + ".ppm", ui::v4(u.t->bg));
   };
   shot("00_welcome");
@@ -954,6 +969,114 @@ int main(int argc, char** argv) {
     c.session()->setResource({true, 1});
     c.afterEdit();
     statsShots("53_stats_load_hierarchy_light_resource");
+  }
+  // 統計ビューの「推移」（Issue #54 の A）: バーンダウン（ペース予測つき）・リードタイム・滞留日数 × ライト・ダーク、
+  // ホバー、予測が出ない場合、Created 列がない場合
+  {
+    const Day base = *parseIso("2026-10-19");
+    const auto trendCsv = [&](bool withCols, int recentDone) {
+      std::string t = "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,";
+      if (withCols) t += "Created,Updated,";
+      t += "Resolved,Duration (weeks)\n";
+      t += withCols ? "1,Epic,基盤,,,,High,2026-06-01,,,\n2,Epic,画面,,,,High,2026-06-01,,,\n" : "1,Epic,基盤,,,,High,,\n2,Epic,画面,,,,High,,\n";
+      const char* const who[] = {"田中", "鈴木", "佐藤", "高橋"};
+      for (int i = 0; i < 72; ++i) {
+        const Day created = base - 140 + i * 2;
+        // 前半はほぼ完了、後半は recentDone 件ごとに完了
+        const bool done = i < 48 ? (i % 4 != 3) : (recentDone > 0 && i % recentDone == 0);
+        const Day resolved = std::min<Day>(created + 6 + (i * 7) % 28, base - 1);
+        const Day updated = std::min<Day>(created + (i * 5) % 70, base);
+        t += std::to_string(i + 3) + ",Task,課題" + std::to_string(i + 1) + "の作業," + (i < 36 ? "1" : "2") + "," + who[i % 4] + "," +
+             (done ? "Done" : (i % 5 == 0 ? "In Progress" : "To Do")) + ",Medium,";
+        if (withCols) t += fmtIso(created) + "," + (done ? std::string() : (i % 6 == 0 ? std::string() : fmtIso(updated))) + ",";
+        t += (done ? fmtIso(resolved) : std::string()) + ",1\n";
+      }
+      return t;
+    };
+    const auto scrollTo = [&](const std::function<bool()>& reached) {
+      c.setView(app::View::Stats);
+      clk.advanceMs(15000);
+      frames(3);
+      ImGui::GetIO().AddMousePosEvent(700, 450);
+      for (int k = 0; k < 30; ++k) {  // いったん先頭へ戻す（前のプロジェクトのスクロール位置が残っている）
+        ImGui::GetIO().AddMouseWheelEvent(0, 20);
+        frames(1);
+      }
+      for (int k = 0; k < 200 && !reached(); ++k) {
+        ImGui::GetIO().AddMouseWheelEvent(0, -1);
+        frames(2);
+      }
+    };
+    // ポインタを統計の外へ出してから撮る（ツールチップが写り込まない）。スクロールはポインタが統計の上にあるときだけ効く
+    const auto awayShot = [&](const std::string& name) {
+      ImGui::GetIO().AddMousePosEvent(5, 5);
+      frames(2);
+      shot(name);
+    };
+    const auto overStats = [&] {
+      ImGui::GetIO().AddMousePosEvent(700, 450);
+      frames(2);  // ホバー先の更新（次のフレームでホイールが統計に届く）
+    };
+    const auto trendShots = [&](const std::string& name) {
+      scrollTo([&] { return u.statsTrend.drawn && u.statsTrend.whoA.y < 150; });
+      awayShot(name + "_burn");
+      // 週の上にマウスを載せたときのツールチップ
+      if (u.statsTrend.weekCols.size() > 5) {
+        const auto& col = u.statsTrend.weekCols[u.statsTrend.weekCols.size() - 3];
+        ImGui::GetIO().AddMousePosEvent((col.a.x + col.b.x) / 2, (col.a.y + col.b.y) / 2);
+        frames(2);
+        shot(name + "_tip");
+      }
+      overStats();
+      for (int k = 0; k < 6; ++k) {  // リードタイムの節が上に来るところまで（下まで行き過ぎない）
+        ImGui::GetIO().AddMouseWheelEvent(0, -1);
+        frames(2);
+      }
+      awayShot(name + "_lead");
+      scrollTo([&] { return !u.statsTrend.agingRows.empty() && u.statsTrend.agingRows.back().b.y < 880; });
+      awayShot(name + "_aging");
+    };
+    c.importText(trendCsv(true, 3), "推移（作成日・更新日あり）", app::ImportMode::New);
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    trendShots("60_trends_light");
+    u.t = &ui::darkTokens();
+    ui::applyStyle(*u.t, u.m);
+    trendShots("61_trends_dark");
+    // ペース予測が出ない場合（直近に完了がほとんどない）
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    {
+      // 書き出した HTML の「推移」（ブラウザで開いて確かめる。ライト・ダーク）
+      for (const bool dark : {false, true}) {
+        ExportOptions opt;
+        opt.gantt = opt.list = false;
+        opt.dark = dark;
+        const auto html = c.buildReport(opt);
+        if (html.ok()) {
+          const std::string file = dark ? "html_trends_dark.html" : "html_trends_light.html";
+          std::ofstream o(out + "/" + file, std::ios::binary);
+          o << html.value();
+          std::printf("wrote %s/%s (%zu KB)\n", out.c_str(), file.c_str(), html.value().size() / 1024);
+        }
+      }
+    }
+    c.importText(trendCsv(true, 0), "推移（直近の完了なし）", app::ImportMode::New);
+    scrollTo([&] { return u.statsTrend.drawn && u.statsTrend.whoA.y < 150; });
+    awayShot("62_trends_noforecast");
+    // 担当者で絞った状態
+    u.statsTrend.who = TrendFilter::Who::Name;
+    u.statsTrend.name = "鈴木";
+    awayShot("63_trends_filtered");
+    // Created・Updated の列がない CSV
+    c.importText(trendCsv(false, 3), "推移（日付の列なし）", app::ImportMode::New);
+    scrollTo([&] { return u.statsTrend.drawn && u.statsTrend.whoA.y < 150; });
+    awayShot("64_trends_nocols");
+    c.deleteCurrentProject();
+    c.deleteCurrentProject();
+    c.deleteCurrentProject();
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
   }
   // HTML に書き出す（Issue #42）: 「…」メニュー・ダイアログ・通知と、書き出した HTML（ブラウザで開いて確かめる）
   {

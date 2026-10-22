@@ -688,6 +688,7 @@ Result<std::string> AppController::buildReport(const ExportOptions& opt) const {
   if (!s || !s->tree() || !s->rows()) return Error{"プロジェクトが開かれていません"};
   ExportInput in(*s->tree(), s->viewIssues(), *s->rows(), s->calendar());
   in.base = s->baseDay();
+  in.meta = &s->meta();
   in.projectName = s->settings().name;
   in.resource = s->settings().resource;
   in.clock = &clock_;
