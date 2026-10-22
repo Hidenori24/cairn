@@ -593,7 +593,8 @@ void drawTopBar(Frame& f) {
     const char* icon;
     const char* label;
   } tabs[] = {{View::Gantt, "gantt", S::kViewGantt}, {View::Board, "board", S::kViewBoard},
-              {View::List, "list", S::kViewList}, {View::Goals, "target", S::kViewGoals}, {View::Stats, "chart", S::kViewStats}};
+              {View::List, "list", S::kViewList}, {View::Goals, "target", S::kViewGoals}, {View::Stats, "chart", S::kViewStats},
+              {View::Today, "sun", S::kViewToday}};
   for (const auto& t : tabs) {
     ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
     if (iconTextButton(u, t.label, t.icon, t.label, false, cur == t.v, s != nullptr)) c.setView(t.v);
@@ -1352,6 +1353,7 @@ void handleKeys(Frame& f) {
     if (ImGui::IsKeyPressed(ImGuiKey_3, false)) c.setView(View::List);
     if (ImGui::IsKeyPressed(ImGuiKey_4, false)) c.setView(View::Goals);
     if (ImGui::IsKeyPressed(ImGuiKey_5, false)) c.setView(View::Stats);
+    if (ImGui::IsKeyPressed(ImGuiKey_6, false)) c.setView(View::Today);
   }
   for (ImWchar ch : io.InputQueueCharacters) {
     if (ch == '/') u.focusSearch = true;
@@ -1511,6 +1513,7 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
       case View::List: drawListView(f, mainSize); break;
       case View::Goals: drawGoalsView(f, mainSize); break;
       case View::Stats: drawStatsView(f, mainSize); break;
+      case View::Today: drawTodayView(f, mainSize); break;
       default: drawGanttView(f, mainSize); break;
     }
   }

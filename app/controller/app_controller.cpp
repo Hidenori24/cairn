@@ -18,6 +18,7 @@ const char* viewKey(View v) {
     case View::List: return "list";
     case View::Goals: return "goals";
     case View::Stats: return "stats";
+    case View::Today: return "today";
     default: return "gantt";
   }
 }
@@ -26,6 +27,7 @@ View viewFromKey(const std::string& k) {
   if (k == "list") return View::List;
   if (k == "goals") return View::Goals;
   if (k == "stats") return View::Stats;
+  if (k == "today") return View::Today;
   return View::Gantt;
 }
 

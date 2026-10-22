@@ -34,6 +34,7 @@ add_library(roadmap_ui STATIC
   ui/link_drag.cpp
   ui/view_goals.cpp
   ui/view_stats.cpp
+  ui/view_today.cpp
   ui/panel_detail.cpp
   ui/panel_attach.cpp
   ui/panel_links.cpp

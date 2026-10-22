@@ -1308,7 +1308,7 @@ void dlgWarnings(Frame& f) {
 
 void dlgShortcuts(Frame& f) {
   const std::pair<const char*, const char*> global[] = {
-      {"Ctrl+K", "コマンドパレット"}, {"Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y", "元に戻す / やり直す"}, {"1 2 3 4 5", "ガント / ボード / リスト / ギャップ / 統計"},
+      {"Ctrl+K", "コマンドパレット"}, {"Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y", "元に戻す / やり直す"}, {"1 2 3 4 5 6", "ガント / ボード / リスト / ギャップ / 統計 / 今日・今週"},
       {"/", "絞り込み欄へ"},        {"?", "この一覧"},  {"Ctrl+,", "アプリの設定"},
       {"Ctrl+ホイール / Ctrl+「+」「-」 / Ctrl+0", "画面全体の拡大縮小 / 100%に戻す"},
       {"Ctrl+ホイール（ガントの時間軸の上）", "ガントの時間軸の拡大縮小（マウスの位置の日付を動かさない）"},
