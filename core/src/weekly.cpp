@@ -338,7 +338,11 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
       seenNow.insert(T.ids[k]);
       const WeeklySnapItem& was = *f->second;
       if (nowDone) {
-        if (was.st != 'd') cDoneNew.push_back({i, in.issues[k].resolved ? *in.issues[k].resolved : 0});
+        if (was.st != 'd') {
+          // 並べ替えの鍵は完了日。終わりがスナップショットなら保存した値（あとで書き換えた完了日を使わない）
+          const OptDay doneOn = until ? nowFinish : in.issues[k].resolved;
+          cDoneNew.push_back({i, doneOn ? *doneOn : 0});
+        }
         continue;
       }
       if (nowLate && !was.late) cLate.push_back({i, row.floatDays});
@@ -368,6 +372,13 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
     ch.removed = removed;
     fill(ch.newlyLate, cLate);
     fill(ch.newlyDone, cDoneNew);
+    if (until) {
+      // 表示する完了日も、保存した値にする（makeItem は今の Issue::resolved を入れるため）
+      for (WeeklyItem& it : ch.newlyDone.items) {
+        const auto g = after.find(T.ids[static_cast<std::size_t>(it.index)]);
+        it.resolved = g != after.end() ? g->second->finish : OptDay{};
+      }
+    }
     // 動き: 鍵の同点は dfs の順（sortCands）。shift は添字から引き直す
     sortCands(cMove, T);
     ch.finishMovedTotal = static_cast<int>(cMove.size());

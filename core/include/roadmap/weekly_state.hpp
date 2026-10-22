@@ -42,6 +42,7 @@ struct WeeklySnapshot {
   OptDay finish;  // プロジェクトの完了見込み日
   bool truncated = false;  // 課題が多すぎて、先頭の分だけ持っている
   std::vector<WeeklySnapItem> items;
+  nlohmann::ordered_json extra;  // 未知のキー（新しい版が足したもの。読み込んで、そのまま書き戻す。なければ null）
   bool operator==(const WeeklySnapshot&) const = default;
 };
 
@@ -56,7 +57,8 @@ struct WeeklyMemo {
 // 手動（週報のコピー・保存）の WeeklyMemo::snaps とは別に持ち、お互いを置き換えない。base は取った日（IClock の今日）
 struct WeeklyAuto {
   std::vector<WeeklySnapshot> snaps;  // 基準日の古い順。同じ週のものは 1 つ。最大 kWeeklyAutoMaxSnapshots
-  bool empty() const { return snaps.empty(); }
+  nlohmann::ordered_json extra;       // "weeklyAuto" 直下の未知のキー（そのまま書き戻す。なければ null）
+  bool empty() const { return snaps.empty() && extra.empty(); }
   bool operator==(const WeeklyAuto&) const = default;
 };
 

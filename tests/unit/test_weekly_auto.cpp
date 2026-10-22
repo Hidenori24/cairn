@@ -702,6 +702,64 @@ TEST_CASE("weekly(自動): 手動だけのときは従来どおり（前回の�
   }
 }
 
+TEST_CASE("weekly(自動): 終わりがスナップショットのとき、完了日は保存した値を使う（あとで完了日を変えても先週の週報は変わらない）") {
+  // 先週の頭（B）→ 今週の頭（C）で、Y が 10/21、Q が 10/20 に完了した（保存された完了日）
+  std::vector<Spec> b = stateB();
+  std::vector<Spec> c = stateB();
+  c[2].status = "Done";  // Y
+  c[2].resolved = "2026-10-21";
+  c[3].status = "Done";  // Q
+  c[3].resolved = "2026-10-20";
+  // いま: 完了日をあとで書き換えた（Y は 10/19、Q は 10/22。順番も逆になる）
+  std::vector<Spec> n = c;
+  n[2].resolved = "2026-10-19";
+  n[3].resolved = "2026-10-22";
+  const Proj now = Proj::make(n);
+  WeeklyAuto a;
+  weeklyAutoPut(a, Proj::make(b).snapshotAt("2026-10-13"));
+  weeklyAutoPut(a, Proj::make(c).snapshotAt("2026-10-19"));
+  WeeklyOptions o;
+  o.period = WeeklyPeriod::LastWeek;
+  o.sections.summary = o.sections.done = o.sections.progress = o.sections.next = o.sections.risks = false;
+  o.sections.milestones = o.sections.assignees = o.sections.notes = false;
+  WeeklyInput in = now.input();
+  const WeeklyMemo none;
+  in.memo = &none;
+  in.autos = &a;
+  const WeeklyReport r = buildWeeklyReport(in, o);
+  REQUIRE(r.changes.available);
+  REQUIRE(r.changes.hasUntil);
+  REQUIRE(r.changes.newlyDone.items.size() == 2);
+  // 並べ替えも保存した完了日の順（Q 10/20 → Y 10/21）
+  CHECK(namesOf(now, r.changes.newlyDone) == std::vector<std::string>{"Q", "Y"});
+  CHECK(r.changes.newlyDone.items[0].resolved == D("2026-10-20"));
+  CHECK(r.changes.newlyDone.items[1].resolved == D("2026-10-21"));
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "完了 10/20(火)"));
+  CHECK(has(md, "完了 10/21(水)"));
+  CHECK_FALSE(has(md, "完了 10/19(月)"));
+  CHECK_FALSE(has(md, "10/22(木)"));
+  CHECK(md.find("Q") < md.find("Y"));
+  const std::string html = weeklyHtml(r);
+  CHECK(has(html, "10/20(火)"));
+  CHECK(has(html, "10/21(水)"));
+  CHECK_FALSE(has(html, ">10/19(月)<"));
+  CHECK(has(html, ">10/20(火)<"));
+  CHECK_FALSE(has(html, "10/22(木)"));
+  // 終わりが「いま」のときは、いまの完了日（従来どおり）
+  WeeklyAuto head;
+  weeklyAutoPut(head, Proj::make(b).snapshotAt("2026-10-19"));
+  WeeklyInput in2 = now.input();
+  in2.memo = &none;
+  in2.autos = &head;
+  WeeklyOptions cur = o;
+  cur.period = WeeklyPeriod::ThisWeek;
+  const WeeklyReport rn = buildWeeklyReport(in2, cur);
+  REQUIRE(rn.changes.newlyDone.items.size() == 2);
+  CHECK(rn.changes.newlyDone.items[0].resolved == D("2026-10-19"));
+  CHECK(rn.changes.newlyDone.items[1].resolved == D("2026-10-22"));
+}
+
 TEST_CASE("weekly(自動): 比べる終わりが一部だけのスナップショットなら、増減は数えない") {
   const Proj now = Proj::make(stateNow());
   WeeklyAuto a;
@@ -890,4 +948,64 @@ TEST_CASE("weeklyAuto: Session — 設定に書き出して読み直すと残る
   const std::string text = dumpJs(j["weeklyAuto"]);
   CHECK(text.find("田中") == std::string::npos);
   CHECK(text.find("単独") == std::string::npos);
+}
+
+// ---------------------------------------------------------------- 未知のキーの保持
+TEST_CASE("weeklyAuto: 未知のキー（weeklyAuto の直下と各スナップショットの中）は、読み込み→書き出しで消えない") {
+  FixedClock clk(LocalTime{2026, 10, 21, 9, 0, 0});
+  Json snapJson = weeklyAutoToJson([] {
+    WeeklyAuto a;
+    weeklyAutoPut(a, snapWithItems("2026-10-14", 3));
+    weeklyAutoPut(a, snapWithItems("2026-10-21", 2));
+    return a;
+  }())["snaps"][0];
+  Json snap2 = snapJson;
+  snap2["base"] = "2026-10-21";
+  snapJson["future"] = Json{{"x", 1}, {"y", Json::array({1, 2})}};
+  snap2["other"] = "文字";
+  Json auto_ = Json{{"snaps", Json::array({snapJson, snap2})}, {"futureKey", Json{{"a", 1}}}, {"flag", true}};
+  Json settings = Json::object();
+  settings["id"] = "p1";
+  settings["name"] = "P";
+  settings["weeklyAuto"] = auto_;
+  const ProjectRecord rec = recordFromSettingsJson(Json::parse(dumpJs(settings)), "", "stem", clk);
+  REQUIRE(rec.settings.weeklyAuto.snaps.size() == 2);
+  // 読み込めるだけでなく、書き出しても値が残る
+  const Json out = Json::parse(dumpJs(settingsToJson(rec)));
+  REQUIRE(out.contains("weeklyAuto"));
+  CHECK(out["weeklyAuto"]["futureKey"] == Json{{"a", 1}});
+  CHECK(out["weeklyAuto"]["flag"] == true);
+  REQUIRE(out["weeklyAuto"]["snaps"].size() == 2);
+  CHECK(out["weeklyAuto"]["snaps"][0]["future"] == Json{{"x", 1}, {"y", Json::array({1, 2})}});
+  CHECK(out["weeklyAuto"]["snaps"][1]["other"] == "文字");
+  CHECK_FALSE(out["weeklyAuto"]["snaps"][1].contains("future"));
+  // もう一度往復しても同じ
+  const ProjectRecord rec2 = recordFromSettingsJson(out, "", "stem", clk);
+  CHECK(settingsToJson(rec2)["weeklyAuto"] == out["weeklyAuto"]);
+  // 既知のキーは未知のキーとして二重に書かない
+  CHECK(out["weeklyAuto"]["snaps"][0]["base"] == "2026-10-14");
+  CHECK(out["weeklyAuto"]["snaps"][0]["items"].size() == 3);
+  // 壊れたスナップショットが混じっても、残りと weeklyAuto 直下の未知のキーは残る
+  settings["weeklyAuto"] = Json{{"snaps", Json::array({Json{{"base", 5}, {"future", 1}}, snapJson})}, {"futureKey", 7}};
+  const ProjectRecord rec3 = recordFromSettingsJson(settings, "", "stem", clk);
+  const Json out3 = settingsToJson(rec3);
+  CHECK(out3["weeklyAuto"]["futureKey"] == 7);
+  REQUIRE(out3["weeklyAuto"]["snaps"].size() == 1);
+  CHECK(out3["weeklyAuto"]["snaps"][0]["future"]["x"] == 1);
+  // スナップショットが 1 つもなくても、未知のキーだけは書き戻す
+  settings["weeklyAuto"] = Json{{"snaps", Json::array()}, {"futureKey", 7}};
+  const ProjectRecord rec4 = recordFromSettingsJson(settings, "", "stem", clk);
+  CHECK(rec4.settings.weeklyAuto.snaps.empty());
+  CHECK(settingsToJson(rec4)["weeklyAuto"]["futureKey"] == 7);
+}
+
+TEST_CASE("weeklyAuto: 同じ週を取り直しても、そのスナップショットの未知のキーは残る") {
+  SessionFix f;
+  REQUIRE(f.s->recordWeeklyAuto(WeeklyAutoMode::IfMissing).ok());
+  f.s->data().settings.weeklyAuto.snaps[0].extra["future"] = 5;
+  REQUIRE(f.s->setField("4", [](Issue& o) { o.status = "Done"; o.resolved = parseIso("2026-10-21"); }));
+  const auto rep = f.s->recordWeeklyAuto(WeeklyAutoMode::Replace);
+  REQUIRE(rep.ok());
+  CHECK(rep.value() == WeeklyAutoResult::Replaced);
+  CHECK(f.s->weeklyAuto().snaps[0].extra["future"] == 5);
 }

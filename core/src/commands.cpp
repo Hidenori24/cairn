@@ -266,6 +266,7 @@ Result<WeeklyAutoResult> Session::recordWeeklyAuto(WeeklyAutoMode mode) {
   snap.base = today;  // 週の判定は IClock の今日（履歴と同じ）。取った日として残す
   if (have) {
     const WeeklySnapshot* cur = weeklyAutoOfWeek(a, today);
+    if (cur) snap.extra = cur->extra;  // 新しい版が足した未知のキーは、取り直しても残す
     WeeklyAuto probe;
     weeklyAutoPut(probe, snap);  // 保存と同じ下ごしらえをして比べる
     if (cur && probe.snaps.size() == 1 && *cur == probe.snaps[0]) return WeeklyAutoResult::Unchanged;  // 変わらなければ保存を予約しない

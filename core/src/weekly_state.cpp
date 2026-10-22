@@ -105,6 +105,13 @@ bool readCount(const Json& j, const char* key, int& out) {
   return true;
 }
 
+bool isKnownSnapshotKey(const std::string& k) {
+  static const char* const kKnown[] = {"base", "progress", "tasks", "done", "late", "tight", "finish", "truncated", "items"};
+  for (const char* x : kKnown)
+    if (k == x) return true;
+  return false;
+}
+
 bool snapshotFromJson(const Json& j, WeeklySnapshot& out) {
   if (!j.is_object()) return false;
   WeeklySnapshot s;
@@ -149,6 +156,9 @@ bool snapshotFromJson(const Json& j, WeeklySnapshot& out) {
       s.items.push_back(std::move(it));
     }
   }
+  // 未知のキーは捨てずに持つ（書き戻す）
+  for (auto it = j.begin(); it != j.end(); ++it)
+    if (!isKnownSnapshotKey(it.key())) s.extra[it.key()] = it.value();
   out = std::move(s);
   return true;
 }
@@ -177,6 +187,9 @@ Json snapshotToJson(const WeeklySnapshot& s) {
   Json items = Json::array();
   for (const WeeklySnapItem& it : s.items) items.push_back(itemToString(it));
   o["items"] = std::move(items);
+  if (s.extra.is_object())
+    for (auto it = s.extra.begin(); it != s.extra.end(); ++it)
+      if (!isKnownSnapshotKey(it.key())) o[it.key()] = it.value();  // 未知のキーはそのまま書き戻す
   return o;
 }
 
@@ -268,12 +281,18 @@ Json weeklyAutoToJson(const WeeklyAuto& a) {
   Json snaps = Json::array();
   for (const WeeklySnapshot& s : a.snaps) snaps.push_back(snapshotToJson(s));
   j["snaps"] = std::move(snaps);
+  if (a.extra.is_object())
+    for (auto it = a.extra.begin(); it != a.extra.end(); ++it)
+      if (it.key() != "snaps") j[it.key()] = it.value();  // 未知のキーはそのまま書き戻す
   return j;
 }
 
 WeeklyAuto weeklyAutoFromJson(const Json& j) {
   WeeklyAuto a;
-  if (!j.is_object() || !j.contains("snaps") || !j["snaps"].is_array()) return a;
+  if (!j.is_object()) return a;
+  for (auto it = j.begin(); it != j.end(); ++it)
+    if (it.key() != "snaps") a.extra[it.key()] = it.value();
+  if (!j.contains("snaps") || !j["snaps"].is_array()) return a;
   for (const Json& x : j["snaps"]) {
     WeeklySnapshot s;
     if (!snapshotFromJson(x, s)) continue;  // 壊れたスナップショットは読み飛ばす
