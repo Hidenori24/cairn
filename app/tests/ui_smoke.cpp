@@ -21,6 +21,7 @@
 #include "roadmap/github_ref.hpp"
 #include "roadmap/link_candidates.hpp"
 #include "roadmap/schedule.hpp"
+#include "roadmap/today.hpp"
 #include "roadmap/text.hpp"
 #include "ui/app_ui.hpp"
 #include "ui/icons.hpp"
@@ -192,7 +193,7 @@ int main() {
     ss << in.rdbuf();
     check(h.c.importText(ss.str(), "サンプル", app::ImportMode::New).ok, "サンプルの取り込み");
   }
-  for (auto v : {app::View::Gantt, app::View::Board, app::View::List, app::View::Goals, app::View::Stats}) {
+  for (auto v : {app::View::Gantt, app::View::Board, app::View::List, app::View::Goals, app::View::Stats, app::View::Today}) {
     h.c.setView(v);
     h.frame(3);
   }
@@ -1744,7 +1745,7 @@ int main() {
   h.u.m.compact = true;
   h.u.m.scale = 2.0f;
   ui::applyStyle(*h.u.t, h.u.m);
-  for (auto v : {app::View::Gantt, app::View::Board, app::View::List, app::View::Goals, app::View::Stats}) {
+  for (auto v : {app::View::Gantt, app::View::Board, app::View::List, app::View::Goals, app::View::Stats, app::View::Today}) {
     h.c.setView(v);
     h.frame(3);
   }
@@ -1791,6 +1792,27 @@ int main() {
       check(ms < 100, "5000件の統計ビューが重くない");
 #endif
     }
+    // 今日ビュー（Issue #72）: 5,000 件でも見える行だけを描き、1 フレームが重くならない
+    h.c.setView(app::View::Today);
+    h.c.setUi("todayWho", "all");
+    h.frame(3);
+    check(h.u.today.drawn && h.u.today.total > 0, "5000件でも今日ビューを描く");
+    check(!h.u.today.rows.empty() && h.u.today.rows.size() < 200, "今日ビューは見える行だけを描く（仮想化）");
+    {
+      const auto t0 = std::chrono::steady_clock::now();
+      h.frame(10);
+      const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 10;
+      std::fprintf(stderr, "ui_smoke: 5000件の今日ビュー 1フレーム %.1f ms\n", ms);
+#ifdef ROADMAP_SANITIZED
+      check(ms < 400, "5000件の今日ビューが重くない（サニタイザ付き）");
+#else
+      check(ms < 100, "5000件の今日ビューが重くない");
+#endif
+    }
+    h.c.setUi("todayTab", "week");
+    h.frame(4);
+    check(h.u.today.drawn && h.u.today.week, "5000件でも今週を描く");
+    h.c.setUi("todayTab", "today");
     h.c.setView(app::View::List);
     h.frame(2);
   }
@@ -4351,6 +4373,280 @@ int main() {
     h.c.deleteCurrentProject();
     h.frame(2);
   }
+  // 「今日」ビュー（Issue #72）
+  {
+    const std::string csv =
+        "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Start date,Deadline,Outward issue link (Blocks),Duration (weeks)\n"
+        "1,Epic,認証基盤,,,To Do,High,,2026-12-18,,\n"
+        "2,Task,ログイン画面の実装,1,田中,In Progress,High,2026-10-14,2026-10-23,,0.6\n"
+        "3,Task,パスワード再設定の設計,1,田中,To Do,Medium,,2026-10-16,,0.4\n"
+        "4,Task,セッション管理のレビュー,1,田中,To Do,Medium,,2026-10-19,5,0.2\n"
+        "5,Task,監査ログの出力,1,田中,To Do,Medium,,2026-11-13,,0.6\n"
+        "6,Task,アカウントロックの仕様確認,1,田中,To Do,High,,2026-11-06,,0.4\n"
+        "7,Task,結合テストの準備,1,佐藤,To Do,Medium,,2026-10-21,,0.4\n"
+        "8,Milestone,認証 β 版リリース,1,田中,To Do,High,,2026-10-19,,0\n"
+        "10,Task,DB インデックスの見直し,1,田中,In Progress,Medium,2026-10-12,2026-10-30,,1.5\n"
+        "11,Task,キャッシュ戦略の調査,1,田中,To Do,Low,,2026-10-22,,0.4\n"
+        "12,Task,期限なしの調査メモ,,田中,To Do,Low,,,,0.2\n";
+    check(h.c.importText(csv, "今日のデモ", app::ImportMode::New).ok, "今日ビューの確認用の取り込み");
+    h.c.prefs().me = "田中";
+    h.c.session()->setBaseDate("2026-10-19");
+    h.c.afterEdit();
+    h.c.setView(app::View::Gantt);
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.c.setUi("todayTab", "today");
+    h.c.setUi("todayWho", "me");
+    for (const auto& t : std::vector<app::Toast>(h.c.toasts())) h.c.dismissToast(t.id);
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1440, 900);
+    Session* s = h.c.session();
+    auto& tv = h.u.today;
+    const auto rowOf = [&](const std::string& id) -> const ui::UiState::TodayRow* {
+      for (const auto& r : tv.rows)
+        if (r.id == id) return &r;
+      return nullptr;
+    };
+    const auto mid = [](ImVec2 a, ImVec2 b) { return ImVec2((a.x + b.x) / 2, (a.y + b.y) / 2); };
+    const auto secCount = [&](const char* key) {
+      for (const auto& [k, n] : tv.sections)
+        if (k == key) return n;
+      return 0;
+    };
+    const auto clickRect = [&](ImVec2 a, ImVec2 b) {
+      const ImVec2 m = mid(a, b);
+      h.click(m.x, m.y);
+    };
+    const auto clearToasts = [&] {
+      for (const auto& t : std::vector<app::Toast>(h.c.toasts())) h.c.dismissToast(t.id);
+    };
+
+    // キー 6 で開く。各節に正しい課題が入る
+    h.key(ImGuiKey_6);
+    h.frame(3);
+    check(h.c.view() == app::View::Today, "キー 6 で今日ビューに切り替わる");
+    check(tv.drawn && !tv.week && !tv.empty && !tv.baseNote, "今日ビューが描かれる（基準日は今日と同じなので案内なし）");
+    check(tv.sections.size() == 5, "5 つの節がすべて出る（遅れ・期限・進行中・始められる・マイルストーン）");
+    check(secCount("late") == 1 && secCount("due") == 2 && secCount("prog") == 1 && secCount("start") == 2 && secCount("ms") == 1,
+          "節ごとの件数が正しい（自分 = 田中）");
+    check(tv.total == 7, "今日の対象は 7 件");
+    check(rowOf("3") && rowOf("3")->sec == "late", "期限を過ぎた課題は「遅れている」");
+    check(rowOf("4") && rowOf("4")->sec == "due" && rowOf("2") && rowOf("2")->sec == "due", "今日が期限・終了予定");
+    check(rowOf("10") && rowOf("10")->sec == "prog", "進行中");
+    check(rowOf("6") && rowOf("6")->sec == "start" && rowOf("11") && rowOf("11")->sec == "start", "今日から始められる");
+    check(!rowOf("5"), "先行が未完了の課題は始められる節に出ない");
+    check(!rowOf("7"), "「自分」は佐藤の課題を出さない");
+    check(!rowOf("12"), "日付のない課題は出ない");
+    check(rowOf("8") && rowOf("8")->sec == "ms", "今日のマイルストーン");
+    check(h.u.order.size() == 7, "画面の順（矢印キー用）が 7 件");
+
+    // 担当の切り替え（自分／全員）
+    clickRect(tv.whoAll.first, tv.whoAll.second);
+    h.frame(2);
+    check(h.c.uiStr("todayWho", "") == "all" && secCount("start") == 3 && rowOf("7") != nullptr, "「全員」に切り替えると佐藤の課題も出る");
+    clickRect(tv.whoMe.first, tv.whoMe.second);
+    h.frame(2);
+    check(h.c.uiStr("todayWho", "") == "me" && secCount("start") == 2 && !rowOf("7"), "「自分」に戻すと自分の課題だけ");
+
+    // チェックで完了にする（Undo 1 回で戻る。完了日は既存の動き = 今日と基準日の早い方）
+    {
+      const std::vector<Issue> before = s->issues();
+      const std::size_t undos = s->undoSize();
+      const auto* r = rowOf("6");
+      check(r != nullptr, "完了にする課題の行");
+      if (r) {
+        clickRect(r->chkA, r->chkB);
+        h.frame(2);
+        const Issue* o = s->issue("6");
+        check(o && statusCat(o->status) == Cat::Done && o->resolved == *parseIso("2026-10-19"), "チェックで完了になり、完了日が入る");
+        check(s->undoSize() == undos + 1, "完了は Undo 1 回分");
+        check(!rowOf("6") && secCount("start") == 1, "完了した課題は一覧から消える");
+        bool undoToast = false;
+        for (const auto& t : h.c.toasts()) undoToast |= t.action == NoticeAction::Undo && t.text.find("完了にしました") != std::string::npos;
+        check(undoToast, "完了の通知に「元に戻す」がある");
+        h.c.undo();
+        h.frame(2);
+        check(s->issues() == before, "Undo で元に戻る（状況・完了日とも）");
+        check(rowOf("6") && secCount("start") == 2, "Undo で一覧に戻る");
+      }
+    }
+    clearToasts();
+    // 明日にずらす・来週にずらす（Undo 1 回で戻る。今日の節から外れる）
+    {
+      const std::vector<Issue> before = s->issues();
+      const std::size_t undos = s->undoSize();
+      const auto* r = rowOf("11");
+      check(r != nullptr, "ずらす課題の行");
+      if (r) {
+        clickRect(r->tomA, r->tomB);
+        h.frame(2);
+        const Issue* o = s->issue("11");
+        check(o && o->notBefore == *parseIso("2026-10-20") && o->deadline == *parseIso("2026-10-23"),
+              "明日にずらすと、着手可能日が明日・期限が 1 営業日後になる");
+        check(s->undoSize() == undos + 1, "ずらすのは Undo 1 回分");
+        check(!rowOf("11") && secCount("start") == 1, "明日にずらした課題は今日の節から外れる");
+        check(!h.c.toasts().empty() && h.c.toasts().back().action == NoticeAction::Undo, "ずらした通知に「元に戻す」がある");
+        h.c.undo();
+        h.frame(2);
+        check(s->issues() == before && rowOf("11") != nullptr, "Undo で元に戻る");
+      }
+      const auto* r2 = rowOf("6");
+      if (r2) {
+        clickRect(r2->nxtA, r2->nxtB);
+        h.frame(2);
+        const Issue* o = s->issue("6");
+        check(o && o->notBefore == *parseIso("2026-10-26") && o->deadline == *parseIso("2026-11-13"),
+              "来週にずらすと、着手可能日が来週の月曜・期限が 5 営業日後になる");
+        check(s->undoSize() == undos + 1, "来週にずらすのも Undo 1 回分");
+        h.c.undo();
+        h.frame(2);
+        check(s->issues() == before, "Undo で元に戻る（来週）");
+      }
+    }
+    clearToasts();
+    // 親（まとめ）はずらせない。何も変えず理由を通知する
+    {
+      const std::vector<Issue> before = s->issues();
+      check(!shiftIssue(*s, "1", ShiftTo::Tomorrow, h.clk.today()).ok, "親（まとめ）はずらせない");
+      check(s->issues() == before && !s->takeNotices().empty(), "ずらせないときは何も変えず理由を通知する");
+    }
+    // 行を押すと詳細パネルが開く。ダブルクリックでリストの該当位置へ
+    {
+      const auto* r = rowOf("10");
+      check(r != nullptr, "押す行");
+      if (r) {
+        h.click(r->a.x + 240, (r->a.y + r->b.y) / 2);
+        h.frame(2);
+        check(h.u.detailOpen && h.c.selection().size() == 1 && h.c.selection()[0] == "10", "行を押すとその課題を選んで詳細パネルが開く");
+        check(h.c.view() == app::View::Today, "今日ビューのまま（詳細は横に開く）");
+        const auto* r2 = rowOf("10");
+        if (r2) {
+          h.click(r2->a.x + 240, (r2->a.y + r2->b.y) / 2, 2);
+          h.frame(3);
+          check(h.c.view() == app::View::List && h.c.selection().size() == 1 && h.c.selection()[0] == "10",
+                "ダブルクリックでリストの該当課題へ");
+          check(h.u.revealId.empty(), "リストが行の位置へ進んだら目印を消す");
+        }
+      }
+      h.u.detailOpen = false;
+      h.c.clearSelection();
+      h.c.setView(app::View::Today);
+      h.frame(3);
+    }
+    // 今週: 日ごとの列・進行中の帯・サマリー
+    clickRect(tv.tabWeek.first, tv.tabWeek.second);
+    h.frame(3);
+    check(h.c.uiStr("todayTab", "") == "week" && tv.drawn && tv.week, "「今週」に切り替わる");
+    check(tv.colCounts[0] == 2 && tv.colCounts[1] == 0 && tv.colCounts[2] == 0 && tv.colCounts[3] == 1 && tv.colCounts[4] == 1,
+          "日ごとの列の件数（月 2・木 1・金 1）");
+    check(tv.completing == 4 && tv.elsewhere == 1, "サマリー: 今週の完了予定 4 件・今週の外の遅れ 1 件");
+    check(tv.bands == 2 && tv.bandsShown == 2, "進行中の帯が 2 件");
+    check(tv.colRects.size() == 5, "5 つの列");
+    for (const auto& cr : tv.colRects) check(cr.second.x <= 1440.f, "列が幅に収まる");
+    {
+      const auto* r = rowOf("11");  // 木曜の列のカード
+      check(r != nullptr && r->sec == "week", "木曜の列にカードが出る");
+      if (r) {
+        const std::vector<Issue> before = s->issues();
+        clickRect(r->chkA, r->chkB);
+        h.frame(2);
+        check(s->issue("11") && statusCat(s->issue("11")->status) == Cat::Done, "カードのチェックでも完了になる");
+        h.c.undo();
+        h.frame(2);
+        check(s->issues() == before, "Undo で元に戻る（今週）");
+      }
+      clearToasts();
+      const auto* r2 = rowOf("4");  // 月曜の列
+      check(r2 != nullptr, "月曜の列のカード");
+      if (r2) {
+        const std::vector<Issue> before = s->issues();
+        clickRect(r2->tomA, r2->tomB);
+        h.frame(3);
+        check(s->issue("4") && s->issue("4")->notBefore == *parseIso("2026-10-20"), "カードの「明日」でもずらせる");
+        h.c.undo();
+        h.frame(2);
+        check(s->issues() == before, "Undo で元に戻る（カードのずらし）");
+      }
+    }
+    // 今週の外の遅れ → 「今日」へ
+    if (tv.elsewhereBtn.second.x > tv.elsewhereBtn.first.x) {
+      clickRect(tv.elsewhereBtn.first, tv.elsewhereBtn.second);
+      h.frame(3);
+      check(h.c.uiStr("todayTab", "") == "today" && tv.drawn && !tv.week, "「今日で見る」で今日に戻る");
+    } else {
+      check(false, "今週の外の遅れの案内が出ない");
+    }
+    clearToasts();
+    // 基準日が今日と違うときは画面の上に案内し、ボタンで今日に合わせられる
+    s->setBaseDate("2026-10-12");
+    h.c.afterEdit();
+    h.frame(3);
+    check(tv.baseNote && tv.baseBtn.second.x > tv.baseBtn.first.x, "基準日が今日と違う案内が出る");
+    clickRect(tv.baseBtn.first, tv.baseBtn.second);
+    h.frame(3);
+    check(s->baseDay() == *parseIso("2026-10-19") && !tv.baseNote, "「基準日を今日にする」で案内が消える");
+    // ダーク・コンパクト・高 DPI
+    h.u.t = &ui::darkTokens();
+    h.u.m.compact = true;
+    h.u.m.scale = 1.5f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(4);
+    check(tv.drawn && tv.total == 7 && !tv.rows.empty(), "ダーク・コンパクト・高DPI でも今日が描かれる");
+    h.c.setUi("todayTab", "week");
+    h.frame(4);
+    check(tv.drawn && tv.week && tv.completing == 4, "ダーク・コンパクト・高DPI でも今週が描かれる");
+    h.u.t = &ui::lightTokens();
+    h.u.m.compact = false;
+    h.u.m.scale = 1.0f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.c.setUi("todayTab", "today");
+    // 幅が狭い（960 + 詳細パネル）
+    io.DisplaySize = ImVec2(960, 600);
+    h.u.detailOpen = true;
+    h.c.select("2");
+    h.frame(4);
+    check(tv.drawn && tv.total == 7, "狭い幅でも今日が描かれる");
+    h.c.setUi("todayTab", "week");
+    h.frame(4);
+    check(tv.drawn && tv.week, "狭い幅でも今週が描かれる");
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.c.setUi("todayTab", "today");
+    io.DisplaySize = ImVec2(1440, 900);
+    // 空: 担当が「自分」の課題がない（名前の食い違い）→ 案内。名前を変えるとその人の課題が出る
+    h.c.prefs().me = "いない人";
+    h.frame(3);
+    check(tv.empty && tv.noMine && tv.total == 0, "担当が「自分」の課題がないときは、名前の食い違いを案内する");
+    h.c.prefs().me = "佐藤";
+    h.frame(3);
+    check(!tv.empty && tv.total == 1 && rowOf("7") != nullptr, "自分の名前を変えると、その人の課題が出る");
+    h.c.prefs().me = "田中";
+    // すべて空: 完了済みだけのプロジェクト・空のプロジェクト
+    {
+      const std::string doneOnly =
+          "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Resolved,Duration (weeks)\n"
+          "1,Task,終わった,,田中,Done,Medium,2026-10-13,1\n";
+      check(h.c.importText(doneOnly, "完了だけ", app::ImportMode::New).ok, "完了だけの取り込み");
+      h.c.setView(app::View::Today);
+      h.frame(3);
+      check(tv.drawn && tv.empty && tv.total == 0, "すべて空のときは「今日やることはありません」を出す");
+      h.c.setUi("todayWho", "all");
+      h.frame(3);
+      check(tv.empty && !tv.noMine, "全員でも空なら案内を出す");
+      h.c.setUi("todayWho", "me");
+      h.c.createProject(app::SampleKind::Empty, "空の今日", "");
+      h.c.setView(app::View::Today);
+      h.frame(3);
+      check(tv.drawn && tv.empty && tv.total == 0, "空のプロジェクトでも落ちない");
+      h.c.setUi("todayTab", "week");
+      h.frame(3);
+      check(tv.drawn && tv.week && tv.completing == 0, "空のプロジェクトの今週も落ちない");
+      h.c.setUi("todayTab", "today");
+      h.c.deleteCurrentProject();
+      h.c.deleteCurrentProject();
+      h.frame(2);
+    }
+  }
   // 空のプロジェクト
   h.c.createProject(app::SampleKind::Empty, "空", "");
   h.frame(3);
@@ -4360,10 +4656,10 @@ int main() {
   {
     std::set<ImWchar> have(ui::uiGlyphs().begin(), ui::uiGlyphs().end());
     const char* files[] = {"app/ui/app_ui.cpp", "app/ui/view_list.cpp", "app/ui/view_gantt.cpp", "app/ui/view_board.cpp",
-                           "app/ui/view_goals.cpp", "app/ui/view_stats.cpp", "app/ui/panel_detail.cpp", "app/ui/panel_attach.cpp", "app/ui/panel_links.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
+                           "app/ui/view_goals.cpp", "app/ui/view_stats.cpp", "app/ui/view_today.cpp", "app/ui/panel_detail.cpp", "app/ui/panel_attach.cpp", "app/ui/panel_links.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
                            "app/ui/widgets.cpp", "app/ui/strings.hpp", "app/controller/app_controller.cpp",
                            "core/src/report.cpp", "core/src/baseline.cpp", "core/src/weekly.cpp", "core/src/weekly_md.cpp", "core/src/weekly_html.cpp", "core/src/weekly_state.cpp", "core/src/report_gantt.cpp", "core/src/report_stats.cpp", "core/src/report_list.cpp", "core/src/gantt_geom.cpp",
-                           "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp", "core/src/attachments.cpp", "core/src/links.cpp", "core/src/load.cpp"};
+                           "core/src/today.cpp", "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp", "core/src/attachments.cpp", "core/src/links.cpp", "core/src/load.cpp"};
     for (const char* rel : files) {
       std::ifstream in(std::string(ROADMAP_SOURCE_DIR) + "/" + rel, std::ios::binary);
       std::stringstream ss;
