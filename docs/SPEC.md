@@ -609,6 +609,18 @@ for id in reverse(leafOrder):
 - **開く**: `IPlatform::openLink(target, &error)`（Win32 は `ShellExecuteW`）。UI が `classifyLink` で検査し、Rejected・Unknown は開かず理由を通知する。実行ファイル・スクリプトは先に警告のダイアログ（添付と同じ。確認したら開く）。ファイル・UNC は存在確認をせず、開けなければ理由を通知する。
 - **ログ・通知**: URL・パス・表示名は個人情報・社内の機微を含みうるので、ログに出さず、通知にも出さない（件数・行番号・理由だけ。理由にも入力の中身は入れない）。
 
+### 8.11 GitHub の PR・Issue のリンクと、閉じたら完了の提案（#61）
+8.10 のリンクのうち、GitHub の PR・Issue を指すものを見分け、状態（open・merged など）を取ってリンクの横に出し、**すべて閉じたら課題を「完了」にする提案**を出す。実装は `core` の `github_ref.hpp`（UI・Win32 に依存せず、例外を投げず、`Result` で返す）。
+- **許可する URL** `parseGitHubUrl(target)`: `https://github.com/<owner>/<repo>/pull/<n>` と `/issues/<n>` だけ。スキームとホストの大文字小文字は問わず、パスの語（`pull` `issues`）は小文字だけ。末尾の `/`・`?…`・`#…`・下位パス（`/files` `/commits` `/checks` など）は許容して**正規化**する（`https://github.com/<owner>/<repo>/pull|issues/<n>`。これが状態の鍵と `gh` に渡す引数になる）。断るもの: `http://`・`www.github.com`・`github.com.evil.example` などの別ホスト・ユーザー情報（`user@`）・ポート・GitHub Enterprise のホスト・空白／制御文字／ASCII 以外／`\`・パスの中の `%XX`（エンコードされた区切りや `..`）・`..` を含む区画・空の区画・owner／repo が英数字と `-` `_` `.` 以外または 100 バイト超・番号が 0・先頭 0・10 桁以上・数字以外・URL が 2,048 バイト超。理由に入力の中身は入れない。
+- **種類** `LinkKind::GitHubPull` / `GitHubIssue`（`classifyLink` が `https://` の Web を `parseGitHubUrl` に通して決める。`linkKindOpenable` は真で、Web として開けることは今までどおり。保存・重複の判定・表示名も Web と同じ）。
+- **状態** `RemoteState`: `Open` / `Draft` / `Merged` / `ClosedUnmerged`（マージせずに閉じた PR）/ `ClosedCompleted` / `ClosedNotPlanned`（Issue）/ `Unknown`。画面の表示は `open` `draft` `merged` `closed（マージなし）` `closed（完了）` `closed（計画外）`（色だけに頼らず文字で出す）。`RemoteInfo` は状態・閉じた日時（UTC の `YYYY-MM-DDTHH:MM:SSZ`。PR は `mergedAt` があればそれ）・Unknown の理由を持つ。
+- **`gh` の JSON** `parseGhPrJson` / `parseGhIssueJson`: PR は `state`（OPEN / CLOSED / MERGED）・`isDraft`・`mergedAt`・`closedAt`、Issue は `state`（OPEN / CLOSED）・`stateReason`（COMPLETED / NOT_PLANNED / REOPENED）・`closedAt`。`gh` が未設定の日時として出すゼロ値（`0001-01-01T00:00:00Z`）は「なし」。壊れた JSON・オブジェクトでない・欠け・未知の値・日時の形式違い・64KB 超は、**Unknown と理由**を返す（閉じた状態で日付が取れない／理由が空・`DUPLICATE` などの未対応の値も Unknown）。
+- **取得の窓口** `IRemoteStatus::fetch(GitHubRef) → Result<RemoteInfo>`（時計・ファイルと同じ流儀。実装は差し替えられる。`FakeRemoteStatus` はテスト用の固定の応答）。コントローラが別のスレッドで**1 件ずつ**実行し、結果を `tick()`（毎フレーム）で拾う。同じ PR・Issue は 1 回の確認で 1 回だけ取る。確認した結果は**メモリ上のみで保存しない**（起動のたびに「未確認」。起動時の自動確認はしない。押したときだけ）。
+- **Windows の実装**（`app/platform/win32_gh.*`）: `PATH` の絶対パスのフォルダだけから `gh.exe` を `SearchPathW` で探し（カレントフォルダは見ない）、`CreateProcessW` で**直接起動**する（`cmd /c` などのシェルを通さない）。引数は**検証済みの URL を 1 つの引数として**渡す（`gh pr view <URL> --json state,isDraft,mergedAt,closedAt` / `gh issue view <URL> --json state,stateReason,closedAt`。`ghArguments` が `validateGitHubRef` を通らない参照を断り、`windowsCommandLine` が引用符で包む）。標準入力・標準エラーは NUL、標準出力は 64KB まで読み、**15 秒**で打ち切ってプロセス（ジョブ）を終了する。`gh` がない・終了コードが 0 でない（未ログインなど）は理由つきの失敗。URL・リポジトリ名・タイトルは理由にもログにも入れない。トークン方式（REST API）は後回し。
+- **完了の提案** `proposeCompletion(issue, links, states, utcOffsetMinutes)`: その課題の **GitHub のリンクがすべて閉じている**ときだけ提案する（GitHub 以外のリンクは無視。GitHub のリンクが 1 つもない・1 件でも open／draft／Unknown／未確認（取得に失敗したものを含む）があれば提案しない。すでに完了（`Resolved` が入っている・状況が完了）の課題にも提案しない）。**完了日**は各リンクの閉じた日（利用者の時間帯の暦の日。Windows は `GetTimeZoneInformation`）のうち最も遅い日（今日より先なら今日）。マージなしで閉じた PR・計画外で閉じた Issue を含むときは、提案の文に**注意**（「マージなしで閉じられたものを含みます」「計画外で閉じられたものを含みます」）を添える。
+- **通知とコマンド**: 確認が終わって提案が成立したら、通知「#表示ID 『件名の先頭 30 文字』のリンクがすべて閉じています。完了にしますか？（注意）」と「**完了にする**」ボタン（確認ダイアログにはしない。押すまで課題は変わらない）。押すと既存の編集（`Session::completeIssue`。状況を `Done` にして `Resolved` に完了日を入れる。`beginBatch` で **Undo 1 回**）で完了にし、「元に戻す」つきの通知を出す。押す前にプロジェクトが切り替わった・課題がない・リンクの状態が変わって提案が成立しなくなったときは、何も変えず理由を通知する。失敗した確認は理由（件数と理由。URL なし）を通知し、課題は変えない。アプリの設定「GitHub のリンクが閉じられたら自動で完了にする」（`roadmap_prefs.json` の `autoCompleteGitHub`。既定オフ）がオンなら、確認が終わった時点で自動で完了にし、「元に戻す」つきの通知を出す。
+- **CSV は変えない**（JIRA 互換・golden のバイト一致を維持）。`project.settings.json` にも状態は入らない（リンクの `title`・`target`・`at` のまま）。
+
 ---
 
 ## 9. 編集操作と元に戻す
@@ -757,7 +769,7 @@ JS版 `core.js` の動作と同じにする。`reference-js/src/core/core.js` �
 モーダル（ダイアログ・パレット）が開いている間は、`Ctrl+K` と `Esc` 以外のグローバルキーを無効にする。
 
 #### 10.4.5 通知（トースト）
-左下に積む。3.6 秒で消える（「元に戻す」などのボタン付きは 7 秒）。×で閉じられる。
+左下に積む。3.6 秒で消える（「元に戻す」などのボタン付きは 7 秒。完了の提案（8.11）は 20 秒）。×で閉じられる。入りきらない長い文は省略せず折り返す（完了の提案は常に折り返し、ボタンは「完了にする」）。
 
 #### 10.4.6 ドラッグ＆ドロップ
 - **ファイルのドロップ**: ウィンドウにCSV/JSONファイルをドロップすると取り込みダイアログ（10.11）を開く（中身は読み込み済み）。
@@ -914,6 +926,8 @@ JS版 `views/Goals.jsx` と同じ。**ゴール** = 子を持たず、種別ま�
 **添付タブ**: ファイルをドロップする案内、件数と使用量（プロジェクト全体と上限）、一覧（種類のアイコン・名前・サイズ・日時・付けた人。ダブルクリックか「開く」で開く。ごみ箱で外す = `_削除済み` へ移す）。JIRA から取り込んだ Attachment 列があれば、その下に「本体はありません」として出す。
 
 **添付タブの「リンク」の節**（8.10。添付ファイルの節の下）: 見出し「リンク N 件」・説明と「URL・パスがプロジェクトの設定ファイルに入ります」の注意・場所の入力欄・表示名の入力欄（省略可）・「リンクを追加」（編集中は「保存」と「やめる」）と「貼り付けて追加」（クリップボードの各行を 1 行 1 リンク。20 行まで）・断った理由（入力欄の下）・一覧（種類のアイコン・表示名・場所を薄く。クリックで開く、行の「開く」、ごみ箱。右クリックで 開く／場所（フォルダ）を開く／コピー／編集／削除／上へ／下へ。つかんで同じ一覧の中で並べ替え、別の課題の行・カード・詳細パネルへ離すと移動、Ctrl でコピー）。`Ctrl+V` は入力欄の中ではふつうに貼り付き、入力欄の外の動き（子課題・画像）は変えない。実行ファイルのリンクは開く前に警告（「実行できるファイルです」）。
+
+**GitHub の PR・Issue のリンク**（8.11）: 専用のアイコン（PR・Issue）。確認済みなら行の右上に状態のラベル（`open` `draft` `merged` `closed（マージなし）` `closed（完了）` `closed（計画外）`。確認中は「確認中…」、失敗は「確認できません」。色だけに頼らない）と、2 行目の右に確認した日時（「確認 10/19 18:36」。保存しない）。右クリックのメニューに「状態を確認」（そのリンクだけ）。入力欄の上に、その課題に GitHub のリンクがあるときだけ「GitHub の状態を確認」（その課題の GitHub のリンクを順に確認。確認中は押せない）と、押したときだけ `gh` で取りに行く旨の説明。
 
 ### 10.10 コマンドパレット（`Ctrl+K`）
 - 画面中央上寄りに幅 640 のパネル。入力欄（プレースホルダ「コマンドや課題を検索…」）+ 一覧（グループ見出し付き）。
@@ -1217,6 +1231,7 @@ JS版は使わなくなったため、JS版との互換は求めない（形式�
 - 注: JS版の `id` は `p` + 時刻の36進数 + 乱数4文字（例 `pmgx3k2ab1c`）。C++版は**任意の文字列**として扱い、新規は同じ形式で作る。
 
 ### B.3 `roadmap_prefs.json`
+（`autoCompleteGitHub`: GitHub のリンクが閉じられたら自動で完了にする（8.11）。真偽。既定は偽。）
 8.6 のとおり。`theme`、`density`、`me`、`templates`、`currentProject`（最後に開いたプロジェクトの id）、`window`、`hintDismissed`。未知のキーは保持する。
 
 ## 付録C. `CLAUDE.md`（案）
