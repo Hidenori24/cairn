@@ -52,6 +52,25 @@ void sortCands(std::vector<Cand>& v, const Tree& T) {
   });
 }
 
+// ベースラインの節の見出し・件数・消えた課題（現在の課題がなくても作れる部分）
+void fillBaselineHeader(WeeklyBaseline& wb, const BaselineCompare& bc, std::size_t cap) {
+  wb.available = true;
+  wb.name = cleanText(bc.baselineName);
+  wb.at = bc.baselineAt;
+  wb.truncated = bc.truncated;
+  wb.sum = bc.sum;
+  for (const BaselineEntry& e : bc.removed) {
+    if (e.parent) continue;
+    ++wb.removed.total;
+    if (wb.removed.items.size() >= cap) continue;
+    WeeklyBaselineRow row;
+    row.id = cleanText(e.id);
+    row.name = cleanText(e.title);
+    row.planFinish = e.planFinish;
+    wb.removed.items.push_back(std::move(row));
+  }
+}
+
 }  // namespace
 
 WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) {
@@ -76,6 +95,9 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
   if (n == 0 || in.issues.size() != n || in.rows.size() != n || T.dfs.size() != n || T.dfsPos.size() != n || T.kids.size() != n ||
       T.did.size() != n || T.name.size() != n || T.kind.size() != n || T.dl.size() != n || T.preds.size() != n || T.ids.size() != n) {
     r.empty = true;
+    // 課題が 0 件（全部削除した）ときは、入力の食い違いではないので、有効な比較（消えた課題）は出す
+    if (n == 0 && in.issues.empty() && in.rows.empty() && opt.sections.baseline && in.baseline && in.baseline->entries.empty())
+      fillBaselineHeader(r.baseline, *in.baseline, std::max<std::size_t>(1, opt.maxItems));
     return r;
   }
   const std::size_t cap = std::max<std::size_t>(1, opt.maxItems);
@@ -325,11 +347,7 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
   if (opt.sections.baseline && in.baseline && in.baseline->entries.size() == n) {
     const BaselineCompare& bc = *in.baseline;
     WeeklyBaseline& wb = r.baseline;
-    wb.available = true;
-    wb.name = cleanText(bc.baselineName);
-    wb.at = bc.baselineAt;
-    wb.truncated = bc.truncated;
-    wb.sum = bc.sum;
+    fillBaselineHeader(wb, bc, cap);
     const auto rowOf = [&](int i) {
       const std::size_t k = static_cast<std::size_t>(i);
       const BaselineEntry& e = bc.entries[k];
@@ -364,16 +382,6 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
     fillB(wb.late, cLate);
     fillB(wb.early, cEarly);
     fillB(wb.added, cAdded);
-    for (const BaselineEntry& e : bc.removed) {
-      if (e.parent) continue;
-      ++wb.removed.total;
-      if (wb.removed.items.size() >= cap) continue;
-      WeeklyBaselineRow row;
-      row.id = cleanText(e.id);
-      row.name = cleanText(e.title);
-      row.planFinish = e.planFinish;
-      wb.removed.items.push_back(std::move(row));
-    }
   }
   return r;
 }

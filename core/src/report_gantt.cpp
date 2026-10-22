@@ -414,7 +414,7 @@ std::string renderGantt(const Ctx& cx) {
   if (zoom != "day" && zoom != "week" && zoom != "month" && zoom != "all") zoom = "week";
   g.styleZoom = ganttStyleZoom(zoom, 0);
   g.headH = static_cast<double>(ganttHeaderH(g.styleZoom, 1.f));
-  const GanttDayRange rg = ganttDayRange(T, in.rows, in.base);
+  const GanttDayRange rg = ganttDayRange(T, in.rows, in.base, cx.bl);
   g.ax.rs = ganttAxisStart(rg.lo);
   g.ax.hi = rg.hi;
   bool axisCut = false;

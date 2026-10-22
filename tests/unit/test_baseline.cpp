@@ -617,3 +617,58 @@ TEST_CASE("baseline: 5,000 件でも重くならない") {
   CHECK(bb.items.size() == kBaselineMaxItems);
   CHECK(bb.truncated);
 }
+
+TEST_CASE("baseline: 一覧の要素の id をそのまま渡して削除しても、表示の解除と維持が正しい（参照が erase で変わらない）") {
+  // 表示中のものを、一覧の要素への参照で削除すると、表示が解除される
+  {
+    BaselineSet set;
+    const std::string a = baselineAdd(set, sample("", "A")).value();
+    const std::string b = baselineAdd(set, sample("", "B")).value();
+    REQUIRE(baselineSetShown(set, a));
+    CHECK(baselineRemove(set, set.list[0].id));  // 参照のまま渡す
+    CHECK(set.shown.empty());
+    REQUIRE(set.list.size() == 1);
+    CHECK(set.list[0].id == b);
+  }
+  // 別のものを表示中なら、先頭を消しても表示は維持される（次の要素の id に変わった参照で取り違えない）
+  {
+    BaselineSet set;
+    const std::string a = baselineAdd(set, sample("", "A")).value();
+    const std::string b = baselineAdd(set, sample("", "B")).value();
+    REQUIRE(baselineSetShown(set, b));
+    CHECK(baselineRemove(set, set.list[0].id));
+    CHECK(set.shown == b);
+    CHECK(baselineShown(set) != nullptr);
+    (void)a;
+  }
+  // 表示中のものを消すと、その次の要素が表示になることはない
+  {
+    BaselineSet set;
+    for (const char* n : {"A", "B", "C"}) REQUIRE(baselineAdd(set, sample("", n)).ok());
+    REQUIRE(baselineSetShown(set, set.list[1].id));
+    CHECK(baselineRemove(set, set.list[1].id));
+    CHECK(set.shown.empty());
+    CHECK(baselineShown(set) == nullptr);
+    CHECK(set.list.size() == 2);
+  }
+}
+
+TEST_CASE("baseline: Session から一覧の id をそのまま渡して削除しても表示が正しく外れる") {
+  FixedClock clock(LocalTime{2026, 10, 19, 9, 30, 0});
+  ProjectData d;
+  d.meta.hasDeadlineCol = true;
+  d.settings.baseDate = "2026-10-19";
+  d.settings.holidays = defaultHolidaysText();
+  for (const Spec& s : basic()) d.issues.push_back(mk(s));
+  Session s(d, &clock);
+  REQUIRE(s.addBaseline("A").ok());
+  const auto second = s.addBaseline("B");  // 表示は B
+  REQUIRE(second.ok());
+  CHECK(s.removeBaseline(s.baselines().list[0].id));
+  REQUIRE(s.shownBaseline() != nullptr);
+  CHECK(s.shownBaseline()->name == "B");
+  CHECK(s.removeBaseline(s.baselines().list[0].id));  // 表示中の B
+  CHECK(s.shownBaseline() == nullptr);
+  CHECK(s.baselines().shown.empty());
+  CHECK(s.baselineCompare() == nullptr);
+}

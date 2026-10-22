@@ -901,6 +901,11 @@ void drawStatsView(Frame& f, ImVec2 size) {
   if (st.tasks == 0) {
     ImGui::Dummy(ImVec2(0, u.m.s(12)));
     ImGui::TextUnformatted("集計できる作業がありません。課題を追加すると、ここに進みと内訳が出ます。");
+    // 作業が 0 件（マイルストーンだけ・全部削除）でも、計画との差（消えた課題など）は出す
+    if (const BaselineCompare* bc0 = s->baselineCompare()) {
+      drawPlanDiff(f, *bc0, T, I, W);
+      u.statsPlan.drawn = true;
+    }
     ImGui::EndGroup();
     ImGui::Dummy(ImVec2(0, u.m.s(40)));
     ImGui::EndChild();

@@ -31,7 +31,9 @@ struct GanttAxis {
 struct GanttDayRange {
   Day lo = 0, hi = 0;
 };
-GanttDayRange ganttDayRange(const Tree& T, const std::vector<ScheduleRow>& R, Day base);
+// plan = 表示するベースラインとの比較（なければ nullptr）。あれば、その計画の開始日・完了日 + 21 も範囲に含める
+// （日程が大きく動いても、計画のバーが軸の外に出ない）。課題の数と合わない比較は無視する。nullptr のときは従来と同じ
+GanttDayRange ganttDayRange(const Tree& T, const std::vector<ScheduleRow>& R, Day base, const BaselineCompare* plan = nullptr);
 // 左端 rs = lo を含む週の月曜日の 1 週前
 Day ganttAxisStart(Day lo);
 

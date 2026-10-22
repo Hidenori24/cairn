@@ -294,11 +294,14 @@ Status baselineRename(BaselineSet& set, const std::string& id, const std::string
   return Error{"ベースラインが見つかりません"};
 }
 
-bool baselineRemove(BaselineSet& set, const std::string& id) {
+bool baselineRemove(BaselineSet& set, const std::string& idArg) {
+  // idArg が set.list の要素（set.list[0].id など）を指していても、erase のあとで別の値に変わらないよう値で持つ
+  const std::string id = idArg;
   const auto it = std::find_if(set.list.begin(), set.list.end(), [&](const Baseline& b) { return b.id == id; });
   if (it == set.list.end()) return false;
+  const bool wasShown = set.shown == id;
   set.list.erase(it);
-  if (set.shown == id) set.shown.clear();
+  if (wasShown) set.shown.clear();
   return true;
 }
 

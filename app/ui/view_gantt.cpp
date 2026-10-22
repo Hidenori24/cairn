@@ -237,7 +237,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
 
   // 時間軸
   const Day base = s->baseDay();
-  const GanttDayRange dayRange = ganttDayRange(T, R, base);
+  const GanttDayRange dayRange = ganttDayRange(T, R, base, planCmp);
   const Day hi = dayRange.hi;
   Axis ax;
   ax.rs = ganttAxisStart(dayRange.lo);

@@ -3128,6 +3128,27 @@ int main() {
     h.u.t = &ui::lightTokens();
     ui::applyStyle(*h.u.t, h.u.m);
     h.frame(2);
+    // 基準日を大きく動かしても、時間軸は計画のバーを含む（スクロールして見える範囲に計画のバーが入る）
+    for (const int shift : {84, -28}) {
+      const std::string keep = s->settings().baseDate;
+      s->setBaseDate(fmtIso(*parseIso(keep) + shift));
+      h.c.afterEdit();
+      h.u.scrollToBase = false;
+      h.frame(3);
+      ImGuiIO& io = ImGui::GetIO();
+      io.AddMousePosEvent(800, 400);
+      for (int k = 0; k < 60; ++k) {  // 左端までスクロールして、計画のバーが見える範囲に出る
+        io.AddMouseWheelEvent(-6.f, 0.f);
+        h.frame(2);
+      }
+      bool anyVisible = false;
+      for (const auto& pg : h.u.planGeom) anyVisible = anyVisible || (pg.xr > h.u.ganttLeft && pg.xl < 1440.f);
+      check(!h.u.planGeom.empty() && anyVisible, "基準日を動かしても、計画のバーを軸の範囲で描ける");
+      s->setBaseDate(keep);
+      h.c.afterEdit();
+      h.u.scrollToBase = true;
+      h.frame(3);
+    }
 
     // リスト: 列「計画との差」を足し、漏斗で絞り込み・並べ替え
     h.c.setUiSub("cols", "plan", true);
@@ -3287,6 +3308,63 @@ int main() {
     h.frame(3);
     check(!h.u.statsPlan.drawn, "統計の節も出ない");
     h.c.setUiSub("cols", "plan", false);
+    h.c.deleteCurrentProject();
+    h.frame(2);
+  }
+  // ベースライン: 全課題を削除しても、マイルストーンだけでも、統計に「計画との差」（消えた課題など）が出る
+  {
+    h.c.createProject(app::SampleKind::Hierarchy, "計画/全削除", "BD");
+    h.c.setView(app::View::Stats);
+    h.c.clearFilter();
+    h.frame(3);
+    Session* s = h.c.session();
+    check(h.c.saveBaseline("削除前").ok(), "ベースラインを保存する");
+    const std::size_t before = s->issues().size();
+    // マイルストーンだけ残す（マイルストーンとその祖先以外を消す。祖先は子がいるので作業にならない）
+    {
+      std::vector<std::string> del;
+      const Tree& T = *s->tree();
+      std::set<int> keep;
+      for (int id : T.leafOrder)
+        if (T.kind[static_cast<std::size_t>(id)] == Kind::Ms)
+          for (int x = id; x >= 0; x = T.parentOf[static_cast<std::size_t>(x)]) keep.insert(x);
+      for (int id : T.roots)
+        if (!keep.count(id)) del.push_back(T.ids[static_cast<std::size_t>(id)]);
+      for (int id : T.dfs)
+        if (!keep.count(id) && (T.parentOf[static_cast<std::size_t>(id)] < 0 || keep.count(T.parentOf[static_cast<std::size_t>(id)])))
+          del.push_back(T.ids[static_cast<std::size_t>(id)]);
+      s->deleteIssues(del);
+      h.c.afterEdit();
+    }
+    h.frame(4);
+    {
+      const Tree& T = *s->tree();
+      int tasks = 0;
+      for (int id : T.leafOrder)
+        if (T.kind[static_cast<std::size_t>(id)] != Kind::Ms) ++tasks;
+      check(tasks == 0 && !s->issues().empty() && s->issues().size() < before, "マイルストーンだけのプロジェクトにした");
+    }
+    check(h.u.statsPlan.drawn && h.u.statsPlan.tiles == 5, "作業が 0 件（マイルストーンだけ）でも「計画との差」の節が出る");
+    // 全部削除
+    {
+      std::vector<std::string> all;
+      for (const Issue& o : s->issues()) all.push_back(o.id);
+      s->deleteIssues(all);
+      h.c.afterEdit();
+    }
+    h.frame(4);
+    check(s->issues().empty(), "全課題を削除した");
+    check(h.u.statsPlan.drawn && h.u.statsPlan.tiles == 5, "全課題を削除しても「消えた課題」の比較が出る");
+    const BaselineCompare* cmp = s->baselineCompare();
+    check(cmp != nullptr && cmp->sum.removed >= 1, "消えた課題を数える");
+    // ダークでも描ける
+    h.u.t = &ui::darkTokens();
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(3);
+    check(h.u.statsPlan.drawn, "ダークでも描ける");
+    h.u.t = &ui::lightTokens();
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(2);
     h.c.deleteCurrentProject();
     h.frame(2);
   }

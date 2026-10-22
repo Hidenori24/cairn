@@ -11,7 +11,7 @@
 namespace roadmap {
 
 // ---------------------------------------------------------------- 時間軸
-GanttDayRange ganttDayRange(const Tree& T, const std::vector<ScheduleRow>& R, Day base) {
+GanttDayRange ganttDayRange(const Tree& T, const std::vector<ScheduleRow>& R, Day base, const BaselineCompare* plan) {
   GanttDayRange g;
   g.lo = base;
   g.hi = base + 120;
@@ -20,6 +20,15 @@ GanttDayRange ganttDayRange(const Tree& T, const std::vector<ScheduleRow>& R, Da
     g.lo = std::min(g.lo, r.asapStart);
     g.hi = std::max({g.hi, r.asapFinish + 21, r.alapFinish + 21});
     if (T.dl[static_cast<std::size_t>(id)]) g.hi = std::max(g.hi, *T.dl[static_cast<std::size_t>(id)] + 21);
+  }
+  if (plan && T.n > 0 && plan->entries.size() == static_cast<std::size_t>(T.n)) {
+    for (const BaselineEntry& e : plan->entries) {
+      if (e.planStart) g.lo = std::min(g.lo, *e.planStart);
+      if (e.planFinish) {
+        g.lo = std::min(g.lo, *e.planFinish);
+        g.hi = std::max(g.hi, *e.planFinish + 21);
+      }
+    }
   }
   return g;
 }

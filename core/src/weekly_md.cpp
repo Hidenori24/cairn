@@ -293,6 +293,7 @@ std::string weeklyMarkdown(const WeeklyReport& r) {
   };
   if (r.empty) {
     m.line("課題がありません。");
+    if (s.baseline && r.baseline.available) renderBaseline(m, r);  // 全部削除したあとの「消えた課題」
     if (s.notes) notes();  // 課題がなくても、所感は書ける
     while (m.o.size() >= 2 && m.o[m.o.size() - 1] == '\n' && m.o[m.o.size() - 2] == '\n') m.o.pop_back();
     return m.o;

@@ -1235,3 +1235,57 @@ TEST_CASE("weekly: ベースラインとの差の一覧は件数の上限で切�
   CHECK(has(md, "営業日の差が 0"));
   CHECK(has(weeklyHtml(r), "営業日の差が 0"));
 }
+
+TEST_CASE("weekly: 保存後に全課題を削除しても、ベースラインとの差（消えた課題）を Markdown・HTML の両方に出す") {
+  Proj a = Proj::make(basic());
+  auto b = captureBaseline(a.issues, a.comp, "キックオフ", "2026-10-19T09:30");
+  REQUIRE(b.ok());
+  // 課題が 0 件のプロジェクト
+  Computed c;
+  auto t = buildTree({}, ProjectMeta{});
+  REQUIRE(t.ok());
+  c.T = std::move(t).value();
+  const std::vector<Issue> issues;
+  const std::vector<ScheduleRow> rows;
+  const Calendar cal = Calendar::fromText(defaultHolidaysText());
+  auto cmp = compareBaseline(b.value(), issues, c, cal);
+  REQUIRE(cmp.ok());
+  REQUIRE(cmp.value().sum.removed >= 1);
+  const ProjectStats st = computeStats(c.T, issues, rows, D("2026-10-21"));
+  const LoadReport ld = computeLoad(c.T, issues, rows, cal, D("2026-10-21"), ResourceLimit{});
+  WeeklyInput in(c.T, issues, rows, cal, st, ld);
+  in.base = D("2026-10-21");
+  in.baseline = &cmp.value();
+  WeeklyOptions o;
+  o.sections.baseline = true;
+  const WeeklyReport r = buildWeeklyReport(in, o);
+  REQUIRE(r.empty);
+  REQUIRE(r.baseline.available);
+  CHECK(r.baseline.name == "キックオフ");
+  CHECK(r.baseline.removed.total == cmp.value().sum.removed);
+  CHECK_FALSE(r.baseline.removed.items.empty());
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "課題がありません"));
+  CHECK(has(md, "## ベースラインとの差"));
+  CHECK(has(md, "消えた課題"));
+  const std::string html = weeklyHtml(r);
+  CHECK(has(html, "課題がありません"));
+  CHECK(has(html, "ベースラインとの差"));
+  CHECK(has(html, "消えた課題"));
+  // オフ（既定）なら出ない。比較がなければ出ない
+  CHECK_FALSE(has(weeklyMarkdown(buildWeeklyReport(in, WeeklyOptions{})), "ベースラインとの差"));
+  WeeklyInput none(c.T, issues, rows, cal, st, ld);
+  none.base = in.base;
+  CHECK_FALSE(buildWeeklyReport(none, o).baseline.available);
+  // 入力の食い違い（課題と日程の数が合わない）では、比較を作らない
+  Proj p = Proj::make(basic());
+  std::vector<Issue> shorter(p.issues.begin(), p.issues.begin() + 2);
+  WeeklyInput bad(p.comp.T, shorter, p.comp.R, p.cal, p.stats, p.load);
+  bad.base = p.base;
+  auto cmp2 = compareBaseline(b.value(), p.issues, p.comp, p.cal);
+  REQUIRE(cmp2.ok());
+  bad.baseline = &cmp2.value();
+  const WeeklyReport rb = buildWeeklyReport(bad, o);
+  CHECK(rb.empty);
+  CHECK_FALSE(rb.baseline.available);
+}
