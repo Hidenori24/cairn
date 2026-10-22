@@ -209,6 +209,25 @@ void Session::putWeeklySnapshot(WeeklySnapshot s) {
   persist();
 }
 
+Result<HistoryResult> Session::recordHistory(HistoryMode mode) {
+  if (!comp_) return Error{"日程を計算できていないため、履歴を記録できません"};
+  History& h = P_.settings.history;
+  const Day today = todayDay();
+  const bool have = historyHasWeek(h, today);
+  if (mode == HistoryMode::IfMissing && have) return HistoryResult::AlreadyHave;  // 開くたびに設定ファイルを書き換えない
+  auto pt = captureHistoryPoint(comp_->issues, *comp_, today);
+  if (!pt.ok()) return Error{pt.error()};
+  if (mode == HistoryMode::IfMissing && pt.value().total == 0) return HistoryResult::Skipped;  // 作業のないプロジェクトに空の点は足さない
+  if (have) {
+    const auto it = std::find_if(h.points.begin(), h.points.end(), [&](const HistoryPoint& x) { return x.weekStart == pt.value().weekStart; });
+    if (it != h.points.end() && *it == pt.value()) return HistoryResult::Unchanged;  // 変わらなければ保存を予約しない
+  }
+  const Status st = ::roadmap::recordHistory(h, std::move(pt).value());
+  if (!st.ok()) return Error{st.error()};
+  persist();
+  return have ? HistoryResult::Replaced : HistoryResult::Recorded;
+}
+
 Result<std::string> Session::addBaseline(const std::string& name) {
   if (!comp_) return Error{"日程を計算できていないため、ベースラインを保存できません"};
   auto b = captureBaseline(comp_->issues, *comp_, name, nowDT());

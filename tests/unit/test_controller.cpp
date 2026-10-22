@@ -729,3 +729,105 @@ TEST_CASE("controller: ベースラインの保存・名前の変更・削除・
   e.c.showBaseline("");
   CHECK(e.c.buildReport(o).value().find("計画との差") == std::string::npos);
 }
+
+TEST_CASE("controller: 状況の件数の履歴 — 開いたとき自動で記録（同じ週は書き換えない）・手動・週次レポート") {
+  Env e;
+  e.c.start();
+  // プロジェクトを開く前は何もしない（落ちない）
+  e.c.recordHistory(AppController::HistoryTrigger::Manual);
+  e.c.recordHistory(AppController::HistoryTrigger::Open);
+  e.c.recordHistory(AppController::HistoryTrigger::Weekly);
+
+  e.c.createProject(SampleKind::Hierarchy, "階層デモ", "DEV");
+  REQUIRE(e.c.session());
+  const std::string id = e.c.currentId();
+  // 作った（開いた）とき、今週（2026-10-19 の週）の点が自動で入る
+  REQUIRE(e.c.session()->history().points.size() == 1);
+  CHECK(e.c.session()->history().points[0].weekStart == "2026-10-19");
+  CHECK(e.c.session()->history().points[0].total > 0);
+  e.step(500);
+  std::string settingsPath;
+  for (const std::string& p : e.fs.paths())
+    if (p.size() > 21 && p.compare(p.size() - 21, 21, "project.settings.json") == 0) settingsPath = p;
+  REQUIRE_FALSE(settingsPath.empty());
+  CHECK(e.fs.content(settingsPath).find("\"history\"") != std::string::npos);
+
+  // 同じ週に開き直しても、設定ファイルは書き換えない（内容も書き込みの回数も同じ）
+  const std::string before = e.fs.content(settingsPath);
+  const int writes = e.fs.writeCount();
+  CHECK(e.c.openProject(id));
+  e.step(1000);
+  CHECK(e.c.session()->history().points.size() == 1);
+  CHECK_FALSE(e.c.hasUnsaved());
+  CHECK(e.fs.writeCount() == writes);
+  CHECK(e.fs.content(settingsPath) == before);
+
+  // 週が変われば、開いたとき 1 点足す
+  e.clk.set(LocalTime{2026, 10, 28, 9, 0, 0});
+  CHECK(e.c.openProject(id));
+  REQUIRE(e.c.session()->history().points.size() == 2);
+  CHECK(e.c.session()->history().points[1].weekStart == "2026-10-26");
+  e.step(500);
+  CHECK(e.fs.content(settingsPath) != before);
+  CHECK(e.fs.writeCount() > writes);
+
+  // 手動: 変わりがなければそう知らせ、変えてから押すと置き換える（同じ週は 1 点）
+  e.c.recordHistory(AppController::HistoryTrigger::Manual);
+  CHECK(e.c.toasts().back().text.find("変わりはありません") != std::string::npos);
+  CHECK(e.c.session()->history().points.size() == 2);
+  const HistoryPoint last = e.c.session()->history().points.back();
+  Session* s = e.c.session();
+  const int ti = s->tree()->leafOrder.front();
+  const std::string target = s->tree()->ids[static_cast<std::size_t>(ti)];
+  const std::string origStatus = s->viewIssues()[static_cast<std::size_t>(ti)].status;
+  const OptDay origResolved = s->viewIssues()[static_cast<std::size_t>(ti)].resolved;
+  const bool wasDone = origStatus == "Done";
+  REQUIRE(s->setField(target, [&](Issue& o) {
+    o.status = wasDone ? "To Do" : "Done";
+    o.resolved = wasDone ? OptDay{} : parseIso("2026-10-28");
+  }));
+  e.c.afterEdit();
+  e.c.recordHistory(AppController::HistoryTrigger::Manual);
+  CHECK(e.c.toasts().back().text.find("更新しました") != std::string::npos);
+  REQUIRE(e.c.session()->history().points.size() == 2);
+  CHECK(e.c.session()->history().points.back().total == last.total);
+  CHECK(e.c.session()->history().points.back() != last);
+
+  // 週次レポートを出したときにも（同じ週は置き換え）。元の状態に戻してから出すと、元の点に戻る
+  REQUIRE(s->setField(target, [&](Issue& o) {
+    o.status = origStatus;
+    o.resolved = origResolved;
+  }));
+  e.c.afterEdit();
+  WeeklyOptions opt;
+  CHECK(e.fs.makeDirs("out").ok());
+  CHECK(e.c.exportWeekly("out/週報.md", opt, false).ok());
+  REQUIRE(e.c.session()->history().points.size() == 2);
+  CHECK(e.c.session()->history().points.back() == last);
+
+  // HTML の書き出しに累積フロー図が入る（記録は 2 週ぶん）
+  ExportOptions o;
+  o.list = false;
+  o.gantt = false;
+  const auto html = e.c.buildReport(o);
+  REQUIRE(html.ok());
+  CHECK(html.value().find("状況の件数の推移（累積フロー）") != std::string::npos);
+  CHECK(html.value().find("10/19(月) からの週") != std::string::npos);
+}
+
+TEST_CASE("controller: 履歴 — 作業のない新規プロジェクトには自動で記録しない。手動ならする") {
+  Env e;
+  e.c.start();
+  e.c.createProject(SampleKind::Empty, "空", "EMP");
+  REQUIRE(e.c.session());
+  CHECK(e.c.session()->history().empty());
+  e.step(500);
+  std::string settingsPath;
+  for (const std::string& p : e.fs.paths())
+    if (p.size() > 21 && p.compare(p.size() - 21, 21, "project.settings.json") == 0) settingsPath = p;
+  REQUIRE_FALSE(settingsPath.empty());
+  CHECK(e.fs.content(settingsPath).find("\"history\"") == std::string::npos);  // 空なら書かない
+  e.c.recordHistory(AppController::HistoryTrigger::Manual);
+  CHECK(e.c.session()->history().points.size() == 1);
+  CHECK(e.c.session()->history().points[0].total == 0);
+}

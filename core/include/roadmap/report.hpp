@@ -13,6 +13,7 @@
 #include "roadmap/engine.hpp"
 #include "roadmap/filestore.hpp"
 #include "roadmap/filter.hpp"
+#include "roadmap/history.hpp"
 #include "roadmap/gantt_geom.hpp"
 #include "roadmap/result.hpp"
 
@@ -69,6 +70,8 @@ struct ExportInput {
   // 表示するベースラインとの比較（Session::baselineCompare()。null = 出さない）。ガントに計画のバーと差、統計に「計画との差」の節を出す。
   // 課題の数が合わないものは使わない
   const BaselineCompare* baseline = nullptr;
+  // 状況の件数の履歴（Session::history()。null = 出さない）。統計の「推移」に累積フロー図を出す（Issue #64）
+  const History* history = nullptr;
 };
 
 // 1 つの HTML（UTF-8、BOM なし）。課題が 0 件でも、案内を書いた HTML を返す
