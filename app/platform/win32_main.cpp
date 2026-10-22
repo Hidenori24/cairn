@@ -91,7 +91,7 @@ class FolderWatch {
     }
     if (bytes > 0) {  // 0 = 通知があふれた（何が変わったか分からない）ので、読み直す
       relevant = false;
-      const BYTE* p = buf_;
+      const BYTE* p = reinterpret_cast<const BYTE*>(buf_);
       for (;;) {
         const auto* info = reinterpret_cast<const FILE_NOTIFY_INFORMATION*>(p);
         const std::wstring name(info->FileName, info->FileNameLength / sizeof(WCHAR));
@@ -138,7 +138,7 @@ class FolderWatch {
   HANDLE event_ = nullptr;
   OVERLAPPED ov_{};
   bool pending_ = false;  // ReadDirectoryChangesW を頼んで、まだ届いていない
-  alignas(DWORD) BYTE buf_[64 * 1024];
+  DWORD buf_[16 * 1024];  // 64KB。通知の記録は DWORD の境界に置く必要がある
   ULONGLONG retryAt_ = 0;
 };
 
