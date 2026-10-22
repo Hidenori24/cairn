@@ -6,6 +6,7 @@
 #include <initializer_list>
 
 #include "roadmap/csv.hpp"
+#include "roadmap/stamps.hpp"
 #include "roadmap/text.hpp"
 
 namespace roadmap {
@@ -49,15 +50,6 @@ class WorkDays {
  private:
   std::vector<Day> hol_;  // 平日にあたる休業日（昇順）
 };
-
-int findColumn(const ProjectMeta& meta, std::initializer_list<const char*> names) {
-  for (std::size_t i = 0; i < meta.extraHeaders.size(); ++i) {
-    const std::string h = text::asciiLower(text::trim(meta.extraHeaders[i]));
-    for (const char* n : names)
-      if (h == n) return static_cast<int>(i);
-  }
-  return -1;
-}
 
 OptDay dateAt(const Issue& s, int col) {
   if (col < 0 || static_cast<std::size_t>(col) >= s.extra.size()) return std::nullopt;
@@ -137,8 +129,8 @@ Result<TrendReport> computeTrends(const Tree& T, const std::vector<Issue>& issue
   }
 
   TrendReport out;
-  const int createdCol = findColumn(meta, {"created", "作成日", "作成", "作成日時"});
-  const int updatedCol = findColumn(meta, {"updated", "更新日", "更新", "更新日時"});
+  const int createdCol = findStampColumn(meta, StampKind::Created);  // 見出しの別名は stamps と共通
+  const int updatedCol = findStampColumn(meta, StampKind::Updated);
   out.hasCreatedColumn = createdCol >= 0;
   out.hasUpdatedColumn = updatedCol >= 0;
 

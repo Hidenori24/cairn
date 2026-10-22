@@ -6,6 +6,7 @@
 #include <unordered_set>
 
 #include "roadmap/issue_name.hpp"
+#include "roadmap/stamps.hpp"
 #include "roadmap/text.hpp"
 
 namespace roadmap {
@@ -100,12 +101,31 @@ void Session::restore(Snapshot s) {
   P_.settings.scenario = std::move(s.scn);
 }
 
+void Session::stampEdits(const Snapshot& before, const std::unordered_set<std::string>* only) {
+  // 日付は Resolved・開始日の自動設定（setStatus）と同じ min(今日, 基準日)。作成日 → 更新日 → 完了日の順がずれないようにする
+  const Day today = todayDay();
+  StampWhen w;
+  w.day = std::min(today, baseDay());
+  if (w.day == today) {
+    const LocalTime t = clock_->now();
+    w.hour = t.h;
+    w.minute = t.mi;
+  }
+  stampChanges(before.issues, P_.meta, P_.issues, w, only);
+}
+
 bool Session::mutate(const std::function<void(ProjectData&)>& fn, const std::function<void(Session&)>& post) {
   Snapshot snap = snapshot();
+  const auto only = stampOnly_;  // この編集だけに効かせる
+  stampOnly_.reset();
   fn(P_);
+  // 作成日・更新日の記録は、編集の入口のここで 1 回だけ（個別のコマンドに書かない）。
+  // post がある編集は、post が結果を直しうる（着手可能日が動かせず元に戻る）ので、直した後に記録する
+  if (!post) stampEdits(snap, only ? &*only : nullptr);
   auto err = rebuild();
   if (!err && post) {
     post(*this);
+    stampEdits(snap, only ? &*only : nullptr);
     err = rebuild();
   }
   if (err) {
@@ -490,6 +510,8 @@ bool Session::setStatus(std::string id, std::string st) {
   return mutate([&](ProjectData& P) {
     Issue& o = P.issues[indexOf(P.issues, id)];
     const Cat c = statusCat(st);
+    // 完了から戻したとき（再オープン）は完了日を消す。残すと、もう一度完了にしたときに古い日付が使われ、推移がずれる
+    if (statusCat(o.status) == Cat::Done && c != Cat::Done) o.resolved = std::nullopt;
     o.status = st;
     if (c == Cat::Done && !o.resolved) o.resolved = v;
     if (c == Cat::Prog && !o.start) o.start = v;
@@ -572,6 +594,7 @@ bool Session::setDeadline(std::string id, OptDay day) {
   if (!P_.meta.hasDeadlineCol && comp_)
     for (int i = 0; i < comp_->T.n; ++i)
       if (comp_->T.ownDl[i]) own.emplace_back(comp_->T.ids[i], comp_->T.ownDl[i]);
+  stampOnly_ = std::unordered_set<std::string>{id};  // 下の移し替えで値が動くだけの課題は、更新日を入れない
   return mutate([&](ProjectData& P) {
     // Deadline 列の無いCSVでは、これまで期限として使っていた Due date を Deadline 列へ移してから設定する
     if (!P.meta.hasDeadlineCol) {
