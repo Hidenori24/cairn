@@ -6,6 +6,7 @@
 #include "roadmap/gantt_geom.hpp"
 #include "roadmap/load.hpp"
 #include "roadmap/stats.hpp"
+#include "roadmap/text.hpp"
 
 namespace roadmap::report {
 
@@ -343,6 +344,53 @@ std::string doneByAssignee(const StatsCx& s, const LoadReport& lr) {
   return o;
 }
 
+std::string atText(const std::string& at) {
+  if (at.size() != 16) return {};
+  return at.substr(0, 4) + "/" + at.substr(5, 2) + "/" + at.substr(8, 2) + " " + at.substr(11, 5);
+}
+
+// 「計画との差」の節（ベースラインを選んでいるとき。Issue #53）
+std::string baselineSection(const StatsCx& s) {
+  const BaselineCompare* bc = s.cx.bl;
+  if (!bc) return {};
+  const Tree& T = s.cx.in.tree;
+  const BaselineSummary& sm = bc->sum;
+  const std::string at = atText(bc->baselineAt);
+  std::string o = "<div class=\"card\"><h3>計画との差 <span class=\"note\">ベースライン「" + esc(bc->baselineName) + "」" +
+                  (at.empty() ? std::string() : "（保存 " + esc(at) + "）") + "との比較。営業日の差で、+ は計画より遅れ</span></h3>\n";
+  if (bc->truncated) o += "<p class=\"note\">ベースラインは課題が多かったため、一部の課題だけです。</p>\n";
+  const auto tile = [&](const char* label, int n, const char* cls) {
+    return std::string("<div class=\"tile\"><div class=\"l\">") + label + "</div><div class=\"v" + (*cls ? std::string(" ") + cls : std::string()) +
+           "\">" + std::to_string(n) + " 件</div></div>\n";
+  };
+  o += "<div class=\"tiles\">\n";
+  o += tile("早まり", sm.early, "rk-ok");
+  o += tile("計画どおり", sm.onPlan, "");
+  o += tile(sm.late > 0 ? "! 遅れ" : "遅れ", sm.late, sm.late > 0 ? "rk-late" : "");
+  o += tile("計画になかった", sm.added, "");
+  o += tile("消えた", sm.removed, "");
+  o += "</div>\n";
+  if (sm.sameDayDiffers > 0)
+    o += "<p class=\"note\">営業日の差が 0 でも完了日が違う課題が " + std::to_string(sm.sameDayDiffers) + " 件あります（休業日・土日をまたいだ日付の違い）。</p>\n";
+  o += "<h3>遅れの大きい順 <span class=\"note\">" + std::to_string(bc->topLate.size()) + " 件 / 遅れ全体 " + std::to_string(bc->lateTotal) + " 件</span></h3>\n";
+  if (bc->topLate.empty()) {
+    o += "<p class=\"note\">計画より遅れている課題はありません。</p>\n";
+  } else {
+    o += "<table><thead><tr><th>課題</th><th>担当</th><th>計画の完了</th><th>今の見込み</th><th class=\"n\">差</th></tr></thead>\n<tbody>\n";
+    for (int i : bc->topLate) {
+      const std::size_t k = static_cast<std::size_t>(i);
+      const BaselineEntry& e = bc->entries[k];
+      const std::string who = text::trim(s.cx.in.issues[k].assignee);
+      o += "<tr><td class=\"nm\"><span class=\"id\">" + esc(T.did[k]) + "</span> " + esc(T.name[k]) + "</td><td>" + (who.empty() ? std::string("（担当なし）") : esc(who)) +
+           "</td><td>" + (e.planFinish ? esc(fmtMd(*e.planFinish)) : std::string("-")) + "</td><td>" + esc(fmtMd(e.nowFinish)) +
+           "</td><td class=\"n rk-late\">" + esc(baselineDiffMark(e) + " " + baselineDiffText(e)) + "</td></tr>\n";
+    }
+    o += "</tbody></table>\n";
+  }
+  o += "</div>\n";
+  return o;
+}
+
 }  // namespace
 
 std::string renderStats(const Ctx& cx) {
@@ -359,6 +407,7 @@ std::string renderStats(const Ctx& cx) {
   }
   out += overall(s, st);
   out += floatDist(s, st);
+  out += baselineSection(s);
   out += weekly(s, st);
 
   // 担当別

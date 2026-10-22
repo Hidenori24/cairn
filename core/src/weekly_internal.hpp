@@ -42,5 +42,16 @@ std::string diffPhrase(const WeeklyMilestone& m);
 std::string loadText(int percent);
 // 「ほか N 件」
 std::string moreText(int omitted);
+// ベースラインの保存日時 "YYYY-MM-DDTHH:MM" → "2026/10/19 09:30"（分からなければ空）
+std::string baselineAtText(const std::string& at);
+// 遅れ・早まりの 1 行の説明 "計画 10/23 → 見込み 10/30・計画より 5 営業日遅れ"
+std::string baselineMoveText(const WeeklyBaselineRow& r);
+// 計画になかった課題 "完了見込み 10/30" / 消えた課題 "計画の完了 10/23"
+std::string baselineAddedText(const WeeklyBaselineRow& r);
+std::string baselineRemovedText(const WeeklyBaselineRow& r);
+// 件数の見出し "遅れ 3 件 ／ 早まり 2 件 ／ 計画どおり 10 件 ／ 計画になかった 1 件 ／ 消えた 1 件"
+std::string baselineCountsText(const BaselineSummary& s);
+// 営業日の差が 0 なのに完了日が違う課題があるときの注記（なければ空）
+std::string baselineSameDayNote(const BaselineSummary& s);
 
 }  // namespace roadmap::weeklyfmt

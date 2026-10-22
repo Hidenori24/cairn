@@ -206,6 +206,13 @@ struct Gantt {
     if (T.ownDl[u]) L.push_back("期限 " + fmtLong(*T.ownDl[u]));
     if (!o.assignee.empty()) L.push_back("担当 " + o.assignee);
     if (r.waited) L.push_back("担当者の別作業待ち");
+    if (cx.bl) {
+      const BaselineEntry& e = cx.bl->entries[u];
+      if (e.state == BaselineState::Added) L.push_back("ベースライン「" + cx.bl->baselineName + "」: 計画になかった");
+      else if (e.planFinish)
+        L.push_back("計画（" + cx.bl->baselineName + "） " + (e.planStart ? fmtLong(*e.planStart) + " 〜 " : std::string()) + fmtLong(*e.planFinish) +
+                    "・差 " + baselineDiffText(e) + (baselineDiffNote(e).empty() ? std::string() : "（" + baselineDiffNote(e) + "）"));
+    }
     std::string t;
     for (std::size_t i = 0; i < L.size(); ++i) t += (i ? "\n" : "") + esc(L[i]);
     return "<title>" + t + "</title>";
@@ -303,8 +310,34 @@ struct Gantt {
         addText(s.bars, sh.x0 + 6, ty, lab, TextStyle{11, true, "", "#ffffff", 1});
       }
     }
+    if (cx.bl) emitPlan(s, vr, y);
     if (sh.hasDeadline) {
       s.deadline += "M" + pathNum(sh.dlX) + " " + pathNum(cy - 6) + "l6 6l-6 6l-6-6z";
+    }
+  }
+
+  // ---- 計画のバー（ベースライン。Issue #53）----
+  unsigned planRgb() const { return mix(k.muted, 0.7, k.surface); }
+  void emitPlan(Sink& s, const VisibleRow& vr, double y) const {
+    const Tree& T = cx.in.tree;
+    const std::size_t u = static_cast<std::size_t>(vr.id);
+    const BaselineEntry& e = cx.bl->entries[u];
+    const ScheduleRow& r = cx.in.rows[u];
+    const bool isMs = !vr.isPar && T.kind[u] == Kind::Ms;
+    const GanttRowShape sh = ganttRowShape(ax, T, r, vr.id, vr.isPar);
+    const GanttPlanShape p = ganttPlanShape(ax, sh, e, isMs, 1.f, static_cast<float>(kRowH));
+    if (p.kind == GanttPlanShape::Kind::Bar) {
+      addRect(s.bars, p.x0, y + p.y0, p.w, p.y1 - p.y0, H(planRgb()), 1, 1, "class=\"plan\"");
+    } else if (p.kind == GanttPlanShape::Kind::Milestone) {
+      const double cy = y + (p.y0 + p.y1) / 2, rr = 3.2;
+      s.bars += "<path class=\"plan\" d=\"M" + pathNum(p.msX) + " " + pathNum(cy - rr) + "l" + pathNum(rr) + " " + pathNum(rr) + "l-" + pathNum(rr) + " " +
+                pathNum(rr) + "l-" + pathNum(rr) + " -" + pathNum(rr) + "z\" fill=\"" + H(planRgb()) + "\"/>";
+    }
+    if (baselineShowLabel(e)) {
+      const std::string mark = baselineDiffMark(e);
+      const std::string label = (mark.empty() ? std::string() : mark + " ") + baselineDiffText(e);
+      const unsigned col = e.state == BaselineState::Late ? k.late : e.state == BaselineState::Early ? k.ok : k.muted;
+      addText(s.bars, p.labelX, y + kRowH / 2 + 4, label, TextStyle{11, e.state != BaselineState::OnPlan, "", H(col), 1});
     }
   }
 
@@ -349,6 +382,10 @@ struct Gantt {
     }
     o += "<span>斜線 = 余裕</span><span>◇ 期限</span><span>赤い枠と「!」= 遅れ</span><span>橙の枠 = 余裕 0</span>";
     o += "<span>破線の枠 = 担当者の別作業待ち</span>";
+    if (cx.bl) {
+      sw(planRgb(), "計画のバー（ベースライン「" + clipText(cx.bl->baselineName, 200, 12) + "」）");
+      o += "<span>「+3日」「! +3日」= 計画より遅れ（営業日）</span><span>「-2日」= 計画より早い</span>";
+    }
     if (cx.opt.showDeps) o += "<span>赤い点線と「!」の矢印 = 日付が合わない依存</span>";
     o += "</div>\n";
     return o;
@@ -444,6 +481,12 @@ std::string renderGantt(const Ctx& cx) {
   if (axisCut) out += "<p class=\"warn\">日付の範囲が広いため、ガントの時間軸は " + std::to_string(kReportMaxAxisDays) + " 日までで切っています。</p>\n";
   if (omittedArrows > 0)
     out += "<p class=\"warn\">依存の矢印が多いため、離れた行どうしの矢印 " + std::to_string(omittedArrows) + " 本を省いています。</p>\n";
+  if (cx.bl) {
+    const std::string at = cx.bl->baselineAt;
+    out += "<p class=\"note\">ベースライン: 「" + esc(cx.bl->baselineName) + "」" +
+           (at.size() == 16 ? "（保存 " + esc(at.substr(0, 4) + "/" + at.substr(5, 2) + "/" + at.substr(8, 2) + " " + at.substr(11, 5)) + "）" : std::string()) +
+           "との差を、各バーの下の薄いバーと「+3日」の形で出しています。</p>\n";
+  }
   out += g.legend();
 
   // チャンクごとの SVG

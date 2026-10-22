@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "roadmap/baseline.hpp"
 #include "roadmap/clock.hpp"
 #include "roadmap/csv.hpp"
 #include "roadmap/filestore.hpp"
@@ -807,4 +808,80 @@ TEST_CASE("report: 長いガントは行ごとに区切った SVG になり、�
     widths.insert(h.substr(w, h.find('"', w + 7) - w));
   }
   CHECK(widths.size() == 1);
+}
+
+// ---------------------------------------------------------------- ベースライン（Issue #53）
+TEST_CASE("report: ベースラインを選ぶと、ガントに計画のバーと差、統計に「計画との差」の節が出る") {
+  Proj base = Proj::fromCsv(kBasic);
+  auto bl = captureBaseline(base.issues, base.comp, "キックオフ", "2026-10-19T09:30");
+  REQUIRE(bl.ok());
+  // C（4）を 2 週 → 4 週に延ばす（遅れ）。単独（6）は 1 週 → 0.4 週（早まり）
+  Proj p = base;
+  for (Issue& o : p.issues) {
+    if (o.id == "4") o.durW = 4.0;
+    if (o.id == "6") o.durW = 0.4;
+  }
+  p.compute();
+  auto cmp = compareBaseline(bl.value(), p.issues, p.comp, p.cal);
+  REQUIRE(cmp.ok());
+  REQUIRE(cmp.value().sum.late >= 1);
+  REQUIRE(cmp.value().sum.early >= 1);
+
+  ExportOptions o;
+  o.list = false;
+  ExportInput in = p.input();
+  in.baseline = &cmp.value();
+  const std::string h = exportHtml(in, o);
+  // ガント: 計画のバー（全行ぶん）と、ずれた分（遅れは「!」と「+」）
+  CHECK(count(h, "class=\"plan\"") == p.issues.size());
+  const BaselineEntry& c4 = cmp.value().entries[static_cast<std::size_t>(p.idx("4"))];
+  REQUIRE(c4.state == BaselineState::Late);
+  CHECK(contains(h, ">! +" + std::to_string(c4.finishDiff) + "日<"));
+  const BaselineEntry& c6 = cmp.value().entries[static_cast<std::size_t>(p.idx("6"))];
+  REQUIRE(c6.state == BaselineState::Early);
+  CHECK(contains(h, ">-" + std::to_string(-c6.finishDiff) + "日<"));
+  CHECK(contains(h, "キックオフ"));       // 凡例・注記にベースライン名
+  // 統計: 節と遅れの上位
+  CHECK(contains(h, "計画との差"));
+  CHECK(contains(h, "遅れの大きい順"));
+  CHECK(onlyKnownTags(h));
+  CHECK(text::isValidUtf8(h));
+
+  // ベースラインがなければ何も出ない
+  const std::string plain = exportHtml(p.input(), o);
+  CHECK(count(plain, "class=\"plan\"") == 0);
+  CHECK_FALSE(contains(plain, "計画との差"));
+
+  // ダークでも出る。件名の < は実体参照
+  o.dark = true;
+  CHECK(count(exportHtml(in, o), "class=\"plan\"") == p.issues.size());
+}
+
+TEST_CASE("report: ベースラインの名前・件名の HTML はエスケープされ、課題の数が合わない比較は無視する") {
+  Proj base = Proj::fromCsv(kBasic);
+  auto bl = captureBaseline(base.issues, base.comp, "<script>x</script>", "2026-10-19T09:30");
+  REQUIRE(bl.ok());
+  Proj p = base;
+  p.issues.erase(p.issues.begin() + 5);  // 単独の課題を消す
+  p.compute();
+  auto cmp = compareBaseline(bl.value(), p.issues, p.comp, p.cal);
+  REQUIRE(cmp.ok());
+  ExportInput in = p.input();
+  in.baseline = &cmp.value();
+  ExportOptions o;
+  o.list = false;
+  const std::string h = exportHtml(in, o);
+  CHECK_FALSE(contains(h, "<script>"));
+  CHECK(contains(h, "&lt;script&gt;"));
+  CHECK(contains(h, "消えた"));
+  CHECK(onlyKnownTags(h));
+  // 課題の数が合わない比較（古い比較を渡してしまった）は使わない
+  Proj q = base;
+  q.issues.erase(q.issues.begin() + 3, q.issues.end());
+  q.compute();
+  ExportInput stale = q.input();
+  stale.baseline = &cmp.value();  // 5 件の課題に対する比較
+  const std::string hs = exportHtml(stale, o);
+  CHECK(count(hs, "class=\"plan\"") == 0);
+  CHECK_FALSE(contains(hs, "計画との差"));
 }

@@ -146,3 +146,30 @@ TEST_CASE("filter: matchSet は一致を返すだけで行は減らさない") {
   CHECK_FALSE(m[T.find("2")]);
   CHECK_FALSE(m[T.find("1")]);
 }
+
+TEST_CASE("filter: 列「計画との差」の絞り込み（遅れだけ・遅れを隠す）。表示するベースラインがなければ効かない") {
+  Session s = make();
+  Filter f;
+  ColumnFilter cf;
+  cf.hide["plan"].insert(kBaselineValueOnPlan);
+  cf.hide["plan"].insert(kBaselineValueEarly);
+  // ベースラインを表示していないとき: 値がないので何も隠さない
+  CHECK(s.visibleLeaves(f, &cf).size() == 4);
+  REQUIRE(s.addBaseline("キックオフ").ok());
+  CHECK(s.visibleLeaves(f, &cf).empty());  // 全部が計画どおり
+  // 「画面」を 2 週に延ばして遅らせる
+  REQUIRE(s.setField("2", [](Issue& o) { o.durW = 2.0; }));
+  const auto leaves = s.visibleLeaves(f, &cf);
+  REQUIRE(leaves.size() == 1);
+  CHECK(s.issues()[static_cast<std::size_t>(leaves[0])].id == "2");
+  std::vector<std::string> rows;
+  for (const auto& r : s.visibleRows(f, &cf)) rows.push_back(s.issues()[static_cast<std::size_t>(r.id)].id);
+  CHECK(rows == std::vector<std::string>{"1", "2"});  // 親は残る
+  // 遅れを隠す
+  ColumnFilter hideLate;
+  hideLate.hide["plan"].insert(kBaselineValueLate);
+  CHECK(s.visibleLeaves(f, &hideLate).size() == 3);
+  // 別の列の絞り込みと一緒に使える
+  hideLate.hide["status"].insert("Done");
+  CHECK(s.visibleLeaves(f, &hideLate).size() == 2);
+}

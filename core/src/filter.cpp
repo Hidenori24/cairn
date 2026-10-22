@@ -95,9 +95,13 @@ std::vector<char> visSet(const Tree& T, const std::vector<Issue>& issues, const 
     if (!m) return false;
     if (cf)
       for (const auto& [col, vals] : cf->hide)
-        if (!vals.empty() && vals.count(col == "pred" ? (dp.empty() ? "" : predColumnValue(!dp[id].empty()))
-                                                       : columnValue(col, o, r)))
-          return false;
+        if (!vals.empty()) {
+          std::string v;
+          if (col == "pred") v = dp.empty() ? "" : predColumnValue(!dp[id].empty());
+          else if (col == "plan") v = static_cast<std::size_t>(id) < cf->planValues.size() ? cf->planValues[static_cast<std::size_t>(id)] : std::string();
+          else v = columnValue(col, o, r);
+          if (vals.count(v)) return false;
+        }
     switch (f.asg) {
       case AsgFilter::Assigned:
         if (o.assignee.empty()) return false;

@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "roadmap/baseline.hpp"
 #include "roadmap/engine.hpp"
 #include "roadmap/filter.hpp"
 
@@ -70,6 +71,19 @@ struct GanttRowShape {
   float dlX = 0;          // 期限の菱形の中心
 };
 GanttRowShape ganttRowShape(const GanttAxis& ax, const Tree& T, const ScheduleRow& r, int id, bool isPar);
+
+// ---------------------------------------------------------------- ベースライン（計画のバー。Issue #53）
+// 現在のバーの下に出す薄い「計画のバー」と、ずれた分（営業日）の文字の位置。縦は行の上端からの位置（rowH は呼ぶ側の行の高さ）
+struct GanttPlanShape {
+  enum class Kind { None, Bar, Milestone } kind = Kind::None;
+  float x0 = 0, x1 = 0, w = 0;  // Bar: 計画の開始〜完了（最小幅 3）。x1 = x0 + w
+  float msX = 0;                // Milestone: 計画の菱形の中心
+  float labelX = 0;             // 差の文字を置く左端（現在のバー・余裕の影・計画のバーの右端のうち一番右の外）
+  float y0 = 0, y1 = 0;         // 行の上端からの位置（rowH から求める）
+};
+// 現在の形 cur と、課題の比較 e から計画の形を作る。isMs = マイルストーン（末端で Ms）。計画に日付がなければ kind = None
+GanttPlanShape ganttPlanShape(const GanttAxis& ax, const GanttRowShape& cur, const BaselineEntry& e, bool isMs, float scale,
+                              float rowH = 0);
 
 // ---------------------------------------------------------------- 依存の矢印
 // 表示している行の番号（Tree の添字 → 行。表示していなければ -1）

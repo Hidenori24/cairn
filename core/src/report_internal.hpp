@@ -55,6 +55,7 @@ struct Ctx {
   const ThemeColors& k;
   bool dark = false;
   std::vector<VisibleRow> rows;  // 書き出す行（範囲に従う）
+  const BaselineCompare* bl = nullptr;  // 使えるベースラインとの比較（課題の数が合うときだけ）
   std::string fg(unsigned rgb) const { return hex(rgb); }
   std::string ink() const { return hex(k.ink); }
   std::string muted() const { return hex(k.muted); }

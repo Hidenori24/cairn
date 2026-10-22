@@ -1137,3 +1137,101 @@ TEST_CASE("weekly: 課題がないプロジェクトでも、所感を出す項�
   CHECK_FALSE(has(weeklyMarkdown(off), "来週は設計を始める"));
   CHECK_FALSE(has(weeklyHtml(off), "来週は設計を始める"));
 }
+
+// ---------------------------------------------------------------- ベースラインとの差（Issue #53）
+TEST_CASE("weekly: 「ベースラインとの差」の節はオプション（既定オフ）で、遅れ・早まり・計画になかった・消えた課題を出す") {
+  CHECK_FALSE(WeeklySections{}.baseline);
+  Proj a = Proj::make(basic());
+  auto b = captureBaseline(a.issues, a.comp, "キックオフ", "2026-10-19T09:30");
+  REQUIRE(b.ok());
+  // 計画を変える: H を長く（遅れ）、F を短く（早まり）、U を消し、新しい課題を足す
+  auto specs = basic();
+  specs[8].weeks = 3;                 // H（9）: 2 週 → 3 週
+  specs[6].weeks = 0.4;               // F（7）: 1 週 → 2 営業日
+  specs.erase(specs.begin() + 9);     // U（10）を消す
+  specs.push_back({"14", "新しい <b>課題</b>", "鈴木", "To Do", "1", "Task", "", "", "", 1, {}});
+  Proj p = Proj::make(specs);
+  auto cmp = compareBaseline(b.value(), p.issues, p.comp, p.cal);
+  REQUIRE(cmp.ok());
+  WeeklyInput in = p.input();
+  in.baseline = &cmp.value();
+
+  WeeklyOptions o;
+  o.sections.baseline = true;
+  const WeeklyReport r = buildWeeklyReport(in, o);
+  REQUIRE(r.baseline.available);
+  CHECK(r.baseline.name == "キックオフ");
+  CHECK(r.baseline.sum.late >= 1);
+  CHECK(r.baseline.sum.added == 1);
+  CHECK(r.baseline.sum.removed == 1);
+  REQUIRE(!r.baseline.late.items.empty());
+  CHECK(r.baseline.late.items[0].name == "H");
+  CHECK(r.baseline.late.items[0].diffDays > 0);
+  REQUIRE(r.baseline.added.items.size() == 1);
+  CHECK(r.baseline.added.items[0].name == "新しい <b>課題</b>");
+  REQUIRE(r.baseline.removed.items.size() == 1);
+  CHECK(r.baseline.removed.items[0].name == "U");
+  bool sawEarly = false;
+  for (const auto& it : r.baseline.early.items) sawEarly = sawEarly || it.name == "F";
+  CHECK(sawEarly);
+
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "## ベースラインとの差"));
+  CHECK(has(md, "キックオフ"));
+  CHECK(has(md, "H"));
+  CHECK(has(md, "+"));                     // 遅れの営業日
+  CHECK_FALSE(has(md, "<b>"));              // 件名の < はエスケープ済み
+  const std::string html = weeklyHtml(r);
+  CHECK(has(html, "ベースラインとの差"));
+  CHECK(has(html, "キックオフ"));
+  CHECK_FALSE(has(html, "<b>課題</b>"));    // HTML にもそのまま入らない
+
+  // オフ（既定）なら出ない。比較がなければ、オンでも出ない
+  CHECK_FALSE(has(weeklyMarkdown(buildWeeklyReport(in, WeeklyOptions{})), "ベースラインとの差"));
+  WeeklyInput none = p.input();
+  const WeeklyReport noCmp = buildWeeklyReport(none, o);
+  CHECK_FALSE(noCmp.baseline.available);
+  CHECK_FALSE(has(weeklyMarkdown(noCmp), "ベースラインとの差"));
+  CHECK_FALSE(has(weeklyHtml(noCmp), "ベースラインとの差"));
+  // 項目の一つとして数える（ほかを全部オフにしても、これだけオンなら出す項目がある）
+  WeeklySections only;
+  only.summary = only.done = only.progress = only.next = only.risks = only.milestones = only.assignees = only.changes = only.notes = false;
+  CHECK_FALSE(only.any());
+  only.baseline = true;
+  CHECK(only.any());
+}
+
+TEST_CASE("weekly: ベースラインとの差の一覧は件数の上限で切り、営業日の差が 0 で日付だけ違う課題を数える") {
+  Proj a = Proj::make(basic());
+  auto b = captureBaseline(a.issues, a.comp, "合意", "2026-10-19T09:30");
+  REQUIRE(b.ok());
+  Baseline base = b.value();
+  // 全部の計画を 1 週間前にして、遅れの課題を増やす。課題 "3"（完了日が日曜）だけは計画を土曜日にして、
+  // 営業日の差が 0 のまま日付だけ違うようにする
+  for (BaselineItem& it : base.items) {
+    if (!it.finish) continue;
+    const std::size_t k = static_cast<std::size_t>(a.idx(it.id.c_str()));
+    if (it.id == "3") it.finish = a.comp.R[k].asapFinish - 1;
+    else it.finish = *it.finish - 7;
+  }
+  auto cmp = compareBaseline(base, a.issues, a.comp, a.cal);
+  REQUIRE(cmp.ok());
+  const BaselineEntry& three = cmp.value().entries[static_cast<std::size_t>(a.idx("3"))];
+  CHECK(three.finishDiff == 0);
+  CHECK(three.finishDiffers);
+  CHECK(cmp.value().sum.sameDayDiffers >= 1);
+  WeeklyInput in = a.input();
+  in.baseline = &cmp.value();
+  WeeklyOptions o;
+  o.sections.baseline = true;
+  o.maxItems = 1;
+  const WeeklyReport r = buildWeeklyReport(in, o);
+  REQUIRE(r.baseline.available);
+  CHECK(r.baseline.late.items.size() == 1);
+  CHECK(r.baseline.late.total > 1);
+  CHECK(r.baseline.late.omitted() == r.baseline.late.total - 1);
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "ほか"));
+  CHECK(has(md, "営業日の差が 0"));
+  CHECK(has(weeklyHtml(r), "営業日の差が 0"));
+}

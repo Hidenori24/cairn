@@ -1,5 +1,6 @@
 // 週次レポートの Markdown レンダラ
 #include <algorithm>
+#include <functional>
 
 #include "roadmap/report.hpp"
 #include "roadmap/text.hpp"
@@ -247,6 +248,35 @@ void renderChanges(Md& m, const WeeklyReport& r) {
   m.line("- 増えた作業: " + std::to_string(c.added) + " 件 ／ 無くなった作業: " + std::to_string(c.removed) + " 件");
 }
 
+void renderBaseline(Md& m, const WeeklyReport& r) {
+  const WeeklyBaseline& b = r.baseline;
+  m.heading(2, "ベースラインとの差");
+  const std::string at = baselineAtText(b.at);
+  m.line("ベースライン「" + escapeMarkdown(b.name) + "」" + (at.empty() ? std::string() : "（保存 " + at + "）") +
+         "との比較です。営業日の差で、+ は計画より遅れ、- は早まりです。");
+  if (b.truncated) m.line("（ベースラインは課題が多かったため、一部の課題だけです）");
+  m.blank();
+  m.line(baselineCountsText(b.sum));
+  const std::string note = baselineSameDayNote(b.sum);
+  if (!note.empty()) m.line(note);
+  m.blank();
+  const auto rows = [&](const std::string& head, const WeeklyBaselineList& l, const std::function<std::string(const WeeklyBaselineRow&)>& detail) {
+    m.line("### " + head + "（" + std::to_string(l.total) + " 件）");
+    m.blank();
+    if (l.items.empty()) m.line("- なし");
+    for (const WeeklyBaselineRow& it : l.items) {
+      const std::string nm = it.did.empty() ? escapeMarkdown(it.name.empty() ? it.id : it.name) : escapeMarkdown(title(it.did, it.name));
+      m.line("- " + nm + "（" + (it.assignee.empty() && it.did.empty() ? std::string() : "担当: " + who2(it.assignee) + "・") + detail(it) + "）");
+    }
+    if (l.omitted() > 0) m.line("- " + moreText(l.omitted()));
+    m.blank();
+  };
+  rows("遅れた課題", b.late, baselineMoveText);
+  rows("早まった課題", b.early, baselineMoveText);
+  rows("計画になかった課題", b.added, baselineAddedText);
+  rows("消えた課題", b.removed, baselineRemovedText);
+}
+
 }  // namespace
 
 std::string weeklyMarkdown(const WeeklyReport& r) {
@@ -275,6 +305,7 @@ std::string weeklyMarkdown(const WeeklyReport& r) {
   if (s.milestones) renderMilestones(m, r);
   if (s.assignees) renderAssignees(m, r);
   if (s.changes && r.changes.available) renderChanges(m, r);
+  if (s.baseline && r.baseline.available) renderBaseline(m, r);
   if (s.notes) notes();
   // 末尾は改行 1 つ
   while (m.o.size() >= 2 && m.o[m.o.size() - 1] == '\n' && m.o[m.o.size() - 2] == '\n') m.o.pop_back();

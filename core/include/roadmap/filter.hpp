@@ -33,6 +33,9 @@ struct Filter {
 struct ColumnFilter {
   std::string name;                                   // 件名・表示ID・キーに含む文字（祖先が一致すれば配下も一致）
   std::map<std::string, std::set<std::string>> hide;  // 列のキー → 隠す値（columnValue の文字列）
+  // 列「計画との差」（キー "plan"。Issue #53）の値。添字ごとに baselineColumnValue の文字列。
+  // 表示するベースラインがあるとき Session が入れる（空なら "plan" の絞り込みは効かない）
+  std::vector<std::string> planValues;
 
   bool active() const;
   bool hidden(const std::string& col, const std::string& value) const;
@@ -40,7 +43,7 @@ struct ColumnFilter {
   void clear(const std::string& col);
 };
 
-// 列の絞り込みで使う、末端の課題の値。列のキーは type / status / asg / prio / float / pred
+// 列の絞り込みで使う、末端の課題の値。列のキーは type / status / asg / prio / float / pred / plan
 inline constexpr const char* kNoneValue = "（なし）";
 inline constexpr const char* kUnassignedValue = "（未割当）";
 // 「先行」列（col = "pred"）の値は先行の有無だけ。先行は他の課題の blocks にあるので、columnValue ではなく predColumnValue を使う

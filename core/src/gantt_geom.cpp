@@ -111,6 +111,36 @@ GanttRowShape ganttRowShape(const GanttAxis& ax, const Tree& T, const ScheduleRo
   return s;
 }
 
+// ---------------------------------------------------------------- ベースライン（計画のバー）
+GanttPlanShape ganttPlanShape(const GanttAxis& ax, const GanttRowShape& cur, const BaselineEntry& e, bool isMs, float scale,
+                              float rowH) {
+  GanttPlanShape p;
+  // 現在のバーの下端は「行の高さ - 6」。その 1 下から高さ 3 の帯（rowH = 0 のときは画面の既定の 26 を使う）
+  const float h = rowH > 0.f ? rowH : 26.f * scale;
+  p.y0 = h - 5.f * scale;
+  p.y1 = h - 2.f * scale;
+  float right = cur.kind == GanttRowShape::Kind::Milestone ? cur.msX + 7.f * scale : cur.x1;
+  if (cur.hasSlack) right = std::max(right, cur.slackX1);
+  if (cur.hasOver) right = std::max(right, cur.overX1);
+  if (e.planFinish) {
+    if (isMs) {
+      p.kind = GanttPlanShape::Kind::Milestone;
+      p.msX = ax.x(*e.planFinish) + ax.px / 2;
+      right = std::max(right, p.msX + 3.f * scale);
+    } else {
+      const Day s0 = e.planStart ? std::min(*e.planStart, *e.planFinish) : *e.planFinish;
+      const GanttSpan b = ganttTaskBar(ax, s0, *e.planFinish);
+      p.kind = GanttPlanShape::Kind::Bar;
+      p.x0 = b.xl;
+      p.x1 = b.xr;
+      p.w = b.w;
+      right = std::max(right, p.x1);
+    }
+  }
+  p.labelX = right + 6.f * scale;
+  return p;
+}
+
 // ---------------------------------------------------------------- 依存の矢印
 std::vector<int> ganttRowIndex(const Tree& T, const std::vector<VisibleRow>& rows) {
   std::vector<int> rowOf(static_cast<std::size_t>(T.n), -1);

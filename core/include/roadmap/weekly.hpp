@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "roadmap/baseline.hpp"
 #include "roadmap/calendar.hpp"
 #include "roadmap/clock.hpp"
 #include "roadmap/engine.hpp"
@@ -51,7 +52,10 @@ struct WeeklySections {
   bool assignees = true;    // 担当別
   bool changes = true;      // 先週から変わったこと（スナップショットがあるときだけ出る）
   bool notes = true;        // 所感・課題・お願い
-  bool any() const { return summary || done || progress || next || risks || milestones || assignees || changes || notes; }
+  bool baseline = false;    // ベースラインとの差（表示するベースラインがあるときだけ出る。既定オフ。Issue #53）
+  bool any() const {
+    return summary || done || progress || next || risks || milestones || assignees || changes || notes || baseline;
+  }
 };
 
 struct WeeklyOptions {
@@ -77,6 +81,7 @@ struct WeeklyInput {
   Day base = 0;
   std::string projectName;
   const WeeklySnapshot* prev = nullptr;  // 先週のスナップショット（なければ「先週から変わったこと」は出ない）
+  const BaselineCompare* baseline = nullptr;  // 表示するベースラインとの比較（なければ「ベースラインとの差」は出ない）
 };
 
 // ---------------------------------------------------------------- 結果の構造体
@@ -161,6 +166,34 @@ struct WeeklyChanges {
   int removed = 0;       // 無くなった作業の数
 };
 
+// ベースラインとの差の 1 行
+struct WeeklyBaselineRow {
+  int index = -1;              // Tree の添字（消えた課題は -1）
+  std::string id;              // Issue Id
+  std::string did, name;       // 表示 ID・件名（消えた課題は did が空で、name は保存していた件名）
+  std::string assignee;
+  OptDay planFinish;           // 計画の完了日
+  Day nowFinish = 0;           // いまの見込み（消えた課題では意味がない）
+  int diffDays = 0;            // 完了日の差（営業日。+ は遅れ）
+  bool differs = false;        // 完了日そのものが違う（営業日の差が 0 でも立つことがある）
+  bool done = false;
+};
+struct WeeklyBaselineList {
+  std::vector<WeeklyBaselineRow> items;  // 上限までの先頭
+  int total = 0;
+  int omitted() const { return total - static_cast<int>(items.size()); }
+};
+struct WeeklyBaseline {
+  bool available = false;
+  std::string name, at;        // ベースラインの名前・保存日時 "YYYY-MM-DDTHH:MM"
+  bool truncated = false;      // 比べた相手は一部の課題だけ
+  BaselineSummary sum;
+  WeeklyBaselineList late;     // 遅れ（大きい順）
+  WeeklyBaselineList early;    // 早まり（大きい順）
+  WeeklyBaselineList added;    // 計画になかった
+  WeeklyBaselineList removed;  // 消えた
+};
+
 struct WeeklyReport {
   std::string projectName;
   Day base = 0;
@@ -181,6 +214,7 @@ struct WeeklyReport {
   std::vector<WeeklyAssigneeRow> assignees;  // 名前順（順位にしない）。未割当は最後
   int assigneesTotal = 0;
   WeeklyChanges changes;
+  WeeklyBaseline baseline;
   std::string notes;      // 所感（そのまま）
   bool empty = false;     // 課題がない
 };
