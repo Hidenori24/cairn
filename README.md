@@ -111,6 +111,10 @@ rmcli validate input.csv                                                        
 - Windows の exe は MinGW でクロスビルドし、Wine 上で起動・クリック・その場編集・保存まで確認
 - **Windows 実機（MSVC ビルド）での IME・高DPI の確認は未実施**です。手順は [docs/ui-spike.md](docs/ui-spike.md)
 
+## 互換の方針
+
+保存したデータ（CSV・フォルダ構成・設定ファイル・共有／バックアップの JSON）を新しい版でも開ける約束、未知のキーを消さない方針、JIRA 互換、保存形式を変えるときの手順は [docs/COMPAT.md](docs/COMPAT.md) にあります。版ごとの見本（架空のデータ）を `tests/compat/` に置き、単体テストで開けること・書き戻しても変わらないことを確かめています。
+
 ## サンプルデータについて
 
 `golden/samples/` とアプリに埋め込むサンプル（階層デモ・資源制約デモ）は、外部に出せるよう製品固有の語を一般的な表現にしています。`scenario_demo.csv` は機能の確認用の汎用データで、テストだけが使います。

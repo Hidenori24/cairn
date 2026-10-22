@@ -1,0 +1,58 @@
+{
+ "theme": "auto",
+ "density": "normal",
+ "me": "鈴木",
+ "currentProject": "pcompat09d4",
+ "templates": [
+  {
+   "id": "u:k3x9",
+   "name": "作成とレビュー",
+   "desc": "架空のテンプレート",
+   "items": [
+    {
+     "n": "作成",
+     "w": 1,
+     "lv": 0,
+     "after": [],
+     "lab": []
+    },
+    {
+     "n": "レビュー",
+     "w": 1,
+     "lv": 0,
+     "after": [
+      0
+     ],
+     "lab": [
+      "期間仮置き"
+     ]
+    }
+   ]
+  }
+ ],
+ "window": {
+  "x": 100,
+  "y": 100,
+  "w": 1440,
+  "h": 900,
+  "maximized": false
+ },
+ "hintDismissed": true,
+ "dataDir": "",
+ "uiScale": 100,
+ "dimPercent": 30,
+ "confirmDelete": true,
+ "autoBaseToday": false,
+ "newNameFormat": "parentSeq",
+ "newNameCustom": "{親}の子 {n}",
+ "inherit": {
+  "on": true,
+  "assignee": false,
+  "prio": true,
+  "labels": true,
+  "deadline": false,
+  "type": false,
+  "duration": false
+ },
+ "autoCompleteGitHub": false
+}

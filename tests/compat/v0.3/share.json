@@ -1,0 +1,67 @@
+{
+ "app": "regroadmap",
+ "version": 3,
+ "exported": "2026-10-19T09:00:00.000Z",
+ "projects": [
+  {
+   "v": 3,
+   "id": "pcompat03a1",
+   "name": "旧形式の見本（0.3 の平置き）",
+   "key": "PTL",
+   "base": "2026-10-19",
+   "hol": "2026-11-03\n2026-11-23\n2026-12-29\n2026-12-30\n2026-12-31",
+   "scn": "標準",
+   "scenarios": [
+    "短縮案"
+   ],
+   "ui": {
+    "collapsed": {},
+    "hide": {},
+    "zoom": "week",
+    "level": 0,
+    "view": "gantt",
+    "lane": "none",
+    "colorBy": "root",
+    "cols": {
+     "asg": true,
+     "status": true,
+     "dur": true,
+     "float": true
+    },
+    "nameW": 300
+   },
+   "res": {
+    "on": true,
+    "cap": 2
+   },
+   "csv": "Issue Id,Issue key,Issue Type,Summary,Parent,Epic Name,Epic Link,Priority,Status,Assignee,Start date,Due date,Resolved,Original estimate,Labels,Description,Outward issue link (Blocks),Deadline,Remaining (weeks),Duration (weeks),Duration (weeks) @短縮案\r\n1,PTL-1,Epic,社内ポータルの改修,,社内ポータルの改修,,High,,,,,,,見本,架空のサンプルです。,,,,,\r\n2,PTL-2,Story,要件の整理,1,,社内ポータルの改修,High,,,,,,,見本,,,,,,\r\n3,PTL-3,Task,画面の設計,2,,,High,Done,田中,2026-10-05,,2026-10-09,,見本,完了済みの作業。,6,,,1,\r\n4,PTL-4,Task,認証方式の見直し,2,,,Medium,,佐藤,,,,,見本,,,2026-11-27,,2,1\r\n5,PTL-5,Story,実装,1,,社内ポータルの改修,High,,,,,,,見本,,,,,,\r\n6,PTL-6,Task,画面の実装,5,,,High,In Progress,鈴木,2026-10-12,,,,見本,進行中の作業。,7,,0.6,2,\r\n7,PTL-7,Task,結合テスト,5,,,Medium,,田中,,,,,見本,,8,,,1,\r\n8,PTL-8,Milestone,公開判定,1,,社内ポータルの改修,High,,,,,,,見本,期間 0 週のマイルストーン。,,2026-12-18,,0,\r\n"
+  }
+ ],
+ "templates": [
+  {
+   "id": "u:k3x9",
+   "name": "作成とレビュー",
+   "desc": "架空のテンプレート",
+   "items": [
+    {
+     "n": "作成",
+     "w": 1,
+     "lv": 0,
+     "after": [],
+     "lab": []
+    },
+    {
+     "n": "レビュー",
+     "w": 1,
+     "lv": 0,
+     "after": [
+      0
+     ],
+     "lab": [
+      "期間仮置き"
+     ]
+    }
+   ]
+  }
+ ]
+}

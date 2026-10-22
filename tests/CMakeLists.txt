@@ -36,11 +36,15 @@ add_executable(roadmap_unit_tests
   unit/test_links.cpp
   unit/test_github_ref.cpp
   unit/test_remote_status.cpp
+  unit/test_compat.cpp
 )
 target_link_libraries(roadmap_unit_tests PRIVATE roadmap_core roadmap_controller roadmap_test_main)
-target_compile_definitions(roadmap_unit_tests PRIVATE ROADMAP_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/golden")
+target_compile_definitions(roadmap_unit_tests PRIVATE ROADMAP_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/golden"
+  ROADMAP_COMPAT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/compat")
 roadmap_set_warnings(roadmap_unit_tests)
 add_test(NAME unit COMMAND roadmap_unit_tests)
+# 版ごとの互換の見本（tests/compat/。docs/COMPAT.md）だけを走らせる（unit にも含まれる）
+add_test(NAME compat COMMAND roadmap_unit_tests "-tc=compat:*")
 
 add_executable(roadmap_golden_tests golden/test_golden.cpp)
 target_link_libraries(roadmap_golden_tests PRIVATE roadmap_core roadmap_test_main)

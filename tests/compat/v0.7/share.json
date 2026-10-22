@@ -1,0 +1,76 @@
+{
+ "app": "regroadmap",
+ "version": 3,
+ "exported": "2026-10-19T09:00:00.000Z",
+ "projects": [
+  {
+   "v": 3,
+   "id": "pcompat07c3",
+   "name": "経費精算の見直し（0.7 の見本）",
+   "key": "TRM",
+   "base": "2026-10-19",
+   "hol": "2026-11-03\n2026-11-23\n2026-12-29\n2026-12-30\n2026-12-31",
+   "scn": "標準",
+   "scenarios": [
+    "短縮案"
+   ],
+   "ui": {
+    "collapsed": {},
+    "hide": {},
+    "zoom": "week",
+    "level": 0,
+    "view": "gantt",
+    "lane": "none",
+    "colorBy": "root",
+    "cols": {
+     "asg": true,
+     "status": true,
+     "dur": true,
+     "float": true,
+     "pred": true
+    },
+    "nameW": 300,
+    "colW": {
+     "asg": 84
+    },
+    "attachThumb": 96,
+    "dep": {
+     "trace": false,
+     "crit": false
+    }
+   },
+   "res": {
+    "on": false,
+    "cap": 1
+   },
+   "csv": "Issue Id,Issue key,Issue Type,Summary,Parent,Epic Name,Epic Link,Priority,Status,Assignee,Start date,Due date,Resolved,Original estimate,Labels,Description,Outward issue link (Blocks),Comment,Deadline,Remaining (weeks),Duration (weeks),Duration (weeks) @短縮案,Created,Updated,Sprint\r\n1,TRM-1,Epic,経費精算の見直し,,経費精算の見直し,,High,,,,,,,見本,架空のサンプルです。,,,,,,,05/Oct/26 9:00 AM,19/Oct/26 5:30 PM,\r\n2,TRM-2,Story,現状の洗い出し,1,,経費精算の見直し,High,,,,,,,見本,,,,,,,,05/Oct/26 9:10 AM,12/Oct/26 3:00 PM,\r\n3,TRM-3,Task,申請フローの調査,2,,,High,Done,田中,2026-10-05,,2026-10-14,,見本,完了済み。,5,19/Oct/26 10:00 AM;佐藤;関係者に確認済みです。,,,1,,05/Oct/26 9:20 AM,14/Oct/26 6:00 PM,Sprint 1\r\n4,TRM-4,Task,承認ルールの整理,2,,,Medium,Done,佐藤,2026-10-07,,2026-10-16,,見本,,5,,,,1,,05/Oct/26 9:30 AM,16/Oct/26 6:00 PM,Sprint 1\r\n5,TRM-5,Story,新しい申請画面,1,,経費精算の見直し,High,,,,,,,見本,,,,,,,,12/Oct/26 9:00 AM,19/Oct/26 5:30 PM,\r\n6,TRM-6,Task,画面の試作,5,,,High,In Progress,鈴木,2026-10-19,,,,見本,,7,,,0.5,2,,12/Oct/26 9:05 AM,19/Oct/26 5:00 PM,Sprint 2\r\n7,TRM-7,Task,利用者テスト,5,,,Medium,,田中,,,,,見本,,8,,2026-12-11,,1,,12/Oct/26 9:10 AM,12/Oct/26 9:10 AM,Sprint 2\r\n8,TRM-8,Milestone,切り替え判定,1,,経費精算の見直し,High,,,,,,,見本,,,,2026-12-18,,0,,12/Oct/26 9:15 AM,12/Oct/26 9:15 AM,\r\n"
+  }
+ ],
+ "templates": [
+  {
+   "id": "u:k3x9",
+   "name": "作成とレビュー",
+   "desc": "架空のテンプレート",
+   "items": [
+    {
+     "n": "作成",
+     "w": 1,
+     "lv": 0,
+     "after": [],
+     "lab": []
+    },
+    {
+     "n": "レビュー",
+     "w": 1,
+     "lv": 0,
+     "after": [
+      0
+     ],
+     "lab": [
+      "期間仮置き"
+     ]
+    }
+   ]
+  }
+ ]
+}

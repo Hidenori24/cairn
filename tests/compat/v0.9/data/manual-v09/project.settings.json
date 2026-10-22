@@ -1,0 +1,139 @@
+{
+ "app": "regroadmap",
+ "version": 3,
+ "id": "pcompat09d4",
+ "name": "手順書の整備（0.9 の見本）",
+ "key": "DOC",
+ "base": "2026-10-19",
+ "hol": "2026-11-03\n2026-11-23\n2026-12-29\n2026-12-30\n2026-12-31",
+ "scn": "標準",
+ "scenarios": [
+  "短縮案"
+ ],
+ "res": {
+  "on": false,
+  "cap": 1
+ },
+ "ui": {
+  "collapsed": {},
+  "hide": {},
+  "zoom": "week",
+  "level": 0,
+  "view": "gantt",
+  "lane": "none",
+  "colorBy": "root",
+  "cols": {
+   "asg": true,
+   "status": true,
+   "dur": true,
+   "float": true,
+   "pred": true,
+   "plan": true
+  },
+  "nameW": 300,
+  "colW": {
+   "asg": 84
+  },
+  "attachThumb": 64,
+  "dep": {
+   "trace": true,
+   "crit": false
+  }
+ },
+ "attachments": {
+  "6": [
+   {
+    "name": "draft.docx",
+    "size": 30720,
+    "at": "2026-10-19T09:00",
+    "who": "鈴木",
+    "sha256": "3a4a37c8ce8499dfc00b04a9bea49e701f6a108bc050059a54de559837c1fc2f"
+   }
+  ]
+ },
+ "weekly": {
+  "notes": "本文の執筆が進行中。",
+  "snaps": [
+   {
+    "base": "2026-10-19",
+    "progress": 0.3,
+    "tasks": 4,
+    "done": 1,
+    "late": 0,
+    "tight": 1,
+    "finish": "2026-12-11",
+    "truncated": false,
+    "items": [
+     "3\td\t2026-10-09\t0",
+     "4\tt\t2026-12-11\t0",
+     "6\tp\t2026-11-06\t0",
+     "7\tt\t2026-12-04\t0"
+    ]
+   }
+  ]
+ },
+ "baselines": {
+  "shown": "b1",
+  "list": [
+   {
+    "id": "b1",
+    "name": "2026-10-12 の計画",
+    "at": "2026-10-12T09:00",
+    "truncated": false,
+    "items": [
+     "3\td\t0\t2026-10-05\t2026-10-09\t\t章立ての作成",
+     "4\tt\t0\t2026-10-12\t2026-10-30\t2026-12-11\t用語集の準備",
+     "5\tt\t1\t2026-10-12\t2026-11-20\t\t執筆とレビュー",
+     "6\tp\t0\t2026-10-12\t2026-11-06\t\t本文の執筆",
+     "7\tt\t0\t2026-11-09\t2026-11-20\t2026-12-04\tレビューと修正"
+    ]
+   }
+  ]
+ },
+ "history": {
+  "points": [
+   {
+    "week": "2026-10-05",
+    "todo": 4,
+    "doing": 0,
+    "done": 0,
+    "total": 4
+   },
+   {
+    "week": "2026-10-12",
+    "todo": 2,
+    "doing": 1,
+    "done": 1,
+    "total": 4
+   },
+   {
+    "week": "2026-10-19",
+    "todo": 2,
+    "doing": 1,
+    "done": 1,
+    "total": 4
+   }
+  ]
+ },
+ "links": {
+  "6": [
+   {
+    "title": "手順書の置き場",
+    "target": "https://example.invalid/wiki/manual",
+    "at": 1792400000000
+   },
+   {
+    "title": "共有フォルダ",
+    "target": "\\\\fileserver\\share\\manual\\",
+    "at": 1792400100000
+   }
+  ],
+  "7": [
+   {
+    "title": "レビュー依頼",
+    "target": "https://github.com/example-org/example-repo/pull/12",
+    "at": 1792400200000
+   }
+  ]
+ }
+}
