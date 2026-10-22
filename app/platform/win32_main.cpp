@@ -19,9 +19,11 @@
 
 #include "app_controller.hpp"
 #include "platform/win32_gh.hpp"
+#include "platform/win32_lock.hpp"
 #include "platform/win32_platform.hpp"
 #include "roadmap/clock.hpp"
 #include "roadmap/filestore.hpp"
+#include "roadmap/lock.hpp"
 #include "roadmap/store.hpp"
 #include "ui/app_ui.hpp"
 #include "ui/theme.hpp"
@@ -53,34 +55,85 @@ void vlog(const char* s) {
 
 // ---------------------------------------------------------------- データフォルダの監視（8.5 の任意項目）
 // 変更の通知を受けたら少し待ってから同期する（Excel の保存などで続けて届く通知をまとめる）。
-// 自分の保存でも通知は来るが、同期は更新時刻が覚えているものと同じなら何もしない
+// 自分の保存でも通知は来るが、同期は更新時刻が覚えているものと同じなら何もしない。
+// 編集中のロック（.roadmap.lock。Issue #62）はハートビートで 30 秒ごとに書き換わるので、その通知は無視する
+// （通知の名前を見て、ロックのファイルだけの変更なら起きない。ロックを読み直すループを避ける）
 class FolderWatch {
  public:
   ~FolderWatch() { close(); }
   void watch(const std::string& dir) {
-    if (dir == dir_ && h_ != INVALID_HANDLE_VALUE) return;
+    if (dir == dir_ && dirHandle_ != INVALID_HANDLE_VALUE) return;
+    if (dir == dir_ && GetTickCount64() < retryAt_) return;  // 監視できなかったフォルダは、少し待ってから作り直す
     close();
     dir_ = dir;
     // プロジェクトごとのフォルダの中（<data>/<プロジェクト>/project.csv）も見るため、下のフォルダまで監視する
-    h_ = FindFirstChangeNotificationW(win::widen(dir).c_str(), TRUE,
-                                      FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE |
-                                          FILE_NOTIFY_CHANGE_SIZE);
-    vlog(h_ == INVALID_HANDLE_VALUE ? "フォルダを監視できません" : "フォルダの監視を始めました");
+    dirHandle_ = CreateFileW(win::widen(dir).c_str(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                             nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr);
+    if (dirHandle_ != INVALID_HANDLE_VALUE) {
+      event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+      if (!event_ || !arm()) close();
+    }
+    if (dirHandle_ == INVALID_HANDLE_VALUE) retryAt_ = GetTickCount64() + 5000;
+    vlog(dirHandle_ == INVALID_HANDLE_VALUE ? "フォルダを監視できません" : "フォルダの監視を始めました");
   }
-  HANDLE handle() const { return h_; }
+  // 待つ対象（通知が来ると信号になる）。監視できていなければ INVALID_HANDLE_VALUE
+  HANDLE handle() const { return dirHandle_ == INVALID_HANDLE_VALUE ? INVALID_HANDLE_VALUE : event_; }
+  // 通知を読み、ロックのファイル以外の変更があれば true
   bool fired() {
-    if (h_ == INVALID_HANDLE_VALUE || WaitForSingleObject(h_, 0) != WAIT_OBJECT_0) return false;
-    FindNextChangeNotification(h_);
-    return true;
+    if (dirHandle_ == INVALID_HANDLE_VALUE || WaitForSingleObject(event_, 0) != WAIT_OBJECT_0) return false;
+    DWORD bytes = 0;
+    bool relevant = true;
+    if (!GetOverlappedResult(dirHandle_, &ov_, &bytes, FALSE)) {
+      close();  // 取れなくなった（ドライブが外れた など）。次の watch で作り直す
+      retryAt_ = GetTickCount64() + 5000;
+      return true;
+    }
+    if (bytes > 0) {  // 0 = 通知があふれた（何が変わったか分からない）ので、読み直す
+      relevant = false;
+      const BYTE* p = buf_;
+      for (;;) {
+        const auto* info = reinterpret_cast<const FILE_NOTIFY_INFORMATION*>(p);
+        const std::wstring name(info->FileName, info->FileNameLength / sizeof(WCHAR));
+        if (!isLockFileName(win::narrow(name))) relevant = true;
+        if (info->NextEntryOffset == 0) break;
+        p += info->NextEntryOffset;
+      }
+    }
+    if (!arm()) {
+      close();
+      retryAt_ = GetTickCount64() + 5000;
+    }
+    return relevant;
   }
 
  private:
+  bool arm() {
+    ZeroMemory(&ov_, sizeof(ov_));
+    ov_.hEvent = event_;
+    ResetEvent(event_);
+    return ReadDirectoryChangesW(dirHandle_, buf_, sizeof(buf_), TRUE,
+                                 FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE |
+                                     FILE_NOTIFY_CHANGE_SIZE,
+                                 nullptr, &ov_, nullptr) != 0;
+  }
   void close() {
-    if (h_ != INVALID_HANDLE_VALUE) FindCloseChangeNotification(h_);
-    h_ = INVALID_HANDLE_VALUE;
+    if (dirHandle_ != INVALID_HANDLE_VALUE) {
+      CancelIo(dirHandle_);
+      // 取り消しの完了を待ってから、バッファ（このオブジェクトの中）を手放す
+      DWORD n = 0;
+      GetOverlappedResult(dirHandle_, &ov_, &n, TRUE);
+      CloseHandle(dirHandle_);
+    }
+    dirHandle_ = INVALID_HANDLE_VALUE;
+    if (event_) CloseHandle(event_);
+    event_ = nullptr;
   }
   std::string dir_;
-  HANDLE h_ = INVALID_HANDLE_VALUE;
+  HANDLE dirHandle_ = INVALID_HANDLE_VALUE;
+  HANDLE event_ = nullptr;
+  OVERLAPPED ov_{};
+  alignas(DWORD) BYTE buf_[64 * 1024];
+  ULONGLONG retryAt_ = 0;
 };
 
 // ---------------------------------------------------------------- DirectX 11
@@ -370,8 +423,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
       chooseDataDir(fs, args.dataDir, win::envVar("ROADMAP_DATA"), bootPrefs.dataDir, exe, local + "\\projects");
   vlog(("data: " + dd.dir).c_str());
 
+  // 編集中のロック（Issue #62）。共有ドライブ（SMB）での交代を想定。コントローラより先に作り、あとで壊れる
+  win::Win32LockStore lockStore;
+  SystemRandom lockRandom;
   app::AppController ctl(fs, clock, dd.dir, prefsPath);
   ctl.setDataDirInfo(dd, exe);
+  ctl.setLockStore(&lockStore, &lockRandom, win::machineName());
   ui::UiState uiState;
   gCtl = &ctl;
   gUi = &uiState;

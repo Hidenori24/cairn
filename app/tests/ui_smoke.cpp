@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <set>
 #include <sstream>
@@ -131,10 +132,13 @@ const unsigned char kPng3x2[] = {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 struct Harness {
   MemFileStore fs;
   FixedClock clk{LocalTime{2026, 10, 19, 9, 0, 0}};
+  MemLockStore ls{fs};  // 編集中のロック（Issue #62）。useLock のときだけコントローラに渡す
+  CountingRandom lockRng{7};
   app::AppController c{fs, clk, "data", "prefs.json"};
   ui::UiState u;
   NullPlatform p;
-  Harness() {
+  // beforeStart: 起動の前にフォルダへ置いておくもの（他の人のロックなど）
+  explicit Harness(const std::function<void(Harness&)>& beforeStart = {}, bool useLock = false) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2(1440, 900);
@@ -146,6 +150,8 @@ struct Harness {
     int w, h;
     io.Fonts->GetTexDataAsRGBA32(&px, &w, &h);
     ui::applyStyle(*u.t, u.m);
+    if (useLock) c.setLockStore(&ls, &lockRng, "PC-SMOKE");
+    if (beforeStart) beforeStart(*this);
     c.start();
   }
   ~Harness() { ImGui::DestroyContext(); }
@@ -179,9 +185,197 @@ struct Harness {
     }
   }
 };
+
+ImVec2 center(const std::pair<ImVec2, ImVec2>& r) { return ImVec2((r.first.x + r.second.x) / 2, (r.first.y + r.second.y) / 2); }
+bool hasRect(const std::pair<ImVec2, ImVec2>& r) { return r.second.x > r.first.x && r.second.y > r.first.y; }
+bool contains(const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; }
+bool hasToast(const app::AppController& c, const std::string& part) {
+  for (const auto& t : c.toasts())
+    if (contains(t.text, part)) return true;
+  return false;
+}
+
+// 読み取り専用（他の人が編集中のロック。Issue #62）: 帯の文言とボタン・操作が止まること・ファイルへ書かないこと。
+// 2 つ目の ImGui の文脈を作るので、main の最初（ほかの Harness を作る前）に呼ぶ
+void readOnlyScenario(bool stale) {
+  const std::string lockPath = "data/共有/.roadmap.lock";
+  const auto seed = [&](Harness& hh) {
+    // 共有フォルダにプロジェクトを置き、Carol のロックを付ける（stale = 最後の更新が 4 分前）
+    std::ifstream in(std::string(ROADMAP_SOURCE_DIR) + "/golden/samples/scenario_demo.csv", std::ios::binary);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    Workspace ws(hh.fs, hh.clk, "data");
+    ws.add(newRecord("共有", "", ss.str(), "2026-10-19", hh.clk), true);
+    check(ws.flush().ok(), "共有フォルダにプロジェクトを置く");
+    LockInfo i;
+    i.user = "Carol";
+    i.machine = "PC-C";
+    i.openedAt = hh.clk.epochMs() - 30 * 60 * 1000;
+    i.heartbeatAt = hh.clk.epochMs() - (stale ? 4 * 60 * 1000 : 10 * 1000);
+    i.token = "carol-token";
+    hh.fs.put("data/共有/.roadmap.lock", lockToText(i));
+  };
+  Harness r(seed, true);
+  r.c.setUtcOffsetMinutes(540);
+  r.frame(4);
+  const char* const tag = stale ? "古いロック" : "新しいロック";
+  std::printf("ui_smoke: 読み取り専用（%s）の帯: %s\n", tag, r.u.roBandText.c_str());
+  check(r.c.session() != nullptr, "共有のプロジェクトを開く");
+  check(r.c.readOnly() && r.c.session() && r.c.session()->readOnly(), "他の人のロックで読み取り専用");
+  check(r.u.ro, "UI にも読み取り専用が伝わる");
+  check(r.u.roBandShown, "帯を出す");
+  if (stale) {
+    check(contains(r.u.roBandText, "Carolさん（PC-C）") && contains(r.u.roBandText, "持ち主がいないようです"), "古いロックの帯の文言");
+  } else {
+    check(contains(r.u.roBandText, "Carolさん（PC-C）が") && contains(r.u.roBandText, "から編集中です。読み取り専用で開いています"),
+          "帯の文言（持ち主・時刻）");
+  }
+  check(hasRect(r.u.roRecheckBtn) && hasRect(r.u.roTakeoverBtn), "帯に「再確認」「編集を引き継ぐ」のボタン");
+  // ライト・ダークのどちらでも描ける
+  for (const bool dark : {true, false}) {
+    r.u.t = dark ? &ui::darkTokens() : &ui::lightTokens();
+    ui::applyStyle(*r.u.t, r.u.m);
+    r.frame(3);
+    check(r.u.roBandShown, dark ? "ダークでも帯を出す" : "ライトでも帯を出す");
+  }
+
+  // ---- 変更の操作はすべて止まる ----
+  const int writes0 = r.fs.writeCount();
+  const std::string csv0 = r.fs.content("data/共有/project.csv"), set0 = r.fs.content("data/共有/project.settings.json");
+  const std::size_t n0 = r.c.session()->issues().size();
+  const auto same = [&](const char* what) {
+    check(r.c.session()->issues().size() == n0, what);
+    check(r.fs.writeCount() == writes0, "読み取り専用では 1 回も書かない");
+  };
+  for (auto v : {app::View::Gantt, app::View::List, app::View::Board, app::View::Goals, app::View::Stats}) {
+    r.c.setView(v);
+    r.c.select("9");
+    r.u.detailOpen = true;
+    for (int tab = 0; tab < 4; ++tab) {
+      r.u.detailTab = tab;
+      r.frame(2);
+    }
+    r.u.detailOpen = false;
+    r.frame(1);
+  }
+  r.c.setView(app::View::List);
+  r.c.select("9");
+  r.frame(2);
+  r.key(ImGuiKey_N);  // 追加して編集
+  check(r.u.editField == ui::EditField::None, "N で編集を始めない");
+  same("N で課題が増えない");
+  r.key(ImGuiKey_F2);
+  check(r.u.editField == ui::EditField::None, "F2 でその場編集を始めない");
+  {
+    ui::Frame fr{r.c, r.u, r.p};
+    ui::beginEdit(fr, "6", ui::EditField::Name);
+    r.frame(2);
+    check(r.u.editField == ui::EditField::None, "その場編集の入口が断る");
+  }
+  r.key(ImGuiKey_Tab);
+  r.key(ImGuiKey_Delete);
+  r.key(ImGuiKey_Z, true);
+  r.key(ImGuiKey_Z, true, true);
+  same("Tab・Delete・Ctrl+Z で変わらない");
+  r.p.clip = "貼り付け1\n貼り付け2";
+  r.key(ImGuiKey_V, true);
+  check(r.u.dlg == ui::Dlg::None, "Ctrl+V の貼り付けのダイアログを開かない");
+  same("貼り付けで課題が増えない");
+  // 変更するダイアログは開かない。見るだけのものは開ける
+  for (auto d : {ui::Dlg::EditProject, ui::Dlg::ConfirmDelete, ui::Dlg::TplApply, ui::Dlg::PasteChildren, ui::Dlg::BaselineSave}) {
+    ui::Frame fr{r.c, r.u, r.p};
+    ui::openDialog(fr, d);
+    r.frame(2);
+    check(r.u.dlg == ui::Dlg::None, "変更するダイアログを開かない");
+  }
+  for (auto d : {ui::Dlg::Settings, ui::Dlg::AppSettings, ui::Dlg::Import, ui::Dlg::Workload, ui::Dlg::Warnings, ui::Dlg::BaselineManage}) {
+    r.u.dlg = d;
+    r.u.dlgOpening = true;
+    r.frame(3);
+    r.u.dlg = ui::Dlg::None;
+    r.frame(2);
+  }
+  // コマンドパレット（変更するコマンドは並ばない）
+  r.key(ImGuiKey_K, true);
+  r.u.paletteQuery = "追加";
+  r.frame(2);
+  r.key(ImGuiKey_Escape);
+  check(!r.u.paletteOpen, "パレットを閉じる");
+  // ドロップ（課題の行へ）: 添付されない
+  {
+    r.frame(2);
+    check(!r.u.dropTargets.empty(), "ドロップ先がある");
+    if (!r.u.dropTargets.empty()) {
+      const auto& t = r.u.dropTargets.front();
+      r.u.pendingDrop.active = true;
+      r.u.pendingDrop.paths = {"/no/such/file.txt"};
+      r.u.pendingDrop.pos = ImVec2((t.a.x + t.b.x) / 2, (t.a.y + t.b.y) / 2);
+      r.frame(2);
+      check(r.c.attachmentCount(t.id) == 0, "読み取り専用では添付されない");
+      check(hasToast(r.c, "読み取り専用"), "断った理由を通知する");
+    }
+  }
+  // 表示の変更（ビューの切り替え・絞り込み・選択）は使える。ファイルへは書かない
+  r.c.setView(app::View::Board);
+  r.frame(2);
+  check(r.c.view() == app::View::Board, "ビューは切り替えられる");
+  r.c.filter().q = "テスト";
+  r.frame(2);
+  r.c.clearFilter();
+  r.c.setView(app::View::Gantt);
+  r.frame(4);
+  same("表示の操作でもファイルへ書かない");
+  check(r.fs.content("data/共有/project.csv") == csv0 && r.fs.content("data/共有/project.settings.json") == set0, "CSV・設定はそのまま");
+  check(!r.c.hasUnsaved(), "未保存の変更はない");
+
+  // ---- 帯のボタン ----
+  r.click(center(r.u.roRecheckBtn).x, center(r.u.roRecheckBtn).y);  // 再確認: まだ編集中
+  check(r.c.readOnly(), "再確認しても、まだ編集中なら読み取り専用のまま");
+  r.click(center(r.u.roTakeoverBtn).x, center(r.u.roTakeoverBtn).y);
+  check(r.u.dlg == ui::Dlg::ConfirmTakeOver, "「編集を引き継ぐ」で確認のダイアログ");
+  r.frame(3);
+  check(!r.u.dlgButtons.empty(), "確認のダイアログにボタン");
+  r.key(ImGuiKey_Escape);
+  check(r.u.dlg == ui::Dlg::None && r.c.readOnly(), "やめれば何も変わらない");
+  same("確認をやめても書かない");
+  if (!stale) {
+    // 持ち主が閉じた（ロックが消えた）: 帯が変わり、「再確認」で編集できる
+    r.fs.erase(lockPath);
+    r.clk.advanceMs(31'000);
+    r.frame(3);
+    check(contains(r.u.roBandText, "ロックが解けています"), "ロックが解けると帯が変わる");
+    r.click(center(r.u.roRecheckBtn).x, center(r.u.roRecheckBtn).y);
+    r.frame(3);
+    check(!r.c.readOnly() && !r.u.roBandShown, "再確認で編集できる状態になり、帯が消える");
+    check(r.fs.exists(lockPath), "自分のロックができる");
+    r.c.setView(app::View::List);
+    r.c.select("9");
+    r.frame(2);
+    r.key(ImGuiKey_N);
+    check(r.u.editField == ui::EditField::Name && r.c.session()->issues().size() == n0 + 1, "編集できる");
+    r.key(ImGuiKey_Escape);
+  } else {
+    // 古いロックの引き継ぎ（軽い確認）: ダイアログの「引き継ぐ」で編集できる
+    r.click(center(r.u.roTakeoverBtn).x, center(r.u.roTakeoverBtn).y);
+    r.frame(3);
+    bool clicked = false;
+    for (const auto& b : r.u.dlgButtons)
+      if (b.first == "引き継ぐ") {
+        r.click(center(b.second).x, center(b.second).y);
+        clicked = true;
+        break;
+      }
+    check(clicked, "確認のダイアログに「引き継ぐ」");
+    r.frame(3);
+    check(!r.c.readOnly() && r.c.lockStatus().kind == app::AppController::LockKind::Mine, "古いロックを引き継いだら編集できる");
+    check(r.u.dlg == ui::Dlg::None, "引き継いだらダイアログが閉じる");
+  }
+}
 }  // namespace
 
 int main() {
+  readOnlyScenario(false);
+  readOnlyScenario(true);
   Harness h;
   h.frame(3);  // はじめに
   check(h.c.firstRun(), "初回はプロジェクトなし");
@@ -4363,7 +4557,7 @@ int main() {
                            "app/ui/view_goals.cpp", "app/ui/view_stats.cpp", "app/ui/panel_detail.cpp", "app/ui/panel_attach.cpp", "app/ui/panel_links.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
                            "app/ui/widgets.cpp", "app/ui/strings.hpp", "app/controller/app_controller.cpp",
                            "core/src/report.cpp", "core/src/baseline.cpp", "core/src/weekly.cpp", "core/src/weekly_md.cpp", "core/src/weekly_html.cpp", "core/src/weekly_state.cpp", "core/src/report_gantt.cpp", "core/src/report_stats.cpp", "core/src/report_list.cpp", "core/src/gantt_geom.cpp",
-                           "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp", "core/src/attachments.cpp", "core/src/links.cpp", "core/src/load.cpp"};
+                           "core/src/commands.cpp", "core/src/lock.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp", "core/src/attachments.cpp", "core/src/links.cpp", "core/src/load.cpp"};
     for (const char* rel : files) {
       std::ifstream in(std::string(ROADMAP_SOURCE_DIR) + "/" + rel, std::ios::binary);
       std::stringstream ss;

@@ -1684,6 +1684,64 @@ int main(int argc, char** argv) {
     ui::applyStyle(*u.t, u.m);
     c.setRemoteStatus(nullptr);
   }
+  // 編集中のロック（Issue #62）: 他の人が編集中のプロジェクトを読み取り専用で開いた画面（帯・古いロック・引き継ぎの確認・アプリの設定）
+  {
+    MemLockStore ls{fs};
+    CountingRandom rng{9};
+    c.setUtcOffsetMinutes(540);
+    for (const auto& t : std::vector<app::Toast>(c.toasts())) c.dismissToast(t.id);
+    c.flushNow();  // プロジェクトのフォルダができてから、他の人のロックを置く
+    const std::string lockPath = lockPathIn(c.currentProjectDir());
+    const auto putLock = [&](std::int64_t idleMs) {
+      LockInfo i;
+      i.user = "田中";
+      i.machine = "PC-TANAKA";
+      i.openedAt = clk.epochMs() - 25 * 60 * 1000;
+      i.heartbeatAt = clk.epochMs() - idleMs;
+      i.token = "tanaka-token";
+      fs.put(lockPath, lockToText(i));
+    };
+    putLock(12 * 1000);
+    c.setLockStore(&ls, &rng, "PC-SCREEN");  // 開いているプロジェクトのロックを確かめる → 読み取り専用
+    for (const bool dark : {false, true}) {
+      u.t = dark ? &ui::darkTokens() : &ui::lightTokens();
+      ui::applyStyle(*u.t, u.m);
+      const std::string tag = dark ? "dark" : "light";
+      c.setView(app::View::Gantt);
+      c.select("11");
+      frames(3);
+      shot("90_readonly_gantt_" + tag);
+      c.setView(app::View::List);
+      u.detailOpen = true;
+      u.detailTab = 0;
+      shot("91_readonly_list_detail_" + tag);
+      u.detailOpen = false;
+      u.dlg = ui::Dlg::ConfirmTakeOver;
+      u.dlgOpening = true;
+      shot("92_readonly_takeover_confirm_" + tag);
+      u.dlg = ui::Dlg::None;
+      frames(2);
+      u.dlg = ui::Dlg::AppSettings;
+      u.dlgOpening = true;
+      shot("93_readonly_app_settings_" + tag);
+      u.dlg = ui::Dlg::None;
+      frames(2);
+    }
+    // 古いロック（持ち主がいないようなもの）: 帯の文言と、軽い確認
+    clk.advanceMs(31 * 1000);  // 持ち主の様子を見直す間隔
+    putLock(4 * 60 * 1000);
+    frames(3);
+    c.setView(app::View::Gantt);
+    shot("94_readonly_stale_gantt");
+    u.dlg = ui::Dlg::ConfirmTakeOver;
+    u.dlgOpening = true;
+    shot("95_readonly_stale_takeover_confirm");
+    u.dlg = ui::Dlg::None;
+    frames(2);
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    c.setLockStore(nullptr, nullptr, "");
+  }
   ImGui::DestroyContext();
   return 0;
 }

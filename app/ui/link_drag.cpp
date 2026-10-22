@@ -12,7 +12,7 @@
 namespace roadmap::ui {
 
 bool linkDragIdle(const UiState& u) {
-  return !u.linkPick.active && !u.barDrag.active && !u.rowDrag.active && !u.colDrag.active && !u.linkDrag.active &&
+  return !u.ro && !u.linkPick.active && !u.barDrag.active && !u.rowDrag.active && !u.colDrag.active && !u.linkDrag.active &&
          !u.arrowDrag.pending && !u.arrowDrag.active && !u.linkMenu.active && u.dlg == Dlg::None && !u.paletteOpen &&
          u.editField == EditField::None;
 }

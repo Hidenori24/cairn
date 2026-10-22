@@ -312,7 +312,7 @@ void drawTableRow(Frame& f, const VisibleRow& r, ImVec2 pos, float width, const 
           ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
           tip("ドラッグして並べ替え・階層を変更");
         }
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.f)) u.rowDrag = {id, true};
+        if (!u.ro && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.f)) u.rowDrag = {id, true};
         break;
       }
       case Col::Name: drawNameCell(f, r, cp, cs, NameCellOpts{true, !flat, flat}); break;

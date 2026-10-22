@@ -35,6 +35,12 @@ ImU32 catColor(const UiState& u, Cat c) {
 }
 
 void openDialog(Frame& f, Dlg d) {
+  // 読み取り専用のあいだは、課題やプロジェクトを変えるダイアログを開かない（理由を通知する）
+  if (f.c.readOnly() && (d == Dlg::EditProject || d == Dlg::ConfirmDelete || d == Dlg::TplApply || d == Dlg::PasteChildren ||
+                         d == Dlg::BaselineSave || d == Dlg::ConfirmIssueDelete)) {
+    f.c.canEdit();
+    return;
+  }
   f.u.dlg = d;
   f.u.dlgOpening = true;
 }
@@ -46,6 +52,7 @@ void openContext(Frame& f, const std::string& id) {
 }
 
 void openStatusMenu(Frame& f, const std::string& id) {
+  if (!f.c.canEdit()) return;
   f.u.statusMenuId = id;
   f.u.statusMenuOpen = true;
 }
@@ -141,7 +148,7 @@ void rowClick(Frame& f, const std::string& id) {
 
 void requestDelete(Frame& f, std::vector<std::string> ids) {
   Session* s = f.c.session();
-  if (!s || ids.empty()) return;
+  if (!s || ids.empty() || !f.c.canEdit()) return;
   if (f.c.prefs().confirmDelete) {
     f.u.pendingDelete = std::move(ids);
     openDialog(f, Dlg::ConfirmIssueDelete);
@@ -157,7 +164,7 @@ bool editing(const UiState& u, const std::string& id, EditField field) {
 
 void beginEdit(Frame& f, const std::string& id, EditField field, bool fresh) {
   const Session* s = f.c.session();
-  if (!s) return;
+  if (!s || !f.c.canEdit()) return;  // 読み取り専用では、その場編集を始めない
   const Issue* o = s->issue(id);
   if (!o) return;
   const Tree* T = s->tree();
@@ -514,25 +521,27 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
   }
   if (hov) {
     ImGui::PushID(id.c_str());
-    // 削除（子も消える。通知の「元に戻す」で戻せる）
-    ImGui::SetCursorScreenPos(ImVec2(right - u.m.s(72), cy - u.m.s(12)));
-    const ImVec2 b0 = ImGui::GetCursorScreenPos();
     bool del = false;
-    if (ImGui::InvisibleButton("##del", ImVec2(u.m.s(22), u.m.s(22)))) del = true;
-    const bool delHov = ImGui::IsItemHovered();
-    tip(r.isPar ? "削除（子の課題も削除。元に戻せます）" : "削除（元に戻せます）");
-    drawIcon(dl, "trash", ImVec2(b0.x + u.m.s(3), b0.y + u.m.s(3)), u.m.s(16), delHov ? u.t->late : u.t->muted);
-    ImGui::SetCursorScreenPos(ImVec2(right - u.m.s(48), cy - u.m.s(12)));
-    const ImVec2 b = ImGui::GetCursorScreenPos();
-    if (ImGui::InvisibleButton("##add", ImVec2(u.m.s(22), u.m.s(22)))) {
-      deferAfterFrame(f, [&f, id] {
-        if (!f.c.session()) return;
-        const std::string nid = f.c.createIssue(id, "");
-        if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
-      });
+    if (!f.c.readOnly()) {  // 読み取り専用では、削除と子の追加は出さない
+      // 削除（子も消える。通知の「元に戻す」で戻せる）
+      ImGui::SetCursorScreenPos(ImVec2(right - u.m.s(72), cy - u.m.s(12)));
+      const ImVec2 b0 = ImGui::GetCursorScreenPos();
+      if (ImGui::InvisibleButton("##del", ImVec2(u.m.s(22), u.m.s(22)))) del = true;
+      const bool delHov = ImGui::IsItemHovered();
+      tip(r.isPar ? "削除（子の課題も削除。元に戻せます）" : "削除（元に戻せます）");
+      drawIcon(dl, "trash", ImVec2(b0.x + u.m.s(3), b0.y + u.m.s(3)), u.m.s(16), delHov ? u.t->late : u.t->muted);
+      ImGui::SetCursorScreenPos(ImVec2(right - u.m.s(48), cy - u.m.s(12)));
+      const ImVec2 b = ImGui::GetCursorScreenPos();
+      if (ImGui::InvisibleButton("##add", ImVec2(u.m.s(22), u.m.s(22)))) {
+        deferAfterFrame(f, [&f, id] {
+          if (!f.c.session()) return;
+          const std::string nid = f.c.createIssue(id, "");
+          if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
+        });
+      }
+      tip("子を追加");
+      drawIcon(dl, "plus", ImVec2(b.x + u.m.s(3), b.y + u.m.s(3)), u.m.s(16), u.t->muted);
     }
-    tip("子を追加");
-    drawIcon(dl, "plus", ImVec2(b.x + u.m.s(3), b.y + u.m.s(3)), u.m.s(16), u.t->muted);
     ImGui::SetCursorScreenPos(ImVec2(right - u.m.s(24), cy - u.m.s(12)));
     const ImVec2 b2 = ImGui::GetCursorScreenPos();
     if (ImGui::InvisibleButton("##open", ImVec2(u.m.s(22), u.m.s(22)))) openDetail(f, id, 0);
@@ -572,7 +581,7 @@ void drawTopBar(Frame& f) {
       }
       ImGui::Separator();
       if (ImGui::MenuItem("新しいプロジェクト")) openDialog(f, Dlg::NewProject);
-      if (ImGui::MenuItem("名前・キー・削除", nullptr, false, s != nullptr)) openDialog(f, Dlg::EditProject);
+      if (ImGui::MenuItem("名前・キー・削除", nullptr, false, s != nullptr && !c.readOnly())) openDialog(f, Dlg::EditProject);
       ImGui::Separator();
       if (ImGui::MenuItem(S::kImportCsv)) openDialog(f, Dlg::Import);
       if (ImGui::MenuItem(S::kExport, nullptr, false, s != nullptr)) openDialog(f, Dlg::Export);
@@ -684,11 +693,12 @@ void drawTopBar(Frame& f) {
     u.paletteFocus = true;
   }
   ImGui::SameLine(0, u.m.s(2));
-  if (iconButton(u, "undo", "undo", "元に戻す (Ctrl+Z)", s && s->canUndo())) c.undo();
+  const bool ro = c.readOnly();
+  if (iconButton(u, "undo", "undo", "元に戻す (Ctrl+Z)", s && s->canUndo() && !ro)) c.undo();
   ImGui::SameLine(0, u.m.s(2));
-  if (iconButton(u, "redo", "redo", "やり直す (Ctrl+Shift+Z)", s && s->canRedo())) c.redo();
+  if (iconButton(u, "redo", "redo", "やり直す (Ctrl+Shift+Z)", s && s->canRedo() && !ro)) c.redo();
   ImGui::SameLine(0, u.m.s(6));
-  if (iconTextButton(u, "add", nullptr, S::kAddIssue, true, false, s != nullptr)) {
+  if (iconTextButton(u, "add", nullptr, S::kAddIssue, true, false, s != nullptr && !ro)) {
     const std::string id = c.createIssue("", "");
     if (!id.empty()) beginEdit(f, id, EditField::Name, true);
   }
@@ -703,7 +713,7 @@ void drawTopBar(Frame& f) {
     if (ImGui::MenuItem("HTML に書き出す…", nullptr, false, s != nullptr && s->tree() != nullptr)) openDialog(f, Dlg::ExportHtml);
     if (ImGui::MenuItem("週次レポート…", nullptr, false, s != nullptr && s->tree() != nullptr)) openDialog(f, Dlg::Weekly);
     ImGui::Separator();
-    if (ImGui::MenuItem("ベースラインを保存…", nullptr, false, s != nullptr && s->tree() != nullptr)) openDialog(f, Dlg::BaselineSave);
+    if (ImGui::MenuItem("ベースラインを保存…", nullptr, false, s != nullptr && s->tree() != nullptr && !c.readOnly())) openDialog(f, Dlg::BaselineSave);
     if (ImGui::MenuItem("ベースラインの管理…", nullptr, false, s != nullptr)) openDialog(f, Dlg::BaselineManage);
     ImGui::Separator();
     ImGui::TextDisabled("テーマ");
@@ -896,6 +906,7 @@ void drawToolBar(Frame& f) {
     if (iconTextButton(u, "warns", "warn", l.c_str())) openDialog(f, Dlg::Warnings);
     ImGui::SameLine();
   }
+  ImGui::BeginDisabled(c.readOnly());  // プロジェクトの設定は、読み取り専用では変えられない
   {
     ImGui::SetNextItemWidth(u.m.s(130));
     std::string base = s->settings().baseDate;
@@ -931,16 +942,65 @@ void drawToolBar(Frame& f) {
     }
     tip("担当者ごとの同時作業の制限（同時に持てる件数はプロジェクト設定で変えられます）");
   }
+  ImGui::EndDisabled();
   ImGui::EndChild();
   ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + H));
   ImGui::Dummy(ImVec2(0, 0));
 }
 
 // ---------------------------------------------------------------- バナー・通知
+// 読み取り専用の帯（他の人が編集中・ロックを作れない・ロックを失った。Issue #62）。
+// 「◯◯さん（マシン名）が 14:05 から編集中です。読み取り専用で開いています」と、「再確認」「編集を引き継ぐ」
+void drawReadOnlyBand(Frame& f) {
+  AppController& c = f.c;
+  UiState& u = f.u;
+  const AppController::LockStatus& st = c.lockStatus();
+  const std::string msg = c.readOnlyBand();
+  const ImVec2 p0 = ImGui::GetCursorScreenPos();
+  const float W = ImGui::GetContentRegionAvail().x, H = u.m.s(40);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const bool warn = st.kind == AppController::LockKind::Failed;
+  const ImU32 fg = warn ? u.t->late : u.t->tight, bg = warn ? u.t->lateBg : u.t->tightBg;
+  dl->AddRectFilled(p0, ImVec2(p0.x + W, p0.y + H), bg);
+  dl->AddLine(ImVec2(p0.x, p0.y + H - 1), ImVec2(p0.x + W, p0.y + H - 1), warn ? u.t->late : u.t->tightEdge);
+  drawIcon(dl, "lock", ImVec2(p0.x + u.m.s(12), p0.y + (H - u.m.s(16)) / 2), u.m.s(16), fg);
+  const bool canTake = st.kind == AppController::LockKind::Other || st.kind == AppController::LockKind::Lost;
+  const char* const kRecheck = "再確認";
+  const char* const kTake = "編集を引き継ぐ";
+  const float wRecheck = ImGui::CalcTextSize(kRecheck).x + u.m.s(20), wTake = ImGui::CalcTextSize(kTake).x + u.m.s(20);
+  const float btnsW = wRecheck + (canTake ? wTake + u.m.s(8) : 0) + u.m.s(12);
+  const float textW = std::max(u.m.s(60), W - btnsW - u.m.s(48));
+  dl->AddText(ImVec2(p0.x + u.m.s(36), p0.y + (H - ImGui::GetTextLineHeight()) / 2), u.t->ink, ellipsize(msg, textW).c_str());
+  ImGui::SetCursorScreenPos(ImVec2(p0.x + u.m.s(36), p0.y));
+  ImGui::InvisibleButton("##roband", ImVec2(textW, H));  // 長い文言は、マウスを載せると全文を出す
+  if (ImGui::IsItemHovered()) tip(msg);
+  float x = p0.x + W - u.m.s(12);
+  const float by = p0.y + (H - u.m.s(28)) / 2;
+  if (canTake) {
+    x -= wTake;
+    ImGui::SetCursorScreenPos(ImVec2(x, by));
+    if (iconTextButton(u, "ro_takeover", nullptr, kTake)) openDialog(f, Dlg::ConfirmTakeOver);
+    u.roTakeoverBtn = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
+    x -= u.m.s(8);
+  } else {
+    u.roTakeoverBtn = {{0, 0}, {0, 0}};
+  }
+  x -= wRecheck;
+  ImGui::SetCursorScreenPos(ImVec2(x, by));
+  if (iconTextButton(u, "ro_recheck", nullptr, kRecheck)) c.recheckLock();
+  u.roRecheckBtn = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
+  u.roBandText = msg;
+  u.roBandShown = true;
+  ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + H));
+  ImGui::Dummy(ImVec2(0, 0));
+}
+
 void drawBanners(Frame& f) {
   AppController& c = f.c;
   UiState& u = f.u;
   Session* s = c.session();
+  u.roBandShown = false;
+  if (s && c.readOnly()) drawReadOnlyBand(f);
   const auto banner = [&](const std::string& msg, ImU32 fg, ImU32 bg, const char* btn, auto&& onBtn) {
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     const float W = ImGui::GetContentRegionAvail().x, H = u.m.s(34);
@@ -1087,9 +1147,11 @@ void drawContextMenu(Frame& f) {
     ImGui::EndPopup();
     return;
   }
+  const bool ro = c.readOnly();
   if (multi) ImGui::TextDisabled("%d件を選択", static_cast<int>(sel.size()));
   else {
     if (ImGui::MenuItem("詳細を開く", "Space")) openDetail(f, id, 0);
+    ImGui::BeginDisabled(ro);  // 読み取り専用では、変更する項目を使えない
     if (ImGui::MenuItem("名前を変更", "F2")) beginEdit(f, id, EditField::Name);
     ImGui::Separator();
     if (ImGui::MenuItem("子を追加", "Shift+N")) {
@@ -1100,7 +1162,9 @@ void drawContextMenu(Frame& f) {
       const auto nid = c.createIssue(s->issue(id)->parent, id);
       if (!nid.empty()) beginEdit(f, nid, EditField::Name, true);
     }
+    ImGui::EndDisabled();
   }
+  ImGui::BeginDisabled(ro);
   if (ImGui::MenuItem("テンプレから子タスクを追加…")) openTplApply(f);
   if (!multi && ImGui::MenuItem("この子タスクをテンプレとして保存…", nullptr, false, !T->kids[idx].empty())) openTplSave(f, id);
   if (!multi) {
@@ -1132,6 +1196,7 @@ void drawContextMenu(Frame& f) {
   ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
   if (ImGui::MenuItem("削除", "Del")) requestDelete(f, c.selection());
   ImGui::PopStyleColor();
+  ImGui::EndDisabled();
   ImGui::EndPopup();
 }
 
@@ -1170,6 +1235,7 @@ void drawBulkBar(Frame& f, ImVec2 origin, float w) {
   ImGui::Begin("##bulk", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
   ImGui::AlignTextToFramePadding();
   ImGui::Text("%d件を選択", static_cast<int>(sel.size()));
+  ImGui::BeginDisabled(c.readOnly());  // 読み取り専用では、まとめて変える操作を使えない（選択解除だけ使える）
   for (const char* st : {S::kStatusTodo, S::kStatusProg, S::kStatusDone}) {
     ImGui::SameLine();
     if (ImGui::SmallButton(st)) c.setStatusFor(sel, st);
@@ -1205,6 +1271,7 @@ void drawBulkBar(Frame& f, ImVec2 origin, float w) {
   ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
   if (ImGui::SmallButton("削除")) requestDelete(f, c.selection());
   ImGui::PopStyleColor();
+  ImGui::EndDisabled();
   ImGui::SameLine();
   if (ImGui::SmallButton("選択解除")) c.clearSelection();
   ImGui::End();
@@ -1402,7 +1469,7 @@ void handleKeys(Frame& f) {
 void drawHintBar(Frame& f, ImVec2 origin, float w) {
   AppController& c = f.c;
   UiState& u = f.u;
-  if (c.prefs().hintDismissed || !c.session() || c.view() != View::Gantt) return;
+  if (c.prefs().hintDismissed || !c.session() || c.view() != View::Gantt || c.readOnly()) return;  // 読み取り専用では、編集のヒントを出さない
   const float h = u.m.s(34);
   ImGui::SetNextWindowPos(ImVec2(origin.x, origin.y - h));
   ImGui::SetNextWindowSize(ImVec2(w, h));
@@ -1467,6 +1534,16 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
     io.InputQueueCharacters.resize(0);
   }
   c.tick();
+  u.ro = c.readOnly();
+  if (u.ro) {  // 読み取り専用に切り替わったら、途中の編集・ドラッグを捨てる
+    u.editField = EditField::None;
+    u.barDrag = {};
+    u.rowDrag = {};
+    u.linkDrag = {};
+    u.arrowDrag = {};
+    u.linkPick = {};
+    u.attachDrag = {};
+  }
   if (c.currentId() != u.imageProject) {  // プロジェクトを切り替えたら、画像のテクスチャを全部捨てる
     releaseImages(f);
     u.imageProject = c.currentId();

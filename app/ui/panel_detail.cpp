@@ -148,6 +148,7 @@ void detailTab(Frame& f, int i) {
       ImGui::PopID();
     }
   }
+  ImGui::BeginDisabled(c.readOnly());  // 読み取り専用では、項目を直せない（パンくずでの移動と閲覧はできる）
   ImGui::PushFont(u.fontLarge);
   field(f, id, "name", T.name[i], W, applier(f, id, [](AC&, Session& ss, const std::string& k, const std::string& v) {
           if (!text::trim(v).empty()) ss.setName(k, text::trim(v));
@@ -326,6 +327,7 @@ void detailTab(Frame& f, int i) {
         true);
   ImGui::TextDisabled("%s（%d階層目） ／ Issue Id %s%s", generationName(T.depth[i]).c_str(), T.depth[i] + 1, o.id.c_str(),
                       o.key.empty() ? "" : (" ／ " + o.key).c_str());
+  ImGui::EndDisabled();
 }
 
 // 依存の相手の入力欄: 入力すると候補（表示ID・件名の部分一致）が出て、クリックか ↑↓ + Enter で選ぶ。
@@ -683,7 +685,7 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
   ImGui::PopFont();
   ImGui::SameLine();
   if (T.isLeaf(i)) {
-    if (statusPill(u, "st", o.status, true)) openStatusMenu(f, o.id);
+    if (statusPill(u, "st", o.status, !c.readOnly())) openStatusMenu(f, o.id);
     ImGui::SameLine();
   }
   floatChip(u, r);
@@ -691,6 +693,7 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
   if (iconButton(u, "ops", "more", "操作")) ImGui::OpenPopup("##dops");
   if (ImGui::BeginPopup("##dops")) {
     const std::string id = o.id;
+    ImGui::BeginDisabled(c.readOnly());
     if (ImGui::MenuItem("子を追加")) {
       const auto nid = c.createIssue(id, "");
       if (!nid.empty()) c.select(nid);
@@ -705,6 +708,7 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
     if (ImGui::MenuItem("下へ")) s->moveIssue(id, 1), c.afterEdit();
     ImGui::Separator();
     if (ImGui::MenuItem("削除")) requestDelete(f, {id});
+    ImGui::EndDisabled();
     ImGui::EndPopup();
   }
   ImGui::SameLine();
@@ -728,13 +732,17 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
     }
     if (ImGui::BeginTabItem(tLinks.c_str(), nullptr, u.detailTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
       ImGui::BeginChild("##lt", ImVec2(0, 0));
+      ImGui::BeginDisabled(c.readOnly());
       linksTab(f, i);
+      ImGui::EndDisabled();
       ImGui::EndChild();
       ImGui::EndTabItem();
     }
     if (ImGui::BeginTabItem(tCom.c_str(), nullptr, u.detailTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
       ImGui::BeginChild("##ct", ImVec2(0, 0));
+      ImGui::BeginDisabled(c.readOnly());
       commentsTab(f, i);
+      ImGui::EndDisabled();
       ImGui::EndChild();
       ImGui::EndTabItem();
     }
