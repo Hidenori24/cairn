@@ -10,6 +10,7 @@
 #include <sstream>
 #include <cstdlib>
 #include <string>
+#include <thread>
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -17,10 +18,12 @@
 #include "app_controller.hpp"
 #include "roadmap/attachments.hpp"
 #include "roadmap/gen.hpp"
+#include "roadmap/github_ref.hpp"
 #include "roadmap/link_candidates.hpp"
 #include "roadmap/schedule.hpp"
 #include "roadmap/text.hpp"
 #include "ui/app_ui.hpp"
+#include "ui/icons.hpp"
 #include "ui/image_decode.hpp"
 #include "ui/internal.hpp"
 
@@ -2805,6 +2808,290 @@ int main() {
     h.frame(2);
     h.c.deleteCurrentProject();
     h.frame(2);
+  }
+  // GitHub の PR・Issue のリンク（Issue #61）: 専用アイコン・「GitHub の状態を確認」・状態の表示・完了の提案の通知と「完了にする」・
+  // Undo 1 回で戻る・open が 1 件あれば提案なし・失敗は理由を通知して課題が変わらない・自動で完了にする設定・確認中の切り替え
+  {
+    const char* const kPr = "https://github.com/acme/secret-app/pull/12";
+    const char* const kIs = "https://github.com/acme/secret-app/issues/3";
+    h.c.createProject(app::SampleKind::Hierarchy, "GitHub の確認", "GHC");
+    h.c.setView(app::View::List);
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.frame(3);
+    check(h.u.dropTargets.size() >= 3, "GitHub の確認: 行がある");
+    const std::string A = h.u.dropTargets[0].id, B = h.u.dropTargets[1].id;
+    ImGuiIO& io = ImGui::GetIO();
+    const auto center = [](const std::pair<ImVec2, ImVec2>& r) { return ImVec2((r.first.x + r.second.x) / 2, (r.first.y + r.second.y) / 2); };
+    const auto lclick = [&](ImVec2 p) {
+      io.AddMousePosEvent(p.x, p.y);
+      h.frame();
+      io.AddMouseButtonEvent(0, true);
+      h.frame();
+      io.AddMouseButtonEvent(0, false);
+      h.frame(2);
+    };
+    const auto rightClick = [&](ImVec2 p) {
+      io.AddMousePosEvent(p.x, p.y);
+      h.frame();
+      io.AddMouseButtonEvent(1, true);
+      h.frame();
+      io.AddMouseButtonEvent(1, false);
+      h.frame(2);
+    };
+    const auto toastWith = [&](NoticeAction a) -> const app::Toast* {
+      for (const auto& t : h.c.toasts())
+        if (t.action == a) return &t;
+      return nullptr;
+    };
+    const auto anyToast = [&](const std::string& s) {
+      for (const auto& t : h.c.toasts())
+        if (t.text.find(s) != std::string::npos) return true;
+      return false;
+    };
+    const auto clearToasts = [&]() {
+      h.clk.advanceMs(60000);
+      h.frame(2);
+    };
+    const auto rowAt = [&](std::size_t k) {
+      const auto& r = h.u.linkRows[k];
+      return ImVec2(r.first.x + 150, (r.first.y + r.second.y) / 2);
+    };
+    const auto issueOf = [&](const std::string& id) -> const Issue& { return *h.c.session()->issue(id); };
+    const auto closedInfo = [](RemoteState s, const char* at) {
+      RemoteInfo r;
+      r.state = s;
+      r.closedAt = at;
+      return r;
+    };
+    const auto key = [](const char* url) { return parseGitHubUrl(url)->canonicalUrl(); };
+
+    check(std::string(ui::linkIconName(LinkKind::GitHubPull, false)) == "gitpr" && std::string(ui::linkIconName(LinkKind::GitHubIssue, false)) == "gitissue",
+          "GitHub の PR・Issue は専用のアイコン");
+    check(ui::hasIcon("gitpr") && ui::hasIcon("gitissue"), "アイコンが定義されている");
+
+    auto fake = std::make_shared<FakeRemoteStatus>();
+    h.c.setRemoteStatus(fake, false);
+    h.c.setUtcOffsetMinutes(0);
+    h.c.select(A);
+    h.u.detailOpen = true;
+    h.u.detailTab = 3;
+    h.frame(3);
+    check(h.u.linkCheckBtn.second.x <= h.u.linkCheckBtn.first.x, "GitHub のリンクがなければ「GitHub の状態を確認」は出ない");
+    check(h.c.addLink(A, "", kPr) && h.c.addLink(A, "設計の Issue", kIs) && h.c.addLink(A, "", "https://example.com/wiki"), "リンクを付ける");
+    h.frame(3);
+    check(h.u.linkRows.size() == 3, "行が 3 つ");
+    check(h.u.linkCheckBtn.second.x > h.u.linkCheckBtn.first.x, "GitHub のリンクがあれば「GitHub の状態を確認」が出る");
+    check(h.u.linkStatusShown.size() == 3 && h.u.linkStatusShown[0].empty() && h.u.linkStatusShown[1].empty() && h.u.linkStatusShown[2].empty(),
+          "確認前は状態を出さない（起動時の自動確認はしない）");
+    check(fake->calls() == 0, "押すまで取りに行かない");
+
+    // 「GitHub の状態を確認」→ 状態の表示 → 通知 → 「完了にする」
+    fake->set(key(kPr), closedInfo(RemoteState::Merged, "2026-10-15T03:00:00Z"));
+    fake->set(key(kIs), closedInfo(RemoteState::ClosedCompleted, "2026-10-17T04:00:00Z"));
+    lclick(center(h.u.linkCheckBtn));
+    h.frame(3);
+    check(fake->calls() == 2, "押すと GitHub の 2 件を取りに行く（GitHub 以外は取りに行かない）");
+    check(h.u.linkStatusShown.size() == 3 && h.u.linkStatusShown[0] == "merged" && h.u.linkStatusShown[1] == "closed（完了）" && h.u.linkStatusShown[2].empty(),
+          "状態のラベルが出る（色だけに頼らない）");
+    const app::Toast* prop = toastWith(NoticeAction::Complete);
+    check(prop != nullptr, "完了の提案の通知が出る");
+    if (prop) {
+      check(prop->text.find("のリンクがすべて閉じています。完了にしますか？") != std::string::npos, "提案の文");
+      check(prop->text.find("acme") == std::string::npos && prop->text.find("github") == std::string::npos, "通知に URL・リポジトリ名を入れない");
+    }
+    check(issueOf(A).status != "Done" && !issueOf(A).resolved.has_value(), "押すまで課題は変わらない");
+    check(h.u.toastActionBtn.second.x > h.u.toastActionBtn.first.x, "通知に「完了にする」ボタンが出る");
+    const std::size_t undo0 = h.c.session()->undoSize();
+    lclick(center(h.u.toastActionBtn));
+    h.frame(2);
+    check(issueOf(A).status == "Done" && issueOf(A).resolved.has_value() && fmtIso(*issueOf(A).resolved) == "2026-10-17",
+          "「完了にする」で状況が完了になり、Resolved に閉じた日（最も遅い日）が入る");
+    check(h.c.session()->undoSize() == undo0 + 1, "Undo の 1 手");
+    check(toastWith(NoticeAction::Complete) == nullptr, "提案の通知は閉じる");
+    const app::Toast* undoT = toastWith(NoticeAction::Undo);
+    check(undoT != nullptr, "完了にした通知に「元に戻す」");
+    if (undoT) h.c.runToastAction(undoT->id);
+    h.frame(2);
+    check(issueOf(A).status != "Done" && !issueOf(A).resolved.has_value(), "Undo 1 回で戻る");
+    clearToasts();
+
+    // マージなしで閉じた PR を含む → 文に明記。了承しなければ課題は変わらない。右クリックの「状態を確認」は、そのリンクだけ
+    fake->set(key(kPr), closedInfo(RemoteState::ClosedUnmerged, "2026-10-15T03:00:00Z"));
+    rightClick(rowAt(0));
+    bool hasCheck = false;
+    ui::UiState::MenuItemGeom checkItem;
+    for (const auto& it : h.u.linkCtxItems)
+      if (it.label == "状態を確認") {
+        hasCheck = true;
+        checkItem = it;
+      }
+    check(hasCheck && h.u.linkCtxItems.size() == 8, "GitHub のリンクの右クリックに「状態を確認」が出る");
+    if (hasCheck) lclick(center({checkItem.a, checkItem.b}));
+    h.frame(3);
+    check(fake->calls() == 3, "メニューの「状態を確認」はそのリンクだけを取りに行く");
+    check(h.u.linkStatusShown[0] == "closed（マージなし）", "マージなしの表示");
+    clearToasts();
+    lclick(center(h.u.linkCheckBtn));
+    h.frame(3);
+    prop = toastWith(NoticeAction::Complete);
+    check(prop != nullptr && prop->text.find("（マージなしで閉じられたものを含みます）") != std::string::npos, "提案の文にマージなしを明記する");
+    if (prop) h.c.dismissToast(prop->id);
+    h.frame(2);
+    check(issueOf(A).status != "Done", "了承しなければ課題は変わらない");
+    rightClick(rowAt(2));
+    bool webHasCheck = false;
+    for (const auto& it : h.u.linkCtxItems)
+      if (it.label == "状態を確認") webHasCheck = true;
+    check(!webHasCheck && h.u.linkCtxItems.size() == 7, "GitHub 以外のリンクに「状態を確認」は出ない");
+    for (const auto& it : h.u.linkCtxItems)
+      if (it.label == "コピー") {  // メニューを閉じる（コピーするだけで、何も変えない）
+        lclick(center({it.a, it.b}));
+        break;
+      }
+    h.frame(3);
+    clearToasts();
+
+    // open が 1 件あれば提案しない
+    fake->set(key(kPr), closedInfo(RemoteState::Merged, "2026-10-15T03:00:00Z"));
+    RemoteInfo open;
+    open.state = RemoteState::Open;
+    fake->set(key(kIs), open);
+    lclick(center(h.u.linkCheckBtn));
+    h.frame(3);
+    check(h.u.linkStatusShown[1] == "open" && h.u.linkStatusShown[0] == "merged", ("open と merged が混ざる: " + h.u.linkStatusShown[0] + "/" + h.u.linkStatusShown[1] + " calls=" + std::to_string(fake->calls())).c_str());
+    check(toastWith(NoticeAction::Complete) == nullptr && issueOf(A).status != "Done", "open が 1 件あれば提案しない");
+    RemoteInfo draft;
+    draft.state = RemoteState::Draft;
+    fake->set(key(kIs), closedInfo(RemoteState::ClosedNotPlanned, "2026-10-16T04:00:00Z"));
+    fake->set(key(kPr), draft);
+    lclick(center(h.u.linkCheckBtn));
+    h.frame(3);
+    check(h.u.linkStatusShown[0] == "draft" && h.u.linkStatusShown[1] == "closed（計画外）", "draft と closed（計画外）の表示");
+    check(toastWith(NoticeAction::Complete) == nullptr, "draft があれば提案しない");
+    clearToasts();
+
+    // 失敗: 理由を通知して課題は変わらない。URL を理由に入れない
+    fake->fail(key(kPr), "gh が見つかりません");
+    lclick(center(h.u.linkCheckBtn));
+    h.frame(3);
+    check(anyToast("gh が見つかりません"), "失敗の理由を通知する");
+    check(!anyToast("acme") && !anyToast("secret-app"), "理由に URL・リポジトリ名を入れない");
+    check(h.u.linkStatusShown[0] == "確認できません", "失敗の表示");
+    check(toastWith(NoticeAction::Complete) == nullptr && issueOf(A).status != "Done" && !issueOf(A).resolved.has_value(), "失敗しても課題は変わらない");
+    clearToasts();
+
+    // 自動で完了にする設定（既定はオフ）
+    check(!h.c.prefs().autoCompleteGitHub, "自動で完了にする設定の既定はオフ");
+    h.u.dlg = ui::Dlg::AppSettings;
+    h.frame(3);
+    h.u.dlg = ui::Dlg::None;
+    h.frame(2);
+    h.c.prefs().autoCompleteGitHub = true;
+    fake->set(key(kPr), closedInfo(RemoteState::Merged, "2026-10-14T03:00:00Z"));
+    fake->set(key(kIs), closedInfo(RemoteState::ClosedCompleted, "2026-10-16T04:00:00Z"));
+    lclick(center(h.u.linkCheckBtn));
+    h.frame(3);
+    check(issueOf(A).status == "Done" && issueOf(A).resolved.has_value() && fmtIso(*issueOf(A).resolved) == "2026-10-16",
+          "設定がオンなら、確認が終わった時点で自動で完了にする");
+    undoT = toastWith(NoticeAction::Undo);
+    check(undoT != nullptr && toastWith(NoticeAction::Complete) == nullptr, "通知に「元に戻す」");
+    if (undoT) h.c.runToastAction(undoT->id);
+    h.frame(2);
+    check(issueOf(A).status != "Done" && !issueOf(A).resolved.has_value(), "自動の完了も Undo 1 回で戻る");
+    h.c.prefs().autoCompleteGitHub = false;
+    clearToasts();
+
+    // 状態は保存しない（メモリ上のみ）
+    h.c.flushNow();
+    bool leaked = false;
+    const std::string settings = h.fs.content("data/GitHub の確認/project.settings.json");
+    if (settings.find("closedAt") != std::string::npos || settings.find("merged") != std::string::npos) leaked = true;
+    check(!settings.empty() && !leaked, "確認結果を設定ファイルに保存しない");
+
+    // ダークでも崩れない
+    h.u.t = &ui::darkTokens();
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(3);
+    check(h.u.linkStatusShown.size() == 3 && h.u.linkStatusShown[0] == "merged", "ダークでも状態を出す");
+    h.u.t = &ui::lightTokens();
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(2);
+
+    // 別スレッドで確認中に、別の課題・別のプロジェクトへ切り替えても落ちない
+    auto slow = std::make_shared<FakeRemoteStatus>();
+    slow->set(key(kPr), closedInfo(RemoteState::Merged, "2026-10-15T03:00:00Z"));
+    slow->set(key(kIs), closedInfo(RemoteState::ClosedCompleted, "2026-10-17T04:00:00Z"));
+    h.c.setRemoteStatus(slow, true);
+    slow->hold(true);
+    lclick(center(h.u.linkCheckBtn));
+    for (int i = 0; i < 400 && slow->running() == 0; ++i) {
+      h.frame();
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    check(slow->running() == 1 && h.c.remoteBusy(), "確認中（別のスレッドで 1 件）");
+    h.frame(2);
+    check(h.u.linkStatusShown.size() == 3 && h.u.linkStatusShown[0] == "確認中…" && h.u.linkStatusShown[1] == "確認中…", "確認中の表示");
+    lclick(center(h.u.linkCheckBtn));
+    check(slow->calls() == 1, "確認中は重ねて取りに行かない");
+    h.c.select(B);  // 別の課題に切り替える
+    h.frame(3);
+    check(h.u.linkRows.empty(), "別の課題には GitHub のリンクがない");
+    const std::string ghProject = h.c.currentId();
+    h.c.createProject(app::SampleKind::Empty, "切り替え先", "SW");  // 別のプロジェクト
+    h.frame(3);
+    slow->release();
+    for (int i = 0; i < 1000 && h.c.remoteBusy(); ++i) {
+      h.frame();
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    check(!h.c.remoteBusy(), "確認が終わる");
+    h.frame(3);
+    check(toastWith(NoticeAction::Complete) == nullptr, "別のプロジェクトでは提案を出さない");
+    check(h.c.openProject(ghProject), "元のプロジェクトに戻れる");
+    h.c.select(A);
+    h.u.detailOpen = true;
+    h.u.detailTab = 3;
+    h.frame(4);
+    check(issueOf(A).status != "Done" && !issueOf(A).resolved.has_value(), "切り替え中の確認で、課題は変わらない");
+    check(h.u.linkStatusShown.size() == 3 && h.u.linkStatusShown[0] == "merged", "戻ると結果が見える");
+    // 窓口を外すと未確認に戻り、ボタンは押せない
+    h.c.setRemoteStatus(nullptr);
+    h.frame(3);
+    check(h.u.linkCheckBtn.second.x > h.u.linkCheckBtn.first.x, "窓口がなくてもボタンの場所はある（押せない）");
+    lclick(center(h.u.linkCheckBtn));
+    check(!h.c.remoteAvailable() && h.c.remoteViewOf(kPr).phase == app::AppController::RemoteView::Phase::None, "窓口を外すと未確認に戻る");
+    h.u.detailOpen = false;
+    h.frame(2);
+  }
+  // 通知の折り返し: 高さを測るときの幅と、描くときの幅が同じこと（折り返しの境目で 1 行増えて、末尾が切れない）。
+  // 文字の左の余白（12）のぶん、描画のほうが狭いので、測るときも同じだけ引く。単語の長さを少しずつ変えて、境目を何度も通る
+  {
+    const auto dismissAll = [&]() {
+      for (const auto& t : std::vector<app::Toast>(h.c.toasts())) h.c.dismissToast(t.id);
+    };
+    int checked = 0, bad = 0, tallest = 0;
+    for (const NoticeAction act : {NoticeAction::None, NoticeAction::OpenFolder}) {
+      for (int n = 6; n <= 70; ++n) {
+        dismissAll();
+        std::string text;
+        for (int i = 0; i < n; ++i) text += std::string(static_cast<std::size_t>(2 + (i * 7) % 9), static_cast<char>('a' + i % 26)) + " ";
+        h.c.toast(text, act, act == NoticeAction::OpenFolder ? "out" : "");
+        h.frame(2);
+        if (h.c.toasts().empty()) continue;
+        const std::string name = "##toast" + std::to_string(h.c.toasts().back().id);
+        ImGuiWindow* w = ImGui::FindWindowByName(name.c_str());
+        if (!w) continue;
+        ++checked;
+        // 内容の下端（上の余白を含む）と下の余白が、窓に収まっていること
+        // 1 行の通知は、閉じるボタンの分だけもともと 2px ほど超える。行が 1 つ増えた（13px 以上）ときは超えすぎ
+        if (w->ContentSize.y + 2 * w->WindowPadding.y > w->Size.y + 3.0f) ++bad;
+        tallest = std::max(tallest, static_cast<int>(w->Size.y));
+      }
+    }
+    dismissAll();
+    check(checked > 100 && tallest > 60, "通知の折り返しの確認: 長い文を何通りも出した");
+    check(bad == 0, "通知の文字が、折り返しの境目でも窓の高さに収まる（末尾が切れない）");
   }
   // 統計ビュー: 担当者別の負荷（週×担当のヒートマップ）と完了の推移
   {

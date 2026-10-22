@@ -36,10 +36,16 @@ enum class LinkKind {
   Folder,    // フォルダ（末尾が \ / のもの。\\server\share だけの共有のルートも）
   Unknown,   // 何の場所か判定できない（空・スキームのない相対パス・ふつうの文章など）
   Rejected,  // 許可リストにない（開かない）。デバイスのパス・上限を超える長さ・使えない文字なども
+  GitHubPull,   // https://github.com/<owner>/<repo>/pull/<n>（Web として開ける。状態を確認できる。Issue #61）
+  GitHubIssue,  // https://github.com/<owner>/<repo>/issues/<n>（同上）
 };
 // 開ける（追加してよい）種類か
-inline constexpr bool linkKindOpenable(LinkKind k) { return k == LinkKind::Web || k == LinkKind::File || k == LinkKind::Folder; }
-// 画面に出す種類の名前（"Web" "ファイル" "フォルダ"。開けない種類は "不明"）
+inline constexpr bool linkKindOpenable(LinkKind k) {
+  return k == LinkKind::Web || k == LinkKind::File || k == LinkKind::Folder || k == LinkKind::GitHubPull || k == LinkKind::GitHubIssue;
+}
+// GitHub の PR・Issue か（Web の一種。github_ref.hpp の parseGitHubUrl を通ったもの）
+inline constexpr bool linkKindGitHub(LinkKind k) { return k == LinkKind::GitHubPull || k == LinkKind::GitHubIssue; }
+// 画面に出す種類の名前（"Web" "ファイル" "フォルダ" "GitHub PR" "GitHub Issue"。開けない種類は "不明"）
 const char* linkKindLabel(LinkKind k);
 
 struct LinkClass {

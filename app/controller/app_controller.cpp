@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <iterator>
+#include <mutex>
+#include <thread>
 #include <unordered_set>
 
 #include "roadmap/issue_name.hpp"
@@ -29,6 +31,80 @@ View viewFromKey(const std::string& k) {
 
 AppController::AppController(IFileStore& fs, const IClock& clock, std::string dataDir, std::string prefsPath)
     : fs_(fs), clock_(clock), ws_(std::make_unique<Workspace>(fs, clock, std::move(dataDir))), prefsPath_(std::move(prefsPath)) {}
+
+// GitHub の状態の確認を 1 件ずつ実行する。async = 別のスレッドで走らせ、tick が結果を拾う。そうでなければ start の中で実行する
+class AppController::RemoteWorker {
+ public:
+  RemoteWorker(std::shared_ptr<IRemoteStatus> impl, bool async) : impl_(std::move(impl)), async_(async) {}
+  ~RemoteWorker() {
+    // 実行中のものはすぐ終わらせる（アプリの終了で待たされない）。中断は token で伝える（fetch に入る前の中断も取りこぼさない）。
+    // cancel() は、token を見ずに眠っている窓口を起こす合図
+    if (token_) token_->cancel();
+    if (running_ && impl_) impl_->cancel();
+    if (th_.joinable()) th_.join();
+  }
+  RemoteWorker(const RemoteWorker&) = delete;
+  RemoteWorker& operator=(const RemoteWorker&) = delete;
+  bool running() const { return running_; }
+  void start(const RemoteJob& job) {
+    running_ = true;
+    key_ = job.key;
+    sh_ = std::make_shared<Shared>();
+    token_ = std::make_shared<CancelToken>();  // スレッドを起こす前に作って渡す
+    if (!async_) {
+      sh_->result.emplace(run(impl_, job.ref, *token_));
+      sh_->done = true;
+      return;
+    }
+    auto sh = sh_;
+    auto impl = impl_;
+    auto token = token_;
+    const GitHubRef ref = job.ref;
+    th_ = std::thread([sh, impl, token, ref] {
+      auto r = run(impl, ref, *token);
+      std::lock_guard<std::mutex> lk(sh->mu);
+      sh->result.emplace(std::move(r));
+      sh->done = true;
+    });
+  }
+  // 終わっていれば結果を取り出して true（スレッドも片づける）
+  bool poll(std::string& key, std::optional<Result<RemoteInfo>>& out) {
+    if (!running_) return false;
+    {
+      std::lock_guard<std::mutex> lk(sh_->mu);
+      if (!sh_->done) return false;
+      out = std::move(sh_->result);
+    }
+    if (th_.joinable()) th_.join();
+    key = key_;
+    running_ = false;
+    return true;
+  }
+
+ private:
+  struct Shared {
+    std::mutex mu;
+    bool done = false;
+    std::optional<Result<RemoteInfo>> result;
+  };
+  // スレッドの境界で例外を止める（窓口の実装が投げても、プロセスを落とさない）
+  static Result<RemoteInfo> run(const std::shared_ptr<IRemoteStatus>& impl, const GitHubRef& ref, const CancelToken& token) {
+    try {
+      return impl->fetch(ref, token);
+    } catch (...) {
+      return Error{"確認中に予期しないエラーが起きました"};
+    }
+  }
+  std::shared_ptr<IRemoteStatus> impl_;
+  bool async_ = true;
+  bool running_ = false;
+  std::string key_;
+  std::shared_ptr<Shared> sh_;
+  std::shared_ptr<CancelToken> token_;
+  std::thread th_;
+};
+
+AppController::~AppController() = default;
 
 // ---------------------------------------------------------------- 保存先（アプリの設定）
 void AppController::setDataDirInfo(const DataDirChoice& c, std::string exeDir) {
@@ -515,6 +591,7 @@ void AppController::scheduleSave() {
 
 void AppController::tick() {
   afterEdit();
+  pumpRemote();
   const std::int64_t t = now();
   if (saveDueAt_ >= 0 && t >= saveDueAt_) {
     auto s = ws_->flush();
@@ -606,6 +683,7 @@ void AppController::openSession(const std::string& id, bool keepHistory) {
     toast("このプロジェクトを開けません: " + h.error());
     return;
   }
+  if (currentId_ != id) dropRemoteQueue();  // 別のプロジェクトの順番待ちの確認は捨てる（結果は表示のために残す）
   if (session_) retiredSessions_.push_back(std::move(session_));
   session_ = std::make_unique<Session>(std::move(h->data), &clock_, std::move(h->warns));
   session_->setInherit(prefs_.inherit);
@@ -1355,12 +1433,246 @@ void AppController::dismissToast(int id) {
                 toasts_.end());
 }
 void AppController::runToastAction(int id) {
-  for (const auto& t : toasts_)
-    if (t.id == id && t.action == NoticeAction::Undo) {
+  for (const auto& t : toasts_) {
+    if (t.id != id) continue;
+    if (t.action == NoticeAction::Undo) {
       dismissToast(id);
       undo();
       return;
     }
+    if (t.action == NoticeAction::Complete) {
+      const std::string project = t.project, issueId = t.arg;  // dismissToast で t が消える前に写す
+      dismissToast(id);
+      completeFromRemote(project, issueId, false);
+      return;
+    }
+  }
+}
+
+// ---------------------------------------------------------------- GitHub の状態の確認
+namespace {
+constexpr std::size_t kLabelNameChars = 30;  // 通知に入れる件名の長さ（文字）
+constexpr std::size_t kMaxRemoteReasonBytes = 300;
+}  // namespace
+
+void AppController::setRemoteStatus(std::shared_ptr<IRemoteStatus> impl, bool async) {
+  worker_.reset();  // 実行中のものは中断して片づける
+  remoteQueue_.clear();
+  remoteActive_.clear();
+  remoteBatches_.clear();
+  remoteDone_.clear();
+  remote_ = std::move(impl);
+  remoteAsync_ = async;
+  if (remote_) worker_ = std::make_unique<RemoteWorker>(remote_, async);
+}
+
+std::string AppController::issueLabel(const std::string& issueId) const {
+  std::string did = issueId, name;
+  if (session_) {
+    const Tree* T = session_->tree();
+    const int idx = T ? T->find(issueId) : -1;
+    if (idx >= 0) {
+      did = T->did[idx];
+      name = T->name[idx];
+    } else if (const Issue* o = session_->issue(issueId)) {
+      name = o->summary;
+    }
+  }
+  const std::u32string u = text::toU32(name);
+  if (u.size() > kLabelNameChars) name = text::fromU32(std::u32string_view(u).substr(0, kLabelNameChars)) + "…";
+  return "#" + did + " 『" + name + "』";
+}
+
+AppController::RemoteView AppController::remoteViewOf(const std::string& target) const {
+  RemoteView v;
+  const LinkClass k = classifyLink(target);
+  if (!linkKindGitHub(k.kind)) return v;
+  const auto ref = parseGitHubUrl(k.target);
+  if (!ref) return v;
+  const std::string key = ref->canonicalUrl();
+  if (remoteActive_.count(key)) {
+    v.phase = RemoteView::Phase::Checking;
+    return v;
+  }
+  const auto it = remoteDone_.find(key);
+  if (it == remoteDone_.end()) return v;
+  v.checkedAt = it->second.checkedAt;
+  if (it->second.failed) {
+    v.phase = RemoteView::Phase::Failed;
+    v.error = it->second.error;
+  } else {
+    v.phase = RemoteView::Phase::Done;
+    v.info = it->second.info;
+  }
+  return v;
+}
+
+std::size_t AppController::githubLinkCount(const std::string& issueId) const {
+  std::size_t n = 0;
+  for (const Link& l : linksOf(issueId))
+    if (linkKindGitHub(classifyLink(l.target).kind)) ++n;
+  return n;
+}
+
+bool AppController::remoteBusy() const { return !remoteActive_.empty(); }
+
+RemoteStates AppController::remoteStates() const {
+  RemoteStates st;
+  for (const auto& [key, e] : remoteDone_) {
+    // 失敗したものと、確認中（順番待ちを含む）のものは「未確認」と同じ扱い。確認中は以前の結果が残っているが、
+    // 新しい結果が届くまでは古いので、完了の提案・了承・自動の完了の根拠にしない
+    if (e.failed || remoteActive_.count(key)) continue;
+    st[key] = e.info;
+  }
+  return st;
+}
+
+int AppController::checkRemote(const std::string& issueId, std::optional<std::size_t> index) {
+  if (!session_ || !session_->issue(issueId)) {
+    toast("確認する課題がありません");
+    return 0;
+  }
+  if (!remote_) {
+    toast("この環境では GitHub の状態を確認できません");
+    return 0;
+  }
+  const auto& list = linksOf(issueId);
+  std::vector<RemoteJob> jobs;
+  std::vector<std::string> keys;
+  for (std::size_t i = 0; i < list.size(); ++i) {
+    if (index && *index != i) continue;
+    const LinkClass k = classifyLink(list[i].target);
+    if (!linkKindGitHub(k.kind)) continue;
+    auto ref = parseGitHubUrl(k.target);
+    if (!ref) continue;
+    const std::string key = ref->canonicalUrl();
+    if (std::find(keys.begin(), keys.end(), key) != keys.end()) continue;  // 同じ PR・Issue は 1 回
+    keys.push_back(key);
+    jobs.push_back({key, *ref});
+  }
+  if (keys.empty()) {
+    toast("確認できる GitHub の PR・Issue のリンクがありません");
+    return 0;
+  }
+  // この課題の古い提案は取り下げる（新しい結果が届いたら、改めて出る）
+  toasts_.erase(std::remove_if(toasts_.begin(), toasts_.end(),
+                               [&](const Toast& t) {
+                                 return t.action == NoticeAction::Complete && t.project == currentId_ && t.arg == issueId;
+                               }),
+                toasts_.end());
+  for (RemoteJob& j : jobs)
+    if (remoteActive_.insert(j.key).second) remoteQueue_.push_back(std::move(j));  // 確認中のものは、その結果を待つ
+  remoteBatches_.push_back({currentId_, issueId, keys});
+  return static_cast<int>(keys.size());
+}
+
+void AppController::dropRemoteQueue() {
+  for (const RemoteJob& j : remoteQueue_) remoteActive_.erase(j.key);
+  remoteQueue_.clear();
+  remoteBatches_.clear();
+}
+
+void AppController::pumpRemote() {
+  if (!worker_) return;
+  bool changed = false;
+  while (true) {
+    if (worker_->running()) {
+      std::string key;
+      std::optional<Result<RemoteInfo>> res;
+      if (!worker_->poll(key, res)) break;  // まだ実行中
+      RemoteEntry e;
+      e.checkedAt = clock_.nowDT();
+      if (!res || !res->ok()) {
+        e.failed = true;
+        e.error = res ? res->error() : std::string("結果を受け取れませんでした");
+      } else if (res->value().state == RemoteState::Unknown) {
+        e.failed = true;
+        e.error = res->value().reason.empty() ? std::string("状態を判定できませんでした") : res->value().reason;
+      } else {
+        e.info = res->value();
+      }
+      if (e.error.size() > kMaxRemoteReasonBytes) e.error = text::sanitizeUtf8(e.error.substr(0, kMaxRemoteReasonBytes)) + "…";
+      remoteDone_[key] = std::move(e);
+      remoteActive_.erase(key);
+      changed = true;
+    }
+    if (remoteQueue_.empty()) break;
+    RemoteJob job = std::move(remoteQueue_.front());
+    remoteQueue_.pop_front();
+    worker_->start(job);
+    changed = true;
+    if (remoteAsync_) break;  // 結果は次の tick 以降に拾う
+  }
+  if (changed) finishRemoteBatches();
+}
+
+void AppController::finishRemoteBatches() {
+  std::vector<RemoteBatch> pending, finished;
+  for (RemoteBatch& b : remoteBatches_) {
+    const bool waiting =
+        std::any_of(b.keys.begin(), b.keys.end(), [&](const std::string& k) { return remoteActive_.count(k) != 0; });
+    (waiting ? pending : finished).push_back(std::move(b));
+  }
+  remoteBatches_ = std::move(pending);
+  for (const RemoteBatch& b : finished) {
+    if (!session_ || b.project != currentId_) continue;  // 別のプロジェクトに切り替わった（結果は表示のために残してある）
+    const Issue* issue = session_->issue(b.issueId);
+    if (!issue) continue;
+    int failures = 0;
+    std::string firstError;
+    for (const std::string& k : b.keys) {
+      const auto it = remoteDone_.find(k);
+      if (it != remoteDone_.end() && it->second.failed && failures++ == 0) firstError = it->second.error;
+    }
+    if (failures > 0) {
+      // URL・リポジトリ名は出さない（件数と理由だけ）
+      toast("GitHub の状態を確認できませんでした（" + (b.keys.size() > 1 ? std::to_string(failures) + " 件。" : std::string()) +
+            firstError + "）");
+      continue;
+    }
+    const auto proposal = proposeCompletion(*issue, session_->links(), remoteStates(), utcOffsetFn_);
+    if (!proposal) continue;  // まだ閉じていないものがある（状態はリンクの横に出ている）
+    if (prefs_.autoCompleteGitHub) {
+      completeFromRemote(b.project, b.issueId, true);
+      continue;
+    }
+    // 古い提案は置き換える
+    toasts_.erase(std::remove_if(toasts_.begin(), toasts_.end(),
+                                 [&](const Toast& t) {
+                                   return t.action == NoticeAction::Complete && t.project == b.project && t.arg == b.issueId;
+                                 }),
+                  toasts_.end());
+    std::string msg = issueLabel(b.issueId) + "のリンクがすべて閉じています。完了にしますか？";
+    if (!proposal->caution.empty()) msg += "（" + proposal->caution + "）";
+    toast(msg, NoticeAction::Complete, b.issueId);
+    toasts_.back().project = b.project;
+    toasts_.back().expiresAt = now() + 20000;  // 判断に時間がかかるので長めに出す
+  }
+}
+
+bool AppController::completeFromRemote(const std::string& project, const std::string& issueId, bool automatic) {
+  if (!session_ || currentId_ != project) {
+    toast("プロジェクトが切り替わったため、完了にしませんでした");
+    return false;
+  }
+  const Issue* issue = session_->issue(issueId);
+  if (!issue) {
+    toast("課題が見つからないため、完了にしませんでした");
+    return false;
+  }
+  const auto proposal = proposeCompletion(*issue, session_->links(), remoteStates(), utcOffsetFn_);
+  if (!proposal) {
+    toast("リンクの状態が変わったため、完了にしませんでした");
+    return false;
+  }
+  const Day day = std::min(proposal->resolved, clock_.today());  // 先の日付（時計のずれ）は今日にする
+  const std::string label = issueLabel(issueId);
+  const bool ok = session_->completeIssue(issueId, day);
+  afterEdit();
+  if (!ok) return false;
+  toast(label + (automatic ? "のリンクがすべて閉じていたので、自動で完了にしました（完了日 " : "を完了にしました（完了日 ") + fmtIso(day) + "）",
+        NoticeAction::Undo);
+  return true;
 }
 
 }  // namespace roadmap::app

@@ -33,6 +33,8 @@ add_executable(roadmap_unit_tests
   unit/test_baseline.cpp
   unit/test_history.cpp
   unit/test_links.cpp
+  unit/test_github_ref.cpp
+  unit/test_remote_status.cpp
 )
 target_link_libraries(roadmap_unit_tests PRIVATE roadmap_core roadmap_controller roadmap_test_main)
 target_compile_definitions(roadmap_unit_tests PRIVATE ROADMAP_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/golden")

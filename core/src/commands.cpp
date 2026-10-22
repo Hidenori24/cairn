@@ -496,6 +496,18 @@ bool Session::setStatus(std::string id, std::string st) {
   });
 }
 
+bool Session::completeIssue(std::string id, Day resolved) {
+  if (!issue(id)) return false;
+  beginBatch();  // 状況と完了日をまとめて Undo 1回にする
+  const bool ok = mutate([&](ProjectData& P) {
+    Issue& o = P.issues[indexOf(P.issues, id)];
+    o.status = "Done";
+    o.resolved = resolved;
+  });
+  endBatch();
+  return ok;
+}
+
 bool Session::setTag(std::string id, std::string tagIn) {
   const Issue* cur = issue(id);
   if (!cur || !comp_) return false;

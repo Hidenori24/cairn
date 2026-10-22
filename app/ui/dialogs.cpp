@@ -926,6 +926,9 @@ void dlgAppSettings(Frame& f) {
   if (ImGui::Checkbox("プロジェクトを開いたら基準日を今日に合わせる", &pr.autoBaseToday)) c.savePrefs();
   ImGui::SameLine();
   ImGui::TextDisabled("（起動中、プロジェクトごとに1回。前の日付は通知に出します）");
+  if (ImGui::Checkbox("GitHub のリンクが閉じられたら自動で完了にする", &pr.autoCompleteGitHub)) c.savePrefs();
+  ImGui::SameLine();
+  ImGui::TextDisabled("（「GitHub の状態を確認」を押したときだけ。完了日は閉じた日。通知の「元に戻す」で戻せます）");
   if (ImGui::Checkbox("課題を削除する前に確かめる", &pr.confirmDelete)) c.savePrefs();
   ImGui::SameLine();
   ImGui::TextDisabled("（確かめなくても、通知の「元に戻す」か Ctrl+Z で戻せます）");

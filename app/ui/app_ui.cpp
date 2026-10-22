@@ -992,13 +992,27 @@ void drawToasts(Frame& f) {
   const auto toasts = c.toasts();
   for (auto it = toasts.rbegin(); it != toasts.rend(); ++it) {
     const auto& t = *it;
-    // 「フォルダを開く」は「元に戻す」より幅が広いので、通知の幅とボタンの位置を広げる（元に戻す・動作なしの通知は変えない）
+    // 「フォルダを開く」は「元に戻す」より幅が広いので、通知の幅とボタンの位置を広げる（元に戻す・動作なしの通知は変えない）。
+    // 完了の提案（リンク先の PR・Issue がすべて閉じた。Issue #61）は文が長く、注意書きまで読んでもらうので、幅を広げて折り返す。
+    // 長すぎて入りきらない文も、省略せずに折り返す（失敗の理由を読めるように）
+    const bool complete = t.action == NoticeAction::Complete && !t.arg.empty();
     const bool openFolder = t.action == NoticeAction::OpenFolder && !t.arg.empty();
-    const char* const folderLabel = "フォルダを開く";
+    const char* const folderLabel = complete ? "完了にする" : "フォルダを開く";
     const float folderW = ImGui::CalcTextSize(folderLabel).x + u.m.s(20);
-    const float w = openFolder ? std::min(u.m.s(640), ImGui::CalcTextSize(t.text.c_str()).x + u.m.s(70) + folderW)
-                               : std::min(u.m.s(520), ImGui::CalcTextSize(t.text.c_str()).x + u.m.s(140));
-    const float h = u.m.s(40);
+    const float textW = ImGui::CalcTextSize(t.text.c_str()).x;
+    const float cap = openFolder ? u.m.s(640) : u.m.s(520);
+    const float pad = (openFolder || complete) ? u.m.s(70) + folderW : u.m.s(130);  // 文の右に残す幅（ボタン・閉じる）
+    const bool wrap = complete || textW + pad > cap;
+    float w = openFolder ? std::min(cap, textW + u.m.s(70) + folderW) : std::min(cap, textW + u.m.s(140));
+    if (complete) w = std::min(u.m.s(720), vp->WorkSize.x - u.m.s(32));
+    else if (wrap) w = cap;
+    const float wrapW = w - pad;
+    // 描くときは PushTextWrapPos(wrapW)（窓の左端からの位置）で、文字は左の余白 padL から始まるので、折り返す幅は wrapW - padL。
+    // 高さを測るときも同じ幅で測る（広く測ると、描くほうが先に折り返して 1 行増え、窓の高さが足りず末尾が切れる）
+    const float padL = u.m.s(12);
+    const float textH = wrap ? ImGui::CalcTextSize(t.text.c_str(), nullptr, false, wrapW - padL).y : ImGui::GetTextLineHeight();
+    const float h = complete ? std::max(u.m.s(64), textH + u.m.s(24)) : wrap ? std::max(u.m.s(40), textH + u.m.s(20)) : u.m.s(40);
+    const float btnY = wrap ? h / 2 - ImGui::GetFrameHeight() / 2 : u.m.s(6);
     y -= h;
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + u.m.s(16), y));
     ImGui::SetNextWindowSize(ImVec2(w, h));
@@ -1009,16 +1023,32 @@ void drawToasts(Frame& f) {
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
     ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->dark ? u.t->ink : u.t->surface));
-    ImGui::SetCursorPosY(u.m.s(10));
-    ImGui::TextUnformatted(ellipsize(t.text, openFolder ? w - u.m.s(70) - folderW : w - u.m.s(130)).c_str());
+    if (wrap) {
+      ImGui::SetCursorPos(ImVec2(padL, (h - textH) / 2));
+      ImGui::PushTextWrapPos(wrapW);
+      ImGui::TextUnformatted(t.text.c_str());
+      ImGui::PopTextWrapPos();
+    } else {
+      ImGui::SetCursorPosY(u.m.s(10));
+      ImGui::TextUnformatted(ellipsize(t.text, openFolder ? w - u.m.s(70) - folderW : w - u.m.s(130)).c_str());
+    }
     ImGui::PopStyleColor();
-    if (t.action == NoticeAction::Undo) {
+    if (complete) {
+      // 押すまで課題は変わらない。押したら描画が終わってから完了にする（Undo 1回で戻る）
+      ImGui::SameLine(w - u.m.s(50) - folderW);
+      ImGui::SetCursorPosY(btnY);
+      if (ImGui::Button(folderLabel)) {
+        const int id = t.id;
+        deferAfterFrame(f, [&f, id] { f.c.runToastAction(id); });
+      }
+      u.toastActionBtn = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
+    } else if (t.action == NoticeAction::Undo) {
       ImGui::SameLine(w - u.m.s(120));
-      ImGui::SetCursorPosY(u.m.s(6));
+      ImGui::SetCursorPosY(btnY);
       if (ImGui::SmallButton(S::kUndo)) c.runToastAction(t.id);
     } else if (openFolder) {
       ImGui::SameLine(w - u.m.s(50) - folderW);
-      ImGui::SetCursorPosY(u.m.s(6));
+      ImGui::SetCursorPosY(btnY);
       if (ImGui::SmallButton(folderLabel)) {
         const std::string folder = t.arg;
         const int id = t.id;
@@ -1029,7 +1059,7 @@ void drawToasts(Frame& f) {
       }
     }
     ImGui::SameLine(w - u.m.s(36));
-    ImGui::SetCursorPosY(u.m.s(6));
+    ImGui::SetCursorPosY(btnY);
     if (iconButton(u, "close", "x", "閉じる")) c.dismissToast(t.id);
     ImGui::End();
     ImGui::PopStyleVar();

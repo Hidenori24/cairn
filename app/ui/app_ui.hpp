@@ -192,6 +192,10 @@ struct UiState {
   std::vector<MenuItemGeom> linkCtxItems;
   // 行・カードのリンクのバッジの範囲（前のフレームのものが linkBadges）と、最後に出したバッジのツールチップの行（煙テスト用）
   std::vector<DropTarget> linkBadges, linkBadgeBuild;
+  // ---- GitHub の状態の確認（Issue #61）----
+  // 前のフレームの節の部品の範囲（画面の座標。煙テストが当たり位置を知るため）と、出した状態の表示（行ごと。出さない行は空）
+  std::pair<ImVec2, ImVec2> linkCheckBtn{{0, 0}, {0, 0}}, toastActionBtn{{0, 0}, {0, 0}};
+  std::vector<std::string> linkStatusShown;
   std::vector<std::string> linkTipLines;
   // 添付の画像（サムネイル・プレビュー）のテクスチャ。キー = パス・大きさ・日時・縮小の上限。
   // 使わなくなったものは解放し、プロジェクトを切り替えたら全部解放する（releaseImages / trimImages）

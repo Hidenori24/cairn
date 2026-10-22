@@ -18,6 +18,7 @@
 #include <imgui_internal.h>
 
 #include "app_controller.hpp"
+#include "platform/win32_gh.hpp"
 #include "platform/win32_platform.hpp"
 #include "roadmap/clock.hpp"
 #include "roadmap/filestore.hpp"
@@ -375,6 +376,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
   gCtl = &ctl;
   gUi = &uiState;
   ctl.start();
+  // GitHub の PR・Issue の状態は gh で取る（押したときだけ。別のスレッドで 1 件ずつ。Issue #61）
+  ctl.setUtcOffsetFn(win::utcOffsetMinutesAt);
+  ctl.setRemoteStatus(win::makeGhRemoteStatus());
 
   // ウィンドウ（前回の位置・サイズ）
   WNDCLASSEXW wc{sizeof(wc), CS_CLASSDC, wndProc, 0, 0, hInst, LoadIconW(hInst, L"IDI_APP"), LoadCursorW(nullptr, IDC_ARROW),

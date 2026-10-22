@@ -3,7 +3,9 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -11,6 +13,7 @@
 #include <vector>
 
 #include "roadmap/attachments.hpp"
+#include "roadmap/github_ref.hpp"
 #include "roadmap/links.hpp"
 #include "roadmap/commands.hpp"
 #include "roadmap/report.hpp"
@@ -29,7 +32,8 @@ struct Toast {
   int id = 0;
   std::string text;
   NoticeAction action = NoticeAction::None;
-  std::string arg;  // 動作の引数（OpenFolder のフォルダ）
+  std::string arg;  // 動作の引数（OpenFolder のフォルダ、Complete の課題の Issue Id）
+  std::string project;  // Complete: 提案したプロジェクト（切り替わっていたら何もしない）
   std::int64_t expiresAt = 0;
 };
 
@@ -47,6 +51,7 @@ struct ImportOutcome {
 class AppController {
  public:
   AppController(IFileStore& fs, const IClock& clock, std::string dataDir, std::string prefsPath);
+  ~AppController();
 
   // ---- 起動・周期処理 ----
   void start();                 // prefs を読み、フォルダを同期し、前回のプロジェクトを開く
@@ -225,6 +230,35 @@ class AppController {
   bool moveLink(const std::string& fromIssue, std::size_t index, const std::string& toIssue);
   bool copyLink(const std::string& fromIssue, std::size_t index, const std::string& toIssue);
 
+  // ---- GitHub の PR・Issue の状態の確認（SPEC 8.11。Issue #61。確認結果はメモリ上のみで、保存しない）----
+  // 取得の窓口を差し替える（時計・ファイルと同じ流儀。Win32 は gh、テストは固定の応答）。async = 別のスレッドで 1 件ずつ実行し、
+  // 結果を tick() が拾う。false は tick() の中で順に実行する（テスト用）。差し替えると、確認中のものは中断し、確認結果は捨てる
+  void setRemoteStatus(std::shared_ptr<IRemoteStatus> impl, bool async = true);
+  bool remoteAvailable() const { return remote_ != nullptr; }
+  // 閉じた日時（UTC）を暦の日にするときの、その時刻に適用される UTC からの差（分。日本時間は 540。夏時間のある時間帯は時期で変わる）。
+  // 時間帯の規則は OS が持つので、プラットフォームが注入する（Win32 は SystemTimeToTzSpecificLocalTime）。既定は UTC（0）
+  void setUtcOffsetFn(UtcOffsetFn fn) { utcOffsetFn_ = std::move(fn); }
+  // 差が一定の時間帯（テスト用）
+  void setUtcOffsetMinutes(int minutes) {
+    utcOffsetFn_ = [minutes](std::int64_t) { return minutes; };
+  }
+  struct RemoteView {
+    enum class Phase { None, Checking, Done, Failed };
+    Phase phase = Phase::None;  // None = GitHub のリンクでない・まだ確認していない
+    RemoteInfo info;            // Done のとき
+    std::string checkedAt;      // 確認した日時 "YYYY-MM-DDTHH:MM"（Done・Failed）
+    std::string error;          // Failed のとき（理由。URL は入れない）
+  };
+  RemoteView remoteViewOf(const std::string& target) const;
+  std::size_t githubLinkCount(const std::string& issueId) const;
+  bool remoteBusy() const;  // 確認中・順番待ちがある
+  // 課題の GitHub のリンクを順に確認する（index を指定すればそのリンクだけ）。確認を頼んだリンクの数を返す（0 なら理由を通知）。
+  // 確認が終わって、その課題の GitHub のリンクがすべて閉じていれば、完了の提案を通知する（アプリの設定で自動なら、そのまま完了にする）
+  int checkRemote(const std::string& issueId, std::optional<std::size_t> index = std::nullopt);
+  // 閉じた GitHub のリンクを根拠に課題を完了にする（Undo 1回）。提案の通知の「完了にする」と自動の完了が使う。
+  // プロジェクトが切り替わった・課題がない・リンクの状態が変わって提案が成立しないときは、何も変えず理由を通知して false
+  bool completeFromRemote(const std::string& project, const std::string& issueId, bool automatic);
+
   // ---- テンプレート ----
   std::vector<Template> templates() const;
   std::string saveTemplate(const std::string& name, const std::string& desc, std::vector<TemplateItem> items);
@@ -315,6 +349,36 @@ class AppController {
   std::int64_t lastSync_ = 0;
 
   std::optional<ParsedBackup> pendingJson_;
+
+  // ---- GitHub の状態の確認（メモリ上のみ）----
+  struct RemoteEntry {
+    RemoteInfo info;
+    std::string checkedAt;
+    std::string error;
+    bool failed = false;
+  };
+  struct RemoteJob {
+    std::string key;  // GitHubRef::canonicalUrl()
+    GitHubRef ref;
+  };
+  struct RemoteBatch {
+    std::string project, issueId;
+    std::vector<std::string> keys;
+  };
+  class RemoteWorker;
+  void pumpRemote();                                // tick から: 終わった確認を拾い、次を始める
+  void finishRemoteBatches();                       // 全部終わったバッチを評価する（完了の提案・失敗の通知）
+  void dropRemoteQueue();                           // 順番待ちとバッチを捨てる（プロジェクトの切り替え）
+  std::string issueLabel(const std::string& issueId) const;  // "#表示ID 『件名の先頭 30 文字』"
+  RemoteStates remoteStates() const;
+  std::shared_ptr<IRemoteStatus> remote_;
+  bool remoteAsync_ = true;
+  UtcOffsetFn utcOffsetFn_;
+  std::map<std::string, RemoteEntry> remoteDone_;
+  std::deque<RemoteJob> remoteQueue_;
+  std::set<std::string> remoteActive_;  // 順番待ち・実行中の鍵
+  std::vector<RemoteBatch> remoteBatches_;
+  std::unique_ptr<RemoteWorker> worker_;
 };
 
 }  // namespace roadmap::app
