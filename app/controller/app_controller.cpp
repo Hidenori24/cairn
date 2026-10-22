@@ -373,6 +373,123 @@ Result<std::string> AppController::attachmentBytes(const std::string& issueId, s
   return fs_.read(p);
 }
 
+const std::vector<Link>& AppController::linksOf(const std::string& issueId) const {
+  static const std::vector<Link> none;
+  if (!session_) return none;
+  const auto& m = session_->links();
+  const auto it = m.find(issueId);
+  return it == m.end() ? none : it->second;
+}
+std::size_t AppController::linkCountOf(const std::string& issueId) const { return linksOf(issueId).size(); }
+
+bool AppController::addLink(const std::string& issueId, const std::string& title, const std::string& target, std::string* reason) {
+  const auto fail = [&](const std::string& why) {
+    if (reason) *reason = why;
+    return false;
+  };
+  if (!session_) return fail("プロジェクトを開いてからリンクを付けてください");
+  if (!session_->issue(issueId)) return fail("リンクを付ける課題がありません");
+  auto r = roadmap::linkAdd(session_->links(), clock_, issueId, title, target);
+  if (!r) return fail(r.error());
+  session_->touchLinks();
+  afterEdit();
+  return true;
+}
+
+LinkPasteOutcome AppController::addLinksFromText(const std::string& issueId, const std::string& text) {
+  LinkPasteOutcome out;
+  if (!session_ || !session_->issue(issueId)) {
+    toast("リンクを付ける課題がありません");
+    return out;
+  }
+  out = roadmap::linkAddLines(session_->links(), clock_, issueId, text);
+  if (!out.added.empty()) {
+    session_->touchLinks();
+    afterEdit();
+  }
+  // 行の中身は通知に出さない（件数と、最初に断った理由だけ）
+  std::string msg;
+  if (!out.added.empty()) msg = std::to_string(out.added.size()) + " 件のリンクを追加しました";
+  const std::size_t refused = out.rejected.size() + out.skipped;
+  if (refused > 0) {
+    if (!msg.empty()) msg += "。";
+    msg += std::to_string(refused) + " 行は追加できませんでした";
+    if (!out.rejected.empty()) msg += "（" + std::to_string(out.rejected.front().line) + " 行目: " + out.rejected.front().reason + "）";
+    else msg += "（一度に読むのは " + std::to_string(kMaxPasteLinkLines) + " 行までです）";
+  }
+  if (msg.empty()) msg = "追加できる行がありませんでした（1 行に 1 つ、URL かパスを入れてください）";
+  toast(msg);
+  return out;
+}
+
+bool AppController::editLink(const std::string& issueId, std::size_t index, const std::string& title, const std::string& target,
+                             std::string* reason) {
+  if (!session_ || !session_->issue(issueId)) {
+    if (reason) *reason = "リンクを直す課題がありません";
+    return false;
+  }
+  auto s = roadmap::linkEdit(session_->links(), issueId, index, title, target);
+  if (!s) {
+    if (reason) *reason = s.error();
+    return false;
+  }
+  session_->touchLinks();
+  afterEdit();
+  return true;
+}
+
+bool AppController::removeLink(const std::string& issueId, std::size_t index) {
+  if (!session_) return false;
+  auto s = roadmap::linkRemove(session_->links(), issueId, index);
+  if (!s) return false;
+  session_->touchLinks();
+  afterEdit();
+  toast("リンクを外しました");
+  return true;
+}
+
+bool AppController::reorderLink(const std::string& issueId, std::size_t from, std::size_t to) {
+  if (!session_) return false;
+  auto s = roadmap::linkReorder(session_->links(), issueId, from, to);
+  if (!s) return false;
+  if (from == to) return true;
+  session_->touchLinks();
+  afterEdit();
+  return true;
+}
+
+bool AppController::moveLink(const std::string& fromIssue, std::size_t index, const std::string& toIssue) {
+  if (!session_ || !session_->issue(toIssue)) {
+    toast("移す先の課題がありません");
+    return false;
+  }
+  auto r = roadmap::linkMove(session_->links(), fromIssue, index, toIssue);
+  if (!r) {
+    toast("リンクを移せませんでした（" + r.error() + "）");
+    return false;
+  }
+  session_->touchLinks();
+  afterEdit();
+  toast("リンクを別の課題へ移しました");
+  return true;
+}
+
+bool AppController::copyLink(const std::string& fromIssue, std::size_t index, const std::string& toIssue) {
+  if (!session_ || !session_->issue(toIssue)) {
+    toast("コピー先の課題がありません");
+    return false;
+  }
+  auto r = roadmap::linkCopy(session_->links(), clock_, fromIssue, index, toIssue);
+  if (!r) {
+    toast("リンクをコピーできませんでした（" + r.error() + "）");
+    return false;
+  }
+  session_->touchLinks();
+  afterEdit();
+  toast("リンクを別の課題へコピーしました");
+  return true;
+}
+
 void AppController::afterEdit() {
   if (!session_) return;
   absorbNotices();

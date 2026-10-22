@@ -169,7 +169,7 @@ std::string Session::nowDT() const { return clock_->nowDT(); }
 Issue Session::newIssue(const std::string& parentId, const std::string& name) const {
   const Issue* p = parentId.empty() ? nullptr : issue(parentId);
   Issue o;
-  o.id = nextIssueId(P_.issues, P_.settings.attachments);
+  o.id = nextIssueId(P_.issues, P_.settings.attachments, P_.settings.links);
   o.key = P_.settings.key.empty() ? "" : P_.settings.key + "-" + o.id;
   o.type = !p ? "Epic" : (isEpic(*p) ? "Task" : "Sub-task");
   o.summary = name.empty() ? kDefaultIssueName : name;
@@ -820,7 +820,7 @@ int Session::applyTemplate(std::vector<std::string> parentIds, const Template& t
         if (lv == 0) upObj = &par;
         Issue o;
         // newIssue（採番は配列の現在の状態から）
-        o.id = nextIssueId(P.issues, P.settings.attachments);
+        o.id = nextIssueId(P.issues, P.settings.attachments, P.settings.links);
         o.key = P.settings.key.empty() ? "" : P.settings.key + "-" + o.id;
         o.parent = up;
         o.prio = "Medium";
@@ -879,7 +879,7 @@ int Session::addOutline(const std::string& parentId, const std::vector<OutlineIt
       const int lv = std::max(0, std::min(it.lv, static_cast<int>(lastAt.size())));
       const std::string up = lv == 0 ? parentId : lastAt[static_cast<std::size_t>(lv) - 1];
       Issue o;
-      o.id = nextIssueId(P.issues, P.settings.attachments);
+      o.id = nextIssueId(P.issues, P.settings.attachments, P.settings.links);
       o.key = P.settings.key.empty() ? "" : P.settings.key + "-" + o.id;
       o.parent = up;
       o.prio = "Medium";
