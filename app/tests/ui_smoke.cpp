@@ -3064,6 +3064,35 @@ int main() {
     h.u.detailOpen = false;
     h.frame(2);
   }
+  // 通知の折り返し: 高さを測るときの幅と、描くときの幅が同じこと（折り返しの境目で 1 行増えて、末尾が切れない）。
+  // 文字の左の余白（12）のぶん、描画のほうが狭いので、測るときも同じだけ引く。単語の長さを少しずつ変えて、境目を何度も通る
+  {
+    const auto dismissAll = [&]() {
+      for (const auto& t : std::vector<app::Toast>(h.c.toasts())) h.c.dismissToast(t.id);
+    };
+    int checked = 0, bad = 0, tallest = 0;
+    for (const NoticeAction act : {NoticeAction::None, NoticeAction::OpenFolder}) {
+      for (int n = 6; n <= 70; ++n) {
+        dismissAll();
+        std::string text;
+        for (int i = 0; i < n; ++i) text += std::string(static_cast<std::size_t>(2 + (i * 7) % 9), static_cast<char>('a' + i % 26)) + " ";
+        h.c.toast(text, act, act == NoticeAction::OpenFolder ? "out" : "");
+        h.frame(2);
+        if (h.c.toasts().empty()) continue;
+        const std::string name = "##toast" + std::to_string(h.c.toasts().back().id);
+        ImGuiWindow* w = ImGui::FindWindowByName(name.c_str());
+        if (!w) continue;
+        ++checked;
+        // 内容の下端（上の余白を含む）と下の余白が、窓に収まっていること
+        // 1 行の通知は、閉じるボタンの分だけもともと 2px ほど超える。行が 1 つ増えた（13px 以上）ときは超えすぎ
+        if (w->ContentSize.y + 2 * w->WindowPadding.y > w->Size.y + 3.0f) ++bad;
+        tallest = std::max(tallest, static_cast<int>(w->Size.y));
+      }
+    }
+    dismissAll();
+    check(checked > 100 && tallest > 60, "通知の折り返しの確認: 長い文を何通りも出した");
+    check(bad == 0, "通知の文字が、折り返しの境目でも窓の高さに収まる（末尾が切れない）");
+  }
   // 統計ビュー: 担当者別の負荷（週×担当のヒートマップ）と完了の推移
   {
     const std::string csvText =

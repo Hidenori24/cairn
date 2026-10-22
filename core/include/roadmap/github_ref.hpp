@@ -7,11 +7,14 @@
 // UI・Win32 に依存しない。例外は投げず、失敗は戻り値で返す。
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -79,7 +82,15 @@ RemoteInfo parseGhIssueJson(std::string_view json);
 
 // "YYYY-MM-DDTHH:MM:SSZ"（gh の日時）なら true。ゼロ値（0001-01-01T00:00:00Z）は false
 bool isGhTimestamp(std::string_view s);
-// UTC の日時 isoUtc を、UTC からの差 utcOffsetMinutes（日本時間は +540）の暦の日にする。形式が違えば nullopt
+// UTC の日時 "YYYY-MM-DDTHH:MM:SSZ" の 1970-01-01T00:00:00Z からの秒数。形式が違えば nullopt
+std::optional<std::int64_t> epochSecondsOfUtc(std::string_view isoUtc);
+// その時刻（UTC の秒数）に、その時間帯で適用される UTC からの差（分。日本時間は +540。夏時間のある時間帯は時期で変わる）。
+// 時間帯の規則は OS が持つので、core は持たず、呼び出し側が注入する（Win32 は SystemTimeToTzSpecificLocalTime。テストは固定の変換）。
+// 空の関数は 0（UTC）
+using UtcOffsetFn = std::function<int(std::int64_t epochSeconds)>;
+// UTC の日時 isoUtc を、その時刻の時間帯の暦の日にする（過去の日時にも、その日時の夏時間の規則を使う）。形式が違えば nullopt
+OptDay localDayOfUtc(std::string_view isoUtc, const UtcOffsetFn& offsetAt);
+// UTC からの差が一定（minutes）の時間帯の暦の日
 OptDay localDayOfUtc(std::string_view isoUtc, int utcOffsetMinutes);
 
 // ---- gh を起動する引数 ----
@@ -92,21 +103,33 @@ Result<std::vector<std::string>> ghArguments(const GitHubRef& ref);
 std::string windowsCommandLine(std::string_view exe, const std::vector<std::string>& args);
 
 // ---- 取得の窓口 ----
+// 取得 1 回ごとの中断の印。呼び出し側が**スレッドを起こす前に**作って fetch に渡す（fetch の中で世代を控える方式だと、
+// fetch に入る前の中断を取りこぼして、終了や差し替えが待たされる）。別のスレッドから cancel() できる
+class CancelToken {
+ public:
+  void cancel() { cancelled_.store(true); }
+  bool cancelled() const { return cancelled_.load(); }
+
+ private:
+  std::atomic<bool> cancelled_{false};
+};
+
 class IRemoteStatus {
  public:
   virtual ~IRemoteStatus() = default;
   // PR・Issue の状態を取る。時間がかかるので、呼び出し側は UI と別のスレッドで呼ぶ。
-  // 失敗（gh がない・未ログイン・タイムアウトなど）は理由つきのエラー。理由に URL・リポジトリ名・タイトルを入れない
-  virtual Result<RemoteInfo> fetch(const GitHubRef& ref) = 0;
-  // いま実行中の取得をすぐ終わらせる（アプリの終了・窓口の差し替え）。別のスレッドから呼ばれる。
-  // これから始まる取得には影響しない
+  // 失敗（gh がない・未ログイン・タイムアウトなど）は理由つきのエラー。理由に URL・リポジトリ名・タイトルを入れない。
+  // token が中断されたら（fetch に入る前でも）できるだけ早く、時間をかけずにエラーで戻る
+  virtual Result<RemoteInfo> fetch(const GitHubRef& ref, const CancelToken& token) = 0;
+  // 呼び出し側が token.cancel() したあとに呼ぶ。待っている fetch を起こすための合図（token を見ずに眠っている実装用）。
+  // 別のスレッドから呼ばれる。判断は token で行うので、これだけでは何も中断しない
   virtual void cancel() {}
 };
 
 // この環境では取得できない（gh を起動できない環境）。常に失敗する
 class UnavailableRemoteStatus final : public IRemoteStatus {
  public:
-  Result<RemoteInfo> fetch(const GitHubRef&) override { return Error{"この環境では GitHub の状態を確認できません"}; }
+  Result<RemoteInfo> fetch(const GitHubRef&, const CancelToken&) override { return Error{"この環境では GitHub の状態を確認できません"}; }
 };
 
 // テスト用の固定の応答（スレッドから呼んでも安全）。鍵は GitHubRef::canonicalUrl()
@@ -116,10 +139,12 @@ class FakeRemoteStatus final : public IRemoteStatus {
   void fail(const std::string& canonicalUrl, std::string reason);
   // 応答が設定されていない URL への応答（既定は失敗）
   void setDefaultFailure(std::string reason);
-  // true の間、fetch は release() か cancel() まで待つ（確認中の状態を作る）。cancel() は待っている fetch だけを中断する
+  // true の間、fetch は release() か token の中断まで待つ（確認中の状態を作る）
   void hold(bool on);
   void release();
-  Result<RemoteInfo> fetch(const GitHubRef& ref) override;
+  // その URL（GitHubRef::canonicalUrl）の fetch だけを待たせる / 待たせない
+  void holdUrl(const std::string& canonicalUrl, bool on);
+  Result<RemoteInfo> fetch(const GitHubRef& ref, const CancelToken& token) override;
   void cancel() override;
   int calls() const;
   std::vector<std::string> calledUrls() const;
@@ -131,7 +156,7 @@ class FakeRemoteStatus final : public IRemoteStatus {
   std::map<std::string, Result<RemoteInfo>> answers_;
   std::string defaultFailure_ = "応答が設定されていません";
   bool hold_ = false;
-  unsigned cancelGen_ = 0;
+  std::set<std::string> heldUrls_;
   int calls_ = 0;
   int running_ = 0;
   std::vector<std::string> called_;
@@ -154,8 +179,12 @@ struct CompletionProposal {
 //  - GitHub 以外のリンクは無視する。GitHub のリンクが 1 つもなければ提案しない
 //  - 1 件でも open / draft / Unknown / 未確認があれば提案しない
 //  - すでに完了（Resolved が入っている・状況が完了）の課題には提案しない
-//  - 閉じた日は各リンクの closedAt を utcOffsetMinutes の暦の日にしたもの（PR は mergedAt があればそれ）の、最も遅い日
+//  - 閉じた日は各リンクの closedAt を、その時刻の時間帯（offsetAt。夏時間も、その日時の規則で）の暦の日にしたもの
+//    （PR は mergedAt があればそれ）の、最も遅い日
 std::optional<CompletionProposal> proposeCompletion(const Issue& issue, const LinkMap& links, const RemoteStates& states,
-                                                    int utcOffsetMinutes = 0);
+                                                    const UtcOffsetFn& offsetAt = {});
+// UTC からの差が一定（minutes）の時間帯で提案する
+std::optional<CompletionProposal> proposeCompletion(const Issue& issue, const LinkMap& links, const RemoteStates& states,
+                                                    int utcOffsetMinutes);
 
 }  // namespace roadmap

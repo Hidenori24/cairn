@@ -235,14 +235,25 @@ bool isGhTimestamp(std::string_view s) {
   return makeDay(y, mo, d).has_value();
 }
 
-OptDay localDayOfUtc(std::string_view isoUtc, int utcOffsetMinutes) {
+std::optional<std::int64_t> epochSecondsOfUtc(std::string_view isoUtc) {
   if (!isGhTimestamp(isoUtc)) return std::nullopt;
   const OptDay day = makeDay(num(isoUtc, 0, 4), num(isoUtc, 5, 2), num(isoUtc, 8, 2));
   if (!day) return std::nullopt;
-  const int minutes = num(isoUtc, 11, 2) * 60 + num(isoUtc, 14, 2) + utcOffsetMinutes;
-  int shift = minutes / 1440;
-  if (minutes % 1440 < 0) --shift;  // 床除算
-  return *day + shift;
+  return static_cast<std::int64_t>(*day) * 86400 + num(isoUtc, 11, 2) * 3600 + num(isoUtc, 14, 2) * 60 + num(isoUtc, 17, 2);
+}
+
+OptDay localDayOfUtc(std::string_view isoUtc, const UtcOffsetFn& offsetAt) {
+  const auto epoch = epochSecondsOfUtc(isoUtc);
+  if (!epoch) return std::nullopt;
+  const std::int64_t offsetSec = static_cast<std::int64_t>(offsetAt ? offsetAt(*epoch) : 0) * 60;
+  std::int64_t local = *epoch + offsetSec;
+  std::int64_t days = local / 86400;
+  if (local % 86400 < 0) --days;  // 床除算
+  return static_cast<Day>(days);
+}
+
+OptDay localDayOfUtc(std::string_view isoUtc, int utcOffsetMinutes) {
+  return localDayOfUtc(isoUtc, UtcOffsetFn([utcOffsetMinutes](std::int64_t) { return utcOffsetMinutes; }));
 }
 
 RemoteInfo parseGhPrJson(std::string_view json) {
@@ -336,21 +347,26 @@ void FakeRemoteStatus::hold(bool on) {
   cv_.notify_all();
 }
 void FakeRemoteStatus::release() { hold(false); }
-void FakeRemoteStatus::cancel() {
+void FakeRemoteStatus::holdUrl(const std::string& url, bool on) {
   std::lock_guard<std::mutex> lk(mu_);
-  ++cancelGen_;
+  if (on) heldUrls_.insert(url);
+  else heldUrls_.erase(url);
   cv_.notify_all();
 }
-Result<RemoteInfo> FakeRemoteStatus::fetch(const GitHubRef& ref) {
+void FakeRemoteStatus::cancel() {
+  std::lock_guard<std::mutex> lk(mu_);  // 待っている fetch に、token が中断されたことを見せる
+  cv_.notify_all();
+}
+Result<RemoteInfo> FakeRemoteStatus::fetch(const GitHubRef& ref, const CancelToken& token) {
   const std::string url = ref.canonicalUrl();
   std::unique_lock<std::mutex> lk(mu_);
   ++calls_;
   ++running_;
   called_.push_back(url);
-  const unsigned gen = cancelGen_;
-  cv_.wait(lk, [this, gen] { return !hold_ || cancelGen_ != gen; });
+  // 中断は token で決める（fetch に入る前に中断されていても、すぐ戻る）
+  cv_.wait(lk, [&] { return token.cancelled() || (!hold_ && heldUrls_.count(url) == 0); });
   --running_;
-  if (cancelGen_ != gen) return Error{"確認を中断しました"};
+  if (token.cancelled()) return Error{"確認を中断しました"};
   const auto it = answers_.find(url);
   if (it == answers_.end()) return Error{defaultFailure_};
   return it->second;
@@ -371,6 +387,11 @@ int FakeRemoteStatus::running() const {
 // ---------------------------------------------------------------- 完了の提案
 std::optional<CompletionProposal> proposeCompletion(const Issue& issue, const LinkMap& links, const RemoteStates& states,
                                                     int utcOffsetMinutes) {
+  return proposeCompletion(issue, links, states, UtcOffsetFn([utcOffsetMinutes](std::int64_t) { return utcOffsetMinutes; }));
+}
+
+std::optional<CompletionProposal> proposeCompletion(const Issue& issue, const LinkMap& links, const RemoteStates& states,
+                                                    const UtcOffsetFn& offsetAt) {
   if (issue.resolved || statusCat(issue.status) == Cat::Done) return std::nullopt;
   const auto it = links.find(issue.id);
   if (it == links.end()) return std::nullopt;
@@ -386,7 +407,7 @@ std::optional<CompletionProposal> proposeCompletion(const Issue& issue, const Li
     if (!seen.insert(key).second) continue;
     const auto st = states.find(key);
     if (st == states.end() || !remoteStateClosed(st->second.state)) return std::nullopt;  // 未確認・open・draft・Unknown
-    const OptDay day = localDayOfUtc(st->second.closedAt, utcOffsetMinutes);
+    const OptDay day = localDayOfUtc(st->second.closedAt, offsetAt);
     if (!day) return std::nullopt;
     if (!latest || *day > *latest) latest = day;
     if (st->second.state == RemoteState::ClosedUnmerged) p.hasUnmerged = true;

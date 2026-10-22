@@ -1,7 +1,9 @@
 // GitHub の PR・Issue のリンクと、閉じたら完了の提案。Issue #61
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <string>
+#include <thread>
 
 #include "roadmap/github_ref.hpp"
 #include "roadmap/links.hpp"
@@ -592,18 +594,117 @@ TEST_CASE("proposeCompletion: 完了日は利用者の時間帯の暦の日") {
 TEST_CASE("FakeRemoteStatus: 固定の応答を返す") {
   FakeRemoteStatus f;
   auto ref = *parseGitHubUrl(kPr1);
-  auto miss = f.fetch(ref);
+  CancelToken tok;
+  auto miss = f.fetch(ref, tok);
   CHECK(!miss.ok());
   f.set(ref.canonicalUrl(), ri(RemoteState::Open));
-  auto hit = f.fetch(ref);
+  auto hit = f.fetch(ref, tok);
   REQUIRE(hit.ok());
   CHECK(hit->state == RemoteState::Open);
   f.fail(ref.canonicalUrl(), "つながりません");
-  auto ng = f.fetch(ref);
+  auto ng = f.fetch(ref, tok);
   REQUIRE(!ng.ok());
   CHECK(ng.error() == "つながりません");
   CHECK(f.calls() == 3);
   CHECK(f.calledUrls().size() == 3);
   UnavailableRemoteStatus u;
-  CHECK(!u.fetch(ref).ok());
+  CHECK(!u.fetch(ref, tok).ok());
+}
+
+TEST_CASE("FakeRemoteStatus: fetch に入る前に中断された token でも、待たずに戻る") {
+  FakeRemoteStatus f;
+  const auto ref = *parseGitHubUrl(kPr1);
+  f.hold(true);
+  CancelToken tok;
+  tok.cancel();  // fetch に入る前の中断（窓口が世代を fetch の中で控える方式だと、取りこぼして待ち続ける）
+  const auto t0 = std::chrono::steady_clock::now();
+  const auto r = f.fetch(ref, tok);
+  CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2));
+  CHECK(!r.ok());
+  // 待っている間の中断は、cancel() の合図で起きる
+  CancelToken tok2;
+  std::thread th([&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    tok2.cancel();
+    f.cancel();
+  });
+  const auto t1 = std::chrono::steady_clock::now();
+  const auto r2 = f.fetch(ref, tok2);
+  th.join();
+  CHECK(std::chrono::steady_clock::now() - t1 < std::chrono::seconds(2));
+  CHECK(!r2.ok());
+}
+
+TEST_CASE("FakeRemoteStatus: holdUrl はその URL だけを待たせる") {
+  FakeRemoteStatus f;
+  const auto a = *parseGitHubUrl(kPr1), b = *parseGitHubUrl(kPr2);
+  f.set(a.canonicalUrl(), ri(RemoteState::Open));
+  f.set(b.canonicalUrl(), ri(RemoteState::Open));
+  f.holdUrl(a.canonicalUrl(), true);
+  CancelToken tok;
+  CHECK(f.fetch(b, tok).ok());  // 待たされない
+  std::thread th([&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    f.holdUrl(a.canonicalUrl(), false);
+  });
+  CHECK(f.fetch(a, tok).ok());  // 解くまで待つ
+  th.join();
+}
+
+// ---- 時間帯（夏時間）----
+
+namespace {
+// 米国東部（ニューヨーク）の 2026 年: 3/8 02:00（= 07:00Z）から 11/1 02:00（= 06:00Z）までが夏時間（-240 分）、それ以外は -300 分
+int newYorkOffset(std::int64_t e) {
+  static const std::int64_t on = *epochSecondsOfUtc("2026-03-08T07:00:00Z");
+  static const std::int64_t off = *epochSecondsOfUtc("2026-11-01T06:00:00Z");
+  return e >= on && e < off ? -240 : -300;
+}
+}  // namespace
+
+TEST_CASE("epochSecondsOfUtc: UTC の秒数") {
+  CHECK(*epochSecondsOfUtc("1970-01-01T00:00:00Z") == 0);
+  CHECK(*epochSecondsOfUtc("1970-01-02T00:00:01Z") == 86401);
+  CHECK(*epochSecondsOfUtc("2026-10-20T03:04:05Z") == static_cast<std::int64_t>(*parseIso("2026-10-20")) * 86400 + 3 * 3600 + 4 * 60 + 5);
+  CHECK(!epochSecondsOfUtc("0001-01-01T00:00:00Z").has_value());
+  CHECK(!epochSecondsOfUtc("bad").has_value());
+}
+
+TEST_CASE("localDayOfUtc: 夏時間のある時間帯は、閉じた日時ごとの規則で暦の日にする") {
+  const UtcOffsetFn ny = newYorkOffset;
+  // 冬（-300 分）: 1/15 04:30Z は現地では 1/14 23:30。「いま」（10 月の -240 分）で一律に換算すると 1/15 になってしまう
+  CHECK(fmtIso(localDayOfUtc("2026-01-15T04:30:00Z", ny)) == "2026-01-14");
+  CHECK(fmtIso(localDayOfUtc("2026-01-15T04:30:00Z", -240)) == "2026-01-15");
+  // 夏（-240 分）: 10/15 04:30Z は現地では 10/15 00:30
+  CHECK(fmtIso(localDayOfUtc("2026-10-15T04:30:00Z", ny)) == "2026-10-15");
+  // 夏時間の始まりの前後（3/8 02:00 EST = 07:00Z）
+  CHECK(fmtIso(localDayOfUtc("2026-03-08T04:59:59Z", ny)) == "2026-03-07");  // -300 → 3/7 23:59:59
+  CHECK(fmtIso(localDayOfUtc("2026-03-08T07:00:00Z", ny)) == "2026-03-08");  // -240 → 3/8 03:00
+  CHECK(fmtIso(localDayOfUtc("2026-03-09T03:59:59Z", ny)) == "2026-03-08");  // -240 → 3/8 23:59:59
+  CHECK(fmtIso(localDayOfUtc("2026-03-09T04:00:00Z", ny)) == "2026-03-09");
+  // 夏時間の終わりの前後（11/1 02:00 EDT = 06:00Z）
+  CHECK(fmtIso(localDayOfUtc("2026-11-01T03:59:59Z", ny)) == "2026-10-31");  // -240 → 10/31 23:59:59
+  CHECK(fmtIso(localDayOfUtc("2026-11-01T04:00:00Z", ny)) == "2026-11-01");
+  CHECK(fmtIso(localDayOfUtc("2026-11-01T05:59:59Z", ny)) == "2026-11-01");  // -240 → 01:59:59（1 回目の 1 時台）
+  CHECK(fmtIso(localDayOfUtc("2026-11-01T06:00:00Z", ny)) == "2026-11-01");  // -300 → 01:00:00（2 回目の 1 時台）
+  CHECK(fmtIso(localDayOfUtc("2026-11-02T04:59:59Z", ny)) == "2026-11-01");  // -300 → 11/1 23:59:59
+  CHECK(fmtIso(localDayOfUtc("2026-11-02T05:00:00Z", ny)) == "2026-11-02");
+  // 空の関数は UTC
+  CHECK(fmtIso(localDayOfUtc("2026-01-15T04:30:00Z", UtcOffsetFn{})) == "2026-01-15");
+  CHECK(!localDayOfUtc("bad", ny).has_value());
+}
+
+TEST_CASE("proposeCompletion: 完了日は閉じた日時ごとの時間帯の規則で決める（夏時間をまたぐ）") {
+  LinkMap links;
+  links["7"] = {mkLink(kPr1), mkLink(kPr2)};
+  RemoteStates st;
+  st[kPr1] = ri(RemoteState::Merged, "2026-01-15T04:30:00Z");
+  Issue o = openIssue();
+  LinkMap one;
+  one["7"] = {mkLink(kPr1)};
+  CHECK(proposeCompletion(o, one, st, UtcOffsetFn(newYorkOffset))->resolvedIso == "2026-01-14");
+  CHECK(proposeCompletion(o, one, st, -240)->resolvedIso == "2026-01-15");  // いまの値で一律に換算した場合の誤り
+  // 冬と夏の 2 件: それぞれの規則で換算して、遅いほう
+  st[kPr2] = ri(RemoteState::Merged, "2026-10-15T04:30:00Z");
+  CHECK(proposeCompletion(o, links, st, UtcOffsetFn(newYorkOffset))->resolvedIso == "2026-10-15");
 }

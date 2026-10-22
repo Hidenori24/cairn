@@ -226,8 +226,13 @@ class AppController {
   // 結果を tick() が拾う。false は tick() の中で順に実行する（テスト用）。差し替えると、確認中のものは中断し、確認結果は捨てる
   void setRemoteStatus(std::shared_ptr<IRemoteStatus> impl, bool async = true);
   bool remoteAvailable() const { return remote_ != nullptr; }
-  // 閉じた日時（UTC）を暦の日にするときの、UTC からの差（分。日本時間は 540）。既定は 0
-  void setUtcOffsetMinutes(int minutes) { utcOffsetMin_ = minutes; }
+  // 閉じた日時（UTC）を暦の日にするときの、その時刻に適用される UTC からの差（分。日本時間は 540。夏時間のある時間帯は時期で変わる）。
+  // 時間帯の規則は OS が持つので、プラットフォームが注入する（Win32 は SystemTimeToTzSpecificLocalTime）。既定は UTC（0）
+  void setUtcOffsetFn(UtcOffsetFn fn) { utcOffsetFn_ = std::move(fn); }
+  // 差が一定の時間帯（テスト用）
+  void setUtcOffsetMinutes(int minutes) {
+    utcOffsetFn_ = [minutes](std::int64_t) { return minutes; };
+  }
   struct RemoteView {
     enum class Phase { None, Checking, Done, Failed };
     Phase phase = Phase::None;  // None = GitHub のリンクでない・まだ確認していない
@@ -358,7 +363,7 @@ class AppController {
   RemoteStates remoteStates() const;
   std::shared_ptr<IRemoteStatus> remote_;
   bool remoteAsync_ = true;
-  int utcOffsetMin_ = 0;
+  UtcOffsetFn utcOffsetFn_;
   std::map<std::string, RemoteEntry> remoteDone_;
   std::deque<RemoteJob> remoteQueue_;
   std::set<std::string> remoteActive_;  // 順番待ち・実行中の鍵

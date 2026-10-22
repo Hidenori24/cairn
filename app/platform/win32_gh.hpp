@@ -5,6 +5,7 @@
 //  - URL・リポジトリ名・タイトルは、理由にもログにも出さない
 #pragma once
 
+#include <cstdint>
 #include <memory>
 
 #include "roadmap/github_ref.hpp"
@@ -12,7 +13,8 @@
 namespace roadmap::win {
 
 std::shared_ptr<IRemoteStatus> makeGhRemoteStatus();
-// いまの時間帯の UTC からの差（分。日本時間は 540）。取得できなければ 0
-int localUtcOffsetMinutes();
+// その時刻（1970-01-01T00:00:00Z からの秒数）に、OS の時間帯の設定で適用される UTC からの差（分。日本時間は 540）。
+// 夏時間のある時間帯は、その時刻の規則で返す（過去の閉じた日時を、いまの値で一律に換算しない）。変換できなければ 0
+int utcOffsetMinutesAt(std::int64_t epochSeconds);
 
 }  // namespace roadmap::win

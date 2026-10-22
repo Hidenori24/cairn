@@ -2,8 +2,10 @@
 #include <doctest/doctest.h>
 
 #include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -17,6 +19,39 @@ namespace {
 const char* const kPr = "https://github.com/acme/secret-app/pull/12";
 const char* const kPr2 = "https://github.com/acme/secret-app/pull/13";
 const char* const kIs = "https://github.com/acme/secret-app/issues/3";
+
+// fetch に入ってすぐは何も登録せず、go() されるまで眠る（gh の PATH 探索のように、中断を見る前に時間がかかる実装の再現）。
+// 眠りから覚めたあと、token が中断されていれば戻る。そうでなければ 3 秒待つ（中断を取りこぼすと、その分遅くなる）
+class LateStartStatus final : public IRemoteStatus {
+ public:
+  Result<RemoteInfo> fetch(const GitHubRef&, const CancelToken& token) override {
+    {
+      std::unique_lock<std::mutex> lk(mu_);
+      entered_ = true;
+      cv_.notify_all();
+      cv_.wait_for(lk, std::chrono::seconds(10), [this] { return go_; });
+    }
+    for (int i = 0; i < 600; ++i) {
+      if (token.cancelled()) return Error{"確認を中断しました"};
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return Error{"取りこぼした"};
+  }
+  bool waitEntered() {
+    std::unique_lock<std::mutex> lk(mu_);
+    return cv_.wait_for(lk, std::chrono::seconds(5), [this] { return entered_; });
+  }
+  void go() {
+    std::lock_guard<std::mutex> lk(mu_);
+    go_ = true;
+    cv_.notify_all();
+  }
+
+ private:
+  std::mutex mu_;
+  std::condition_variable cv_;
+  bool entered_ = false, go_ = false;
+};
 
 struct Env {
   MemFileStore fs;
@@ -433,4 +468,110 @@ TEST_CASE("remote(async): 確認中にコントローラを壊しても止まら
     REQUIRE(e.waitFor([&] { return fake->running() == 1; }));
   }  // ここで中断して join する
   CHECK(fake->running() == 0);
+}
+
+TEST_CASE("remote(async): fetch が中断を見る前に破棄しても、待たされない") {
+  auto st = std::make_shared<LateStartStatus>();
+  Env e(true);
+  e.c.setRemoteStatus(st, true);
+  REQUIRE(e.c.addLink("1", "", kPr));
+  e.c.checkRemote("1");
+  e.step();
+  REQUIRE(st->waitEntered());  // スレッドは fetch に入っているが、まだ何も登録していない
+  std::thread releaser([&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    st->go();
+  });
+  const auto t0 = std::chrono::steady_clock::now();
+  e.c.setRemoteStatus(nullptr);  // 破棄（中断は、fetch が眠っている間に起きる）
+  const auto took = std::chrono::steady_clock::now() - t0;
+  releaser.join();
+  CHECK(took < std::chrono::seconds(2));
+}
+
+TEST_CASE("remote(async): 確認中のリンクは未確認として扱い、古い「閉じている」で提案も了承もしない") {
+  Env e(true);
+  REQUIRE(e.c.addLink("1", "", kPr));
+  REQUIRE(e.c.addLink("1", "", kPr2));
+  e.closed(kPr, RemoteState::Merged, "2026-10-15T03:00:00Z");
+  e.closed(kPr2, RemoteState::Merged, "2026-10-16T03:00:00Z");
+  e.c.checkRemote("1");
+  REQUIRE(e.waitFor([&] { return !e.c.remoteBusy(); }));
+  const Toast* t = e.toastWith(NoticeAction::Complete);
+  REQUIRE(t);
+  const int oldId = t->id;
+  const std::string proj = e.c.currentId();
+  // 2 つ目をもう一度確認する（まだ返ってこない。返ってくるのは open）
+  const std::string k2 = GitHubRef(*parseGitHubUrl(kPr2)).canonicalUrl();
+  e.fake->holdUrl(k2, true);
+  e.open(kPr2);
+  REQUIRE(e.c.checkRemote("1", std::size_t{1}) == 1);
+  REQUIRE(e.waitFor([&] { return e.fake->running() == 1; }));
+  CHECK(e.c.remoteViewOf(kPr2).phase == AppController::RemoteView::Phase::Checking);
+  // 古い提案（通知のボタン）を了承しても、課題は変わらない
+  CHECK(e.toastWith(NoticeAction::Complete) == nullptr);  // 確認を始めたら、古い提案は取り下げる
+  e.c.runToastAction(oldId);
+  CHECK_FALSE(e.c.completeFromRemote(proj, "1", false));  // 通知の了承と同じ道
+  CHECK(e.issue("1").status == "In Progress");
+  CHECK_FALSE(e.issue("1").resolved.has_value());
+  e.fake->holdUrl(k2, false);
+  REQUIRE(e.waitFor([&] { return !e.c.remoteBusy(); }));
+  CHECK(e.c.remoteViewOf(kPr2).info.state == RemoteState::Open);
+  CHECK(e.toastWith(NoticeAction::Complete) == nullptr);  // open が返ったので提案しない
+  CHECK(e.issue("1").status == "In Progress");
+}
+
+TEST_CASE("remote(async): 別のリンクの確認中の古い結果で、提案も自動の完了も起こさない") {
+  for (const bool autoOn : {false, true}) {
+    Env e(true);
+    e.c.prefs().autoCompleteGitHub = autoOn;
+    REQUIRE(e.c.addLink("1", "", kPr));   // 0 番
+    REQUIRE(e.c.addLink("1", "", kPr2));  // 1 番
+    // 1 回目: 0 番は閉じている・1 番は open（完了にしない。0 番の「閉じている」だけが残る）
+    e.closed(kPr, RemoteState::Merged, "2026-10-15T03:00:00Z");
+    e.open(kPr2);
+    e.c.checkRemote("1");
+    REQUIRE(e.waitFor([&] { return !e.c.remoteBusy(); }));
+    CHECK(e.issue("1").status == "In Progress");
+    CHECK(e.toastWith(NoticeAction::Complete) == nullptr);
+    // 2 回目: 1 番を確認し（閉じて返る）、続けて 0 番を確認する（まだ返らない。返るのは open）。
+    // 1 番の結果が届いた時点で 0 番は確認中なので、古い「閉じている」を根拠にしない
+    const std::string k1 = GitHubRef(*parseGitHubUrl(kPr)).canonicalUrl();
+    e.fake->holdUrl(k1, true);
+    e.open(kPr);
+    e.closed(kPr2, RemoteState::Merged, "2026-10-16T03:00:00Z");
+    REQUIRE(e.c.checkRemote("1", std::size_t{1}) == 1);
+    REQUIRE(e.c.checkRemote("1", std::size_t{0}) == 1);
+    REQUIRE(e.waitFor([&] {
+      return e.c.remoteViewOf(kPr2).phase == AppController::RemoteView::Phase::Done && e.fake->running() == 1;
+    }));
+    for (int i = 0; i < 20; ++i) e.step();
+    CHECK(e.c.remoteViewOf(kPr).phase == AppController::RemoteView::Phase::Checking);
+    CHECK(e.issue("1").status == "In Progress");  // 自動の完了
+    CHECK_FALSE(e.issue("1").resolved.has_value());
+    CHECK(e.toastWith(NoticeAction::Complete) == nullptr);  // 提案
+    e.fake->holdUrl(k1, false);
+    REQUIRE(e.waitFor([&] { return !e.c.remoteBusy(); }));
+    CHECK(e.c.remoteViewOf(kPr).info.state == RemoteState::Open);
+    CHECK(e.issue("1").status == "In Progress");
+    CHECK(e.toastWith(NoticeAction::Complete) == nullptr);
+  }
+}
+
+TEST_CASE("remote: 完了日は閉じた日時ごとの時間帯の規則で換算する（夏時間）") {
+  Env e;
+  e.c.setUtcOffsetFn([](std::int64_t epoch) {
+    static const std::int64_t on = *epochSecondsOfUtc("2026-03-08T07:00:00Z");
+    static const std::int64_t off = *epochSecondsOfUtc("2026-11-01T06:00:00Z");
+    return epoch >= on && epoch < off ? -240 : -300;
+  });
+  REQUIRE(e.c.addLink("1", "", kPr));
+  e.closed(kPr, RemoteState::Merged, "2026-01-15T04:30:00Z");  // 現地では 1/14 23:30
+  e.c.checkRemote("1");
+  e.step();
+  const Toast* t = e.toastWith(NoticeAction::Complete);
+  REQUIRE(t);
+  e.c.runToastAction(t->id);
+  REQUIRE(e.issue("1").resolved.has_value());
+  CHECK(fmtIso(*e.issue("1").resolved) == "2026-01-14");
 }

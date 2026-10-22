@@ -37,7 +37,10 @@ class AppController::RemoteWorker {
  public:
   RemoteWorker(std::shared_ptr<IRemoteStatus> impl, bool async) : impl_(std::move(impl)), async_(async) {}
   ~RemoteWorker() {
-    if (running_ && impl_) impl_->cancel();  // 実行中のものはすぐ終わらせる（アプリの終了で待たされない）
+    // 実行中のものはすぐ終わらせる（アプリの終了で待たされない）。中断は token で伝える（fetch に入る前の中断も取りこぼさない）。
+    // cancel() は、token を見ずに眠っている窓口を起こす合図
+    if (token_) token_->cancel();
+    if (running_ && impl_) impl_->cancel();
     if (th_.joinable()) th_.join();
   }
   RemoteWorker(const RemoteWorker&) = delete;
@@ -47,16 +50,18 @@ class AppController::RemoteWorker {
     running_ = true;
     key_ = job.key;
     sh_ = std::make_shared<Shared>();
+    token_ = std::make_shared<CancelToken>();  // スレッドを起こす前に作って渡す
     if (!async_) {
-      sh_->result.emplace(run(impl_, job.ref));
+      sh_->result.emplace(run(impl_, job.ref, *token_));
       sh_->done = true;
       return;
     }
     auto sh = sh_;
     auto impl = impl_;
+    auto token = token_;
     const GitHubRef ref = job.ref;
-    th_ = std::thread([sh, impl, ref] {
-      auto r = run(impl, ref);
+    th_ = std::thread([sh, impl, token, ref] {
+      auto r = run(impl, ref, *token);
       std::lock_guard<std::mutex> lk(sh->mu);
       sh->result.emplace(std::move(r));
       sh->done = true;
@@ -83,9 +88,9 @@ class AppController::RemoteWorker {
     std::optional<Result<RemoteInfo>> result;
   };
   // スレッドの境界で例外を止める（窓口の実装が投げても、プロセスを落とさない）
-  static Result<RemoteInfo> run(const std::shared_ptr<IRemoteStatus>& impl, const GitHubRef& ref) {
+  static Result<RemoteInfo> run(const std::shared_ptr<IRemoteStatus>& impl, const GitHubRef& ref, const CancelToken& token) {
     try {
-      return impl->fetch(ref);
+      return impl->fetch(ref, token);
     } catch (...) {
       return Error{"確認中に予期しないエラーが起きました"};
     }
@@ -95,6 +100,7 @@ class AppController::RemoteWorker {
   bool running_ = false;
   std::string key_;
   std::shared_ptr<Shared> sh_;
+  std::shared_ptr<CancelToken> token_;
   std::thread th_;
 };
 
@@ -1479,8 +1485,12 @@ bool AppController::remoteBusy() const { return !remoteActive_.empty(); }
 
 RemoteStates AppController::remoteStates() const {
   RemoteStates st;
-  for (const auto& [key, e] : remoteDone_)
-    if (!e.failed) st[key] = e.info;  // 失敗したものは「未確認」と同じ扱い（完了の提案の根拠にしない）
+  for (const auto& [key, e] : remoteDone_) {
+    // 失敗したものと、確認中（順番待ちを含む）のものは「未確認」と同じ扱い。確認中は以前の結果が残っているが、
+    // 新しい結果が届くまでは古いので、完了の提案・了承・自動の完了の根拠にしない
+    if (e.failed || remoteActive_.count(key)) continue;
+    st[key] = e.info;
+  }
   return st;
 }
 
@@ -1511,6 +1521,12 @@ int AppController::checkRemote(const std::string& issueId, std::optional<std::si
     toast("確認できる GitHub の PR・Issue のリンクがありません");
     return 0;
   }
+  // この課題の古い提案は取り下げる（新しい結果が届いたら、改めて出る）
+  toasts_.erase(std::remove_if(toasts_.begin(), toasts_.end(),
+                               [&](const Toast& t) {
+                                 return t.action == NoticeAction::Complete && t.project == currentId_ && t.arg == issueId;
+                               }),
+                toasts_.end());
   for (RemoteJob& j : jobs)
     if (remoteActive_.insert(j.key).second) remoteQueue_.push_back(std::move(j));  // 確認中のものは、その結果を待つ
   remoteBatches_.push_back({currentId_, issueId, keys});
@@ -1581,7 +1597,7 @@ void AppController::finishRemoteBatches() {
             firstError + "）");
       continue;
     }
-    const auto proposal = proposeCompletion(*issue, session_->links(), remoteStates(), utcOffsetMin_);
+    const auto proposal = proposeCompletion(*issue, session_->links(), remoteStates(), utcOffsetFn_);
     if (!proposal) continue;  // まだ閉じていないものがある（状態はリンクの横に出ている）
     if (prefs_.autoCompleteGitHub) {
       completeFromRemote(b.project, b.issueId, true);
@@ -1611,7 +1627,7 @@ bool AppController::completeFromRemote(const std::string& project, const std::st
     toast("課題が見つからないため、完了にしませんでした");
     return false;
   }
-  const auto proposal = proposeCompletion(*issue, session_->links(), remoteStates(), utcOffsetMin_);
+  const auto proposal = proposeCompletion(*issue, session_->links(), remoteStates(), utcOffsetFn_);
   if (!proposal) {
     toast("リンクの状態が変わったため、完了にしませんでした");
     return false;

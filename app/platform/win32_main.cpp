@@ -377,7 +377,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
   gUi = &uiState;
   ctl.start();
   // GitHub の PR・Issue の状態は gh で取る（押したときだけ。別のスレッドで 1 件ずつ。Issue #61）
-  ctl.setUtcOffsetMinutes(win::localUtcOffsetMinutes());
+  ctl.setUtcOffsetFn(win::utcOffsetMinutesAt);
   ctl.setRemoteStatus(win::makeGhRemoteStatus());
 
   // ウィンドウ（前回の位置・サイズ）

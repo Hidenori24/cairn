@@ -3,7 +3,6 @@
 #include <windows.h>
 
 #include <algorithm>
-#include <atomic>
 #include <string>
 #include <vector>
 
@@ -59,16 +58,16 @@ std::wstring findGh() {
 
 class GhRemoteStatus final : public IRemoteStatus {
  public:
-  void cancel() override { cancelGen_.fetch_add(1); }
-
-  Result<RemoteInfo> fetch(const GitHubRef& ref) override {
+  // 中断は token で決める（polling。待ち時間は 30ms ごとに見る）。窓口の側に眠っているものはないので、合図は要らない
+  Result<RemoteInfo> fetch(const GitHubRef& ref, const CancelToken& token) override {
     const auto args = ghArguments(ref);
     if (!args) return Error{args.error()};
+    if (token.cancelled()) return Error{"確認を中断しました"};  // PATH の探索の前（探索の間に中断されていても取りこぼさない）
     const std::wstring exe = findGh();
+    if (token.cancelled()) return Error{"確認を中断しました"};
     if (exe.empty())
       return Error{"GitHub CLI（gh）が見つかりません。インストールして、gh auth login でログインしてください"};
     std::wstring cmd = widen(windowsCommandLine(narrow(exe), *args));  // シェルを通さない 1 本のコマンドライン
-    const unsigned gen = cancelGen_.load();
 
     // 標準出力のパイプ（読む側は子に継がせない）と、標準入力・標準エラー用の NUL
     SECURITY_ATTRIBUTES sa{};
@@ -151,7 +150,7 @@ class GhRemoteStatus final : public IRemoteStatus {
         if (!readAvailable()) overflow = true;
         break;
       }
-      if (cancelGen_.load() != gen) {
+      if (token.cancelled()) {
         cancelled = true;
         break;
       }
@@ -176,23 +175,32 @@ class GhRemoteStatus final : public IRemoteStatus {
       return Error{"gh が失敗しました（未ログイン・アクセス権がない・見つからないのいずれかです。gh auth status で確認してください）"};
     return ref.kind == GitHubKind::Pull ? parseGhPrJson(out) : parseGhIssueJson(out);
   }
-
- private:
-  std::atomic<unsigned> cancelGen_{0};
 };
 
 }  // namespace
 
 std::shared_ptr<IRemoteStatus> makeGhRemoteStatus() { return std::make_shared<GhRemoteStatus>(); }
 
-int localUtcOffsetMinutes() {
-  TIME_ZONE_INFORMATION tz{};
-  const DWORD r = GetTimeZoneInformation(&tz);
-  if (r == TIME_ZONE_ID_INVALID) return 0;
-  LONG bias = tz.Bias;
-  if (r == TIME_ZONE_ID_DAYLIGHT) bias += tz.DaylightBias;
-  else if (r == TIME_ZONE_ID_STANDARD) bias += tz.StandardBias;
-  return static_cast<int>(-bias);
+int utcOffsetMinutesAt(std::int64_t epochSeconds) {
+  // 1601-01-01 からの 100ns 単位（FILETIME）にして、OS の時間帯の規則でその時刻の現地時刻を求める（夏時間も、その日時の規則）。
+  // 範囲外・変換できないときは 0（UTC）
+  constexpr std::int64_t kEpochDiffSec = 11644473600LL;  // 1601-01-01 → 1970-01-01
+  if (epochSeconds < -kEpochDiffSec + 86400 || epochSeconds > 253402300799LL) return 0;
+  ULARGE_INTEGER u{};
+  u.QuadPart = static_cast<ULONGLONG>(epochSeconds + kEpochDiffSec) * 10000000ULL;
+  FILETIME ft{};
+  ft.dwLowDateTime = u.LowPart;
+  ft.dwHighDateTime = u.HighPart;
+  SYSTEMTIME utc{}, local{};
+  if (!FileTimeToSystemTime(&ft, &utc)) return 0;
+  if (!SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local)) return 0;  // nullptr = いまの時間帯の設定
+  FILETIME lft{};
+  if (!SystemTimeToFileTime(&local, &lft)) return 0;
+  ULARGE_INTEGER lu{};
+  lu.LowPart = lft.dwLowDateTime;
+  lu.HighPart = lft.dwHighDateTime;
+  const std::int64_t diff100ns = static_cast<std::int64_t>(lu.QuadPart) - static_cast<std::int64_t>(u.QuadPart);
+  return static_cast<int>(diff100ns / 600000000LL);  // 分
 }
 
 }  // namespace roadmap::win

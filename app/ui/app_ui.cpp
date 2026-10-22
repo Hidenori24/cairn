@@ -1007,7 +1007,10 @@ void drawToasts(Frame& f) {
     if (complete) w = std::min(u.m.s(720), vp->WorkSize.x - u.m.s(32));
     else if (wrap) w = cap;
     const float wrapW = w - pad;
-    const float textH = wrap ? ImGui::CalcTextSize(t.text.c_str(), nullptr, false, wrapW).y : ImGui::GetTextLineHeight();
+    // 描くときは PushTextWrapPos(wrapW)（窓の左端からの位置）で、文字は左の余白 padL から始まるので、折り返す幅は wrapW - padL。
+    // 高さを測るときも同じ幅で測る（広く測ると、描くほうが先に折り返して 1 行増え、窓の高さが足りず末尾が切れる）
+    const float padL = u.m.s(12);
+    const float textH = wrap ? ImGui::CalcTextSize(t.text.c_str(), nullptr, false, wrapW - padL).y : ImGui::GetTextLineHeight();
     const float h = complete ? std::max(u.m.s(64), textH + u.m.s(24)) : wrap ? std::max(u.m.s(40), textH + u.m.s(20)) : u.m.s(40);
     const float btnY = wrap ? h / 2 - ImGui::GetFrameHeight() / 2 : u.m.s(6);
     y -= h;
@@ -1021,7 +1024,7 @@ void drawToasts(Frame& f) {
                      ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
     ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->dark ? u.t->ink : u.t->surface));
     if (wrap) {
-      ImGui::SetCursorPos(ImVec2(u.m.s(12), (h - textH) / 2));
+      ImGui::SetCursorPos(ImVec2(padL, (h - textH) / 2));
       ImGui::PushTextWrapPos(wrapW);
       ImGui::TextUnformatted(t.text.c_str());
       ImGui::PopTextWrapPos();
