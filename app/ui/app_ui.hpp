@@ -216,6 +216,12 @@ struct UiState {
 
   // 読み取り専用（他の人が編集中など。Issue #62）。drawApp が毎フレームの先頭で設定する。ドラッグを始めない判断に使う
   bool ro = false;
+  // 詳細パネルの依存タブの課題の行（先行・後続・関連。前のフレームの範囲と課題 id。煙テストが、読み取り専用でもたどれることを確かめる）
+  struct IssuePill {
+    ImVec2 a, b;
+    std::string id;
+  };
+  std::vector<IssuePill> issuePills;
   // ダイアログの下端のボタンの範囲（最後に描いたもの。煙テストが押す位置を知る）
   std::vector<std::pair<std::string, std::pair<ImVec2, ImVec2>>> dlgButtons;
   // 読み取り専用の帯（Issue #62）: 前のフレームに帯を出したか、出した文言、ボタンの範囲（画面の座標。煙テストが押す位置を知る）

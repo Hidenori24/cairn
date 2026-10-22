@@ -331,7 +331,9 @@ Status Workspace::writeEntry(ProjectEntry& e) {
   if (auto s = fs_.makeDirs(e.layout == Layout::Folder ? projectDir(e) : dir_); !s) return s;
   if (auto s = backupOnce(e); !s) return s;
   const std::string sig = signature(e.rec);
+  if (writeGuard_ && !writeGuard_(e)) return Error{"ロックを確かめられないため、書き込みを見合わせました"};
   if (auto s = fs_.writeAtomic(csvPathOf(e), e.rec.csv); !s) return s;
+  if (writeGuard_ && !writeGuard_(e)) return Error{"ロックを確かめられないため、書き込みを見合わせました"};  // CSV を書いたあとにも確かめる
   if (auto s = fs_.writeAtomic(settingsPathOf(e), dumpJs(settingsToJson(e.rec))); !s) return s;
   std::int64_t m = 0;
   if (auto a = fs_.stat(csvPathOf(e))) m = std::max(m, a->mtime);
@@ -348,6 +350,7 @@ Status Workspace::writeSettingsOnly(ProjectEntry& e) {
   if (frozen_.count(e.id())) return Error{"読み取り専用で開いているため、書き込みません"};
   if (e.stem.empty()) return writeEntry(e);  // まだ書いていない（CSV もない）ものは全部書く
   const std::string sig = signature(e.rec);
+  if (writeGuard_ && !writeGuard_(e)) return Error{"ロックを確かめられないため、書き込みを見合わせました"};
   if (auto s = fs_.writeAtomic(settingsPathOf(e), dumpJs(settingsToJson(e.rec))); !s) return s;
   std::int64_t m = 0;
   if (auto a = fs_.stat(csvPathOf(e))) m = std::max(m, a->mtime);

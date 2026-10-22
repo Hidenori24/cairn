@@ -707,3 +707,174 @@ TEST_CASE("ロック: 自動の基準日・履歴・週の頭のスナップシ�
   CHECK(b.session()->history().points.size() == points + 1);
   CHECK(b.session()->weeklyAuto().snaps.size() == snaps + 1);
 }
+
+// ---------------------------------------------------------------- Copilot の指摘（#88）の回帰テスト
+namespace {
+// 読み込み（read）の n 回目のあとで、持ち主を替える（検査と書き込みの間に引き継がれる状況を作る）
+class TakeoverDuringStore final : public ILockStore {
+ public:
+  TakeoverDuringStore(MemLockStore& inner, FixedClock& clk) : inner_(inner), clk_(clk) {}
+  int armAfterReads = -1;  // この回数だけ読んだ直後に、Bob が引き継ぐ（-1 = しない）
+  LockCreateResult tryCreate(const std::string& p, const std::string& d) override { return inner_.tryCreate(p, d); }
+  Result<std::optional<std::string>> read(const std::string& p) override {
+    auto r = inner_.read(p);
+    if (armAfterReads >= 0 && ++reads_ == armAfterReads) {
+      CountingRandom rng(9000);
+      (void)takeOver(inner_, clk_, rng, p, {"Bob", "PC-B"});
+      armAfterReads = -1;
+    }
+    return r;
+  }
+  Status update(const std::string& p, const std::string& d) override { return inner_.update(p, d); }
+  Status remove(const std::string& p) override { return inner_.remove(p); }
+  void resetReads() { reads_ = 0; }
+
+ private:
+  MemLockStore& inner_;
+  FixedClock& clk_;
+  int reads_ = 0;
+};
+}  // namespace
+
+TEST_CASE("ロック（指摘）: 引き継がれた直後の添付・削除は、本体を書く前・動かす前に止める") {
+  Env e;
+  e.aliceCreates();
+  e.startB();
+  AppController& a = e.a->c;
+  const std::string id0 = a.session()->issues()[0].id;
+  REQUIRE(e.b->c.takeOverLock());  // Alice はまだ気づいていない（保存もしていない）
+  CHECK_FALSE(a.attachData(id0, "a.txt", "12345"));
+  for (const auto& p : e.fs.paths()) CHECK(p.find("/添付/") == std::string::npos);  // 本体が書かれていない
+  CHECK(a.readOnly());
+  CHECK(a.attachmentCount(id0) == 0);
+  // 外す
+  Env f;
+  f.aliceCreates();
+  f.startB();
+  const std::string g0 = f.a->c.session()->issues()[0].id;
+  REQUIRE(f.a->c.attachData(g0, "b.txt", "abc"));
+  REQUIRE(f.b->c.takeOverLock());
+  CHECK_FALSE(f.a->c.removeAttachment(g0, 0));
+  CHECK(f.fs.exists("data/P/添付/" + g0 + "/b.txt"));  // 動かされていない
+  // 削除
+  Env h;
+  h.aliceCreates();
+  h.startB();
+  REQUIRE(h.b->c.takeOverLock());
+  CHECK_FALSE(h.a->c.deleteCurrentProject());  // 引き継いだ人のフォルダを _削除済み へ動かさない
+  CHECK(h.fs.exists(kCsv));
+  CHECK(h.fs.exists(kLock));
+  CHECK(lockFromText(h.fs.content(kLock))->user == "Bob");
+}
+
+TEST_CASE("ロック（指摘）: 引き継がれた直後にプロジェクトを切り替えても、前のプロジェクトを上書きしない") {
+  for (const bool unreadable : {false, true}) {
+    Env e;
+    e.aliceCreates();
+    e.startB();
+    AppController& a = e.a->c;
+    REQUIRE(e.b->c.takeOverLock());
+    e.step(1'000);
+    const std::string csv0 = e.fs.content(kCsv), set0 = e.fs.content(kSet);
+    a.session()->addIssue("", "", "切り替え直前の編集");
+    a.afterEdit();
+    if (unreadable) e.a->store.setFailRead(true);  // 確かめられない場合も、前のプロジェクトへは書かない
+    a.createProject(SampleKind::Empty, "Q", "");   // 検出の前に切り替える
+    e.a->store.setFailRead(false);
+    e.step(500);
+    e.step(500);
+    CHECK(e.fs.content(kCsv) == csv0);  // 引き継いだ人の版のまま
+    CHECK(e.fs.content(kSet) == set0);
+    CHECK(lockFromText(e.fs.content(kLock))->user == "Bob");
+    // 未保存の編集は別プロジェクトとして残る
+    const auto items = a.projects();
+    CHECK(std::any_of(items.begin(), items.end(), [](const AppController::ProjectItem& p) { return p.name == "P（未保存の編集）"; }));
+    CHECK(contains(e.fs.content("data/P（未保存の編集）/project.csv"), "切り替え直前の編集"));
+    CHECK(e.fs.exists("data/Q/project.csv"));
+  }
+}
+
+TEST_CASE("ロック（指摘）: 検査のあと書き込みの前に引き継がれたら、あとのファイルは書かない") {
+  Env e;
+  e.fs.put("Alice_prefs.json", "{\"me\":\"Alice\"}");
+  MemLockStore inner(e.fs);
+  TakeoverDuringStore store(inner, e.clk);
+  CountingRandom rng(1000);
+  AppController a(e.fs, e.clk, "data", "Alice_prefs.json");
+  a.setLockStore(&store, &rng, "PC-A");
+  a.start();
+  a.createProject(SampleKind::Hierarchy, "P", "");
+  e.clk.advanceMs(500);
+  a.tick();
+  REQUIRE(a.lockStatus().kind == AppController::LockKind::Mine);
+  const std::string set0 = e.fs.content(kSet);
+  a.session()->addIssue("", "", "途中の編集");
+  a.afterEdit();
+  // 保存の前の検査（1 回目）を通ったあと、CSV の書き込みの直前の検査（2 回目）の直後に引き継がれる
+  store.resetReads();
+  store.armAfterReads = 2;
+  e.clk.advanceMs(500);
+  a.tick();
+  CHECK(a.readOnly());
+  CHECK(e.fs.content(kSet) == set0);  // 設定は書いていない（CSV の書き込みと設定の書き込みの間にも検査する）
+  CHECK(lockFromText(e.fs.content(kLock))->user == "Bob");
+  const auto items = a.projects();
+  CHECK(std::any_of(items.begin(), items.end(), [](const AppController::ProjectItem& p) { return p.name == "P（未保存の編集）"; }));
+}
+
+TEST_CASE("ロック（指摘）: 書いたあとに引き継ぎが分かったら、失った扱いにして知らせる") {
+  Env e;
+  e.fs.put("Alice_prefs.json", "{\"me\":\"Alice\"}");
+  MemLockStore inner(e.fs);
+  TakeoverDuringStore store(inner, e.clk);
+  CountingRandom rng(1000);
+  AppController a(e.fs, e.clk, "data", "Alice_prefs.json");
+  a.setLockStore(&store, &rng, "PC-A");
+  a.start();
+  a.createProject(SampleKind::Hierarchy, "P", "");
+  e.clk.advanceMs(500);
+  a.tick();
+  a.session()->addIssue("", "", "書いている最中の編集");
+  a.afterEdit();
+  // 1・2・3 回目（保存の前・CSV の前・設定の前）の検査を通り、書き終えたあとの検査（4 回目）の前に引き継がれる
+  store.resetReads();
+  store.armAfterReads = 3;
+  e.clk.advanceMs(500);
+  a.tick();
+  CHECK(a.readOnly());
+  CHECK(a.lockStatus().kind == AppController::LockKind::Lost);
+  CHECK(hasToast(a, "保存の途中"));
+}
+
+TEST_CASE("ロック（指摘）: JSON の取り込み: ロックを確かめられないときと、他の人が編集中のときは上書きしない") {
+  for (const int mode : {0, 1, 2}) {  // 0 = 読めない  1 = 他の人が編集中  2 = ロックなし（上書きできる）
+    Env e;
+    e.startA();
+    e.a->c.createProject(SampleKind::Empty, "P1", "");
+    e.step(500);
+    e.a->c.createProject(SampleKind::Empty, "P2", "");  // P1 は現在のプロジェクトではなくなる
+    e.step(500);
+    std::string json = e.a->c.exportText("backup");
+    for (std::size_t k = json.find("P1"); k != std::string::npos; k = json.find("P1", k + 3)) json.replace(k, 2, "PX1");
+    const std::string set1 = e.fs.content("data/P1/project.settings.json");
+    if (mode != 2) e.fs.put("data/P1/.roadmap.lock", lockToText(foreign(e.clk, mode == 1 ? 1'000 : 4 * 60 * 1000)));  // 0 は古いロックだが、読めない
+    REQUIRE(e.a->c.importText(json, "", ImportMode::New).ok);
+    if (mode == 0) e.a->store.setFailRead(true);
+    e.a->c.confirmJsonImport(true);
+    e.a->store.setFailRead(false);
+    e.step(500);
+    const auto items = e.a->c.projects();
+    const auto has = [&](const std::string& n) {
+      return std::any_of(items.begin(), items.end(), [&](const AppController::ProjectItem& p) { return p.name == n; });
+    };
+    if (mode == 2) {
+      CHECK(e.fs.content("data/P1/project.settings.json") != set1);  // 上書きされた
+      CHECK(has("PX1"));
+      CHECK(e.lockFiles().size() == 1);  // 書いている間だけ取って外す。残るのは、取り込んだあとに開いたプロジェクトのロックだけ
+    } else {
+      CHECK(e.fs.content("data/P1/project.settings.json") == set1);  // 上書きされていない
+      CHECK(has("P1"));
+      CHECK(has("PX1（読み込み）"));
+    }
+  }
+}

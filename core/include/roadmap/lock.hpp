@@ -18,7 +18,7 @@ namespace roadmap {
 inline constexpr const char* kLockFile = ".roadmap.lock";
 // 最後の更新からこの時間（ミリ秒）以上たったロックは、持ち主がいないもの（アプリが落ちた・ネットワークが切れた）として引き継げる
 inline constexpr std::int64_t kLockStaleMs = 3 * 60 * 1000;
-// 編集できる状態で開いている間、最後の更新時刻を書き換める間隔（ミリ秒）
+// 編集できる状態で開いている間、最後の更新時刻を書き換える間隔（ミリ秒）
 inline constexpr std::int64_t kLockHeartbeatMs = 30 * 1000;
 // ファイルの大きさ（バイト）。更新は同じ場所への上書きなので、いつも同じ大きさに空白で埋め、読む側が途中の内容を見にくくする
 inline constexpr std::size_t kLockFileBytes = 1024;

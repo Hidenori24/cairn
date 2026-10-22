@@ -375,10 +375,14 @@ class AppController {
   void tryAcquire(const std::string& path);
   void setHolder(const LockInfo& info);
   void applyReadOnly();                                // Session と Workspace に読み取り専用を伝える
-  void loseLock(const OwnershipResult& o);             // 保存の前の検査・ハートビートで失ったとき
+  void loseLock(const OwnershipResult& o, bool afterWrite = false);  // 保存の前の検査・ハートビートで失ったとき
   void tickLock();
-  bool lockedElsewhere(const std::string& id);         // 他の人の新しいロックがあるプロジェクトか（JSON の上書きの取り込みで見る）
   Status lockGate();                                   // 書く前の検査。失ったら読み取り専用に切り替える。確かめられなければエラー
+  bool verifyLockBeforeWrite();                        // 添付の本体・フォルダの移動など、dirty に依存しない書き込みの前に所有権を確かめる
+  bool writeAllowed(const ProjectEntry& e);            // Workspace が各ファイルを書く直前に呼ぶ検査
+  bool handleGuardLoss();                              // 書き込みの直前の検査で失ったと分かったとき、読み取り専用に切り替える
+  std::string preserveUnsaved(const std::string& id);  // 未保存の編集を「（未保存の編集）」として残し、元のプロジェクトの未保存を捨てる
+  void installWriteGuard();
   Status flushGuarded();                               // ロックの検査と、フォルダ側の変更の検査を通してから書く
   void runSync(bool manual, bool announce);
   void toastLong(const std::string& text);
@@ -431,6 +435,7 @@ class AppController {
   std::unique_ptr<IRandom> ownRng_;
   std::string machine_;
   LockState lock_;
+  std::optional<OwnershipResult> guardLost_;  // 書き込みの直前の検査で、自分のロックでないと分かった結果
 
   // ---- GitHub の状態の確認（メモリ上のみ）----
   struct RemoteEntry {

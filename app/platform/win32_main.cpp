@@ -479,6 +479,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
   std::string lastTheme = ctl.prefs().theme, lastDensity = ctl.prefs().density;
   int lastScale = ctl.prefs().uiScale;
   std::string lastProject;
+  std::string lastBand;  // 読み取り専用の帯の文言（ロックの持ち主が変わったら、字を確かめ直す）
   std::uint64_t lastVersion = 0;
 
   bool done = false;
@@ -535,6 +536,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
       lastProject = "\x01";  // 作り直したフォントで、データの文字をもう一度確かめる
     }
     // データにフォントにない文字があれば、次のフレームでフォントを作り直す
+    if (const std::string band = ctl.readOnlyBand(); band != lastBand) {
+      lastBand = band;
+      lastProject = "\x01";  // 持ち主の名前に、フォントにない字があるかもしれない
+    }
     if (ctl.currentId() != lastProject || (ctl.session() && ctl.session()->version() != lastVersion)) {
       lastProject = ctl.currentId();
       lastVersion = ctl.session() ? ctl.session()->version() : 0;

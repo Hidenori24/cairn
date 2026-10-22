@@ -209,7 +209,7 @@ void readOnlyScenario(bool stale) {
     ws.add(newRecord("共有", "", ss.str(), "2026-10-19", hh.clk), true);
     check(ws.flush().ok(), "共有フォルダにプロジェクトを置く");
     LockInfo i;
-    i.user = "Carol";
+    i.user = "Carol龍";  // 課題のデータに出てこない字（フォントに足す必要がある）
     i.machine = "PC-C";
     i.openedAt = hh.clk.epochMs() - 30 * 60 * 1000;
     i.heartbeatAt = hh.clk.epochMs() - (stale ? 4 * 60 * 1000 : 10 * 1000);
@@ -226,12 +226,18 @@ void readOnlyScenario(bool stale) {
   check(r.u.ro, "UI にも読み取り専用が伝わる");
   check(r.u.roBandShown, "帯を出す");
   if (stale) {
-    check(contains(r.u.roBandText, "Carolさん（PC-C）") && contains(r.u.roBandText, "持ち主がいないようです"), "古いロックの帯の文言");
+    check(contains(r.u.roBandText, "Carol龍さん（PC-C）") && contains(r.u.roBandText, "持ち主がいないようです"), "古いロックの帯の文言");
   } else {
-    check(contains(r.u.roBandText, "Carolさん（PC-C）が") && contains(r.u.roBandText, "から編集中です。読み取り専用で開いています"),
+    check(contains(r.u.roBandText, "Carol龍さん（PC-C）が") && contains(r.u.roBandText, "から編集中です。読み取り専用で開いています"),
           "帯の文言（持ち主・時刻）");
   }
   check(hasRect(r.u.roRecheckBtn) && hasRect(r.u.roTakeoverBtn), "帯に「再確認」「編集を引き継ぐ」のボタン");
+  {
+    // ロックの持ち主の名前の字が、フォントに足す字に入る（欠字にならない）
+    std::set<ImWchar> g;
+    ui::collectGlyphs(r.c, g);
+    check(g.count(static_cast<ImWchar>(0x9F8D)) == 1, "ロックの持ち主の名前の字を集める");
+  }
   // ライト・ダークのどちらでも描ける
   for (const bool dark : {true, false}) {
     r.u.t = dark ? &ui::darkTokens() : &ui::lightTokens();
@@ -258,6 +264,22 @@ void readOnlyScenario(bool stale) {
     }
     r.u.detailOpen = false;
     r.frame(1);
+  }
+  // 詳細パネルの依存タブ: 先行・後続の課題をたどる選択は、読み取り専用でも使える
+  {
+    r.c.setView(app::View::List);
+    r.c.select("9");
+    r.u.detailOpen = true;
+    r.u.detailTab = 1;
+    r.frame(3);
+    check(!r.u.issuePills.empty(), "依存タブに先行・後続の課題が並ぶ");
+    if (!r.u.issuePills.empty()) {
+      const auto pill = r.u.issuePills.front();
+      r.click((pill.a.x + pill.b.x) / 2 - 20, (pill.a.y + pill.b.y) / 2);
+      check(r.c.cursor() == pill.id, "読み取り専用でも、依存の相手をたどれる");
+    }
+    r.u.detailOpen = false;
+    r.frame(2);
   }
   r.c.setView(app::View::List);
   r.c.select("9");
@@ -317,7 +339,7 @@ void readOnlyScenario(bool stale) {
     r.frame(2);
     check(!r.u.dropTargets.empty(), "ドロップ先がある");
     if (!r.u.dropTargets.empty()) {
-      const auto& t = r.u.dropTargets.front();
+      const auto t = r.u.dropTargets.front();  // 値で持つ（フレームを進めると dropTargets の要素は破棄される）
       r.u.pendingDrop.active = true;
       r.u.pendingDrop.paths = {"/no/such/file.txt"};
       r.u.pendingDrop.pos = ImVec2((t.a.x + t.b.x) / 2, (t.a.y + t.b.y) / 2);

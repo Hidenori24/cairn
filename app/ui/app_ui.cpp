@@ -1505,6 +1505,8 @@ void collectGlyphs(const AppController& c, std::set<ImWchar>& out) {
     }
   };
   for (const auto& p : c.projects()) add(p.name);
+  add(c.readOnlyBand());  // ロックの持ち主の名前・マシン名（課題のデータに出てこない字のことがある。Issue #62）
+  add(c.prefs().me);
   if (!s) return;
   for (const auto& o : s->viewIssues()) {
     add(o.summary);
