@@ -41,6 +41,7 @@ add_library(roadmap_core STATIC
   src/report_list.cpp
   src/baseline.cpp
   src/links.cpp
+  src/github_ref.cpp
   src/weekly_state.cpp
   src/weekly.cpp
   src/weekly_md.cpp

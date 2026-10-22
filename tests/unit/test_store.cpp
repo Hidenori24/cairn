@@ -355,6 +355,8 @@ TEST_CASE("store: データフォルダの決定・prefs") {
   p.dimPercent = 45;
   p.confirmDelete = true;
   p.autoBaseToday = true;
+  CHECK_FALSE(p.autoCompleteGitHub);  // 既定はオフ（Issue #61）
+  p.autoCompleteGitHub = true;
   CHECK(p.newNameFormat == "keep");  // 既定は今のまま
   p.newNameFormat = "custom";
   p.newNameCustom = "{親}の子 {n}";
@@ -371,6 +373,7 @@ TEST_CASE("store: データフォルダの決定・prefs") {
   CHECK(q.dimPercent == 45);
   CHECK(q.confirmDelete);
   CHECK(q.autoBaseToday);
+  CHECK(q.autoCompleteGitHub);
   CHECK(q.inherit.on);
   CHECK_FALSE(q.inherit.assignee);
   CHECK(q.inherit.prio);

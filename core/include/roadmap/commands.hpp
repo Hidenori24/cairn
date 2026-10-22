@@ -20,8 +20,8 @@
 
 namespace roadmap {
 
-// OpenFolder は、アプリ側（書き出し）の通知で使う。Session は出さない
-enum class NoticeAction { None, Undo, OpenFolder };
+// OpenFolder・Complete は、アプリ側（書き出し・GitHub の状態の確認）の通知で使う。Session は出さない
+enum class NoticeAction { None, Undo, OpenFolder, Complete };
 struct Notice {
   std::string text;
   NoticeAction action = NoticeAction::None;
@@ -112,6 +112,9 @@ class Session {
   bool relocate(std::string id, std::string target, RelocateWhere where);
   bool setField(std::string id, const std::function<void(Issue&)>& fn);
   bool setStatus(std::string id, std::string st);
+  // 状況を完了（Done）にして、Resolved に resolved を入れる（すでに入っていても上書き）。Undo 1回。
+  // GitHub のリンクがすべて閉じたときの完了（Issue #61）に使う
+  bool completeIssue(std::string id, Day resolved);
   bool setTag(std::string id, std::string tag);
   bool setName(std::string id, std::string name);
   bool setDuration(std::string id, double w);

@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "roadmap/attachments.hpp"
+#include "roadmap/github_ref.hpp"
 #include "roadmap/model.hpp"
 #include "roadmap/text.hpp"
 
@@ -298,6 +299,8 @@ const char* linkKindLabel(LinkKind k) {
     case LinkKind::Web: return "Web";
     case LinkKind::File: return "ファイル";
     case LinkKind::Folder: return "フォルダ";
+    case LinkKind::GitHubPull: return "GitHub PR";
+    case LinkKind::GitHubIssue: return "GitHub Issue";
     default: return "不明";
   }
 }
@@ -319,7 +322,15 @@ LinkClass classifyLink(std::string_view raw) {
   const std::string scheme = schemeOf(t);
   if (!scheme.empty()) {
     const std::string normalized = scheme + t.substr(scheme.size());
-    if (scheme == "http" || scheme == "https") return classifyWeb(normalized, scheme);
+    if (scheme == "http" || scheme == "https") {
+      LinkClass web = classifyWeb(normalized, scheme);
+      // https://github.com/<owner>/<repo>/pull|issues/<n> は専用の種類にする（Web として開けることは同じ。Issue #61）
+      if (web.kind == LinkKind::Web) {
+        if (const auto gh = parseGitHubUrl(web.target); gh.ok())
+          web.kind = gh->kind == GitHubKind::Pull ? LinkKind::GitHubPull : LinkKind::GitHubIssue;
+      }
+      return web;
+    }
     if (scheme == "file") return classifyFileUrl(normalized);
     std::string shown = scheme.size() > 16 ? scheme.substr(0, 16) + "…" : scheme;
     return rejected("「" + shown + ":」で始まる場所は開けません（開けるのは http・https・file とファイル・フォルダの場所だけです）");
@@ -354,7 +365,9 @@ std::string defaultTitle(std::string_view target) {
   const LinkClass c = classifyLink(target);
   std::string name;
   switch (c.kind) {
-    case LinkKind::Web: {
+    case LinkKind::Web:
+    case LinkKind::GitHubPull:
+    case LinkKind::GitHubIssue: {
       const WebParts w = webPartsOf(c.target);
       name = w.host;
       const std::size_t n = w.segs.size();
