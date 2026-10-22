@@ -2,7 +2,7 @@
 //   ① 今の版でそのフォルダを開ける（警告なし・開いただけでは何も書かない）
 //   ② 設定だけを保存し直しても CSV のバイト列は変わらない（元に戻せば設定の JSON も同じバイト列）
 //   ③ 未知のキーが消えない（置き場所ごと。今は消える場所があり、それは should_fail で残してある）
-//   ④ 見本の CSV を取り込んで書き出すと、編集していなければ同じバイト列
+//   ④ 見本の CSV（アプリの形式に正規化済み）を取り込んで書き出すと同じバイト列（任意の CSV のバイト保持ではない。LF などは正規化される）
 //   ほか: 「JIRA用」の書き出し・共有／バックアップ JSON・roadmap_prefs.json・平置きからの移行
 // 見本は架空のデータ。パスは ASCII だけ（Windows でも同じに読むため）。
 #include <doctest/doctest.h>
@@ -432,7 +432,8 @@ TEST_CASE("compat: 各版の roadmap_prefs.json を読め、保存し直して�
     REQUIRE(savePrefs(fs, "prefs.json", p));
     const Json out = Json::parse(fs.content("prefs.json"));
     CHECK(out["futureKey"] == kMarker);
-    // その版が書いたキーは、すべて同じ値で残る（新しい版が足したキーは増えてよい）
+    // その版が書いたキーは、すべて同じ値で残る。新しい版が足すキー（newNameFormat・autoCompleteGitHub など）は増えるので、
+    // prefs はバイト列では比べない（バイト比較は設定 JSON と共有 JSON だけ）
     for (auto it = j.begin(); it != j.end(); ++it) {
       INFO("キー " << it.key());
       REQUIRE(out.contains(it.key()));
@@ -448,12 +449,15 @@ TEST_CASE("compat: 未知のキー: roadmap_prefs.json の入れ子の中" * doc
     Json j = Json::parse(originalTop(s, "roadmap_prefs.json"));
     j["window"]["futureKey"] = kMarker;
     j["templates"][0]["futureKey"] = kMarker;
+    const bool hasInherit = j.contains("inherit") && j["inherit"].is_object();  // 0.4.0 から
+    if (hasInherit) j["inherit"]["futureKey"] = kMarker;
     MemFileStore fs;
     fs.put("prefs.json", j.dump(1));
     REQUIRE(savePrefs(fs, "prefs.json", loadPrefs(fs, "prefs.json")));
     const Json out = Json::parse(fs.content("prefs.json"));
     CHECK(out["window"].contains("futureKey"));
     CHECK(out["templates"][0].contains("futureKey"));
+    if (hasInherit) CHECK(out["inherit"].contains("futureKey"));
   }
 }
 
