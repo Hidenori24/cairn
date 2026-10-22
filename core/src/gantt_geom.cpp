@@ -11,7 +11,7 @@
 namespace roadmap {
 
 // ---------------------------------------------------------------- 時間軸
-GanttDayRange ganttDayRange(const Tree& T, const std::vector<ScheduleRow>& R, Day base) {
+GanttDayRange ganttDayRange(const Tree& T, const std::vector<ScheduleRow>& R, Day base, const BaselineCompare* plan) {
   GanttDayRange g;
   g.lo = base;
   g.hi = base + 120;
@@ -20,6 +20,15 @@ GanttDayRange ganttDayRange(const Tree& T, const std::vector<ScheduleRow>& R, Da
     g.lo = std::min(g.lo, r.asapStart);
     g.hi = std::max({g.hi, r.asapFinish + 21, r.alapFinish + 21});
     if (T.dl[static_cast<std::size_t>(id)]) g.hi = std::max(g.hi, *T.dl[static_cast<std::size_t>(id)] + 21);
+  }
+  if (plan && T.n > 0 && plan->entries.size() == static_cast<std::size_t>(T.n)) {
+    for (const BaselineEntry& e : plan->entries) {
+      if (e.planStart) g.lo = std::min(g.lo, *e.planStart);
+      if (e.planFinish) {
+        g.lo = std::min(g.lo, *e.planFinish);
+        g.hi = std::max(g.hi, *e.planFinish + 21);
+      }
+    }
   }
   return g;
 }
@@ -109,6 +118,36 @@ GanttRowShape ganttRowShape(const GanttAxis& ax, const Tree& T, const ScheduleRo
     s.dlX = ax.x(*T.ownDl[k]) + ax.px / 2;
   }
   return s;
+}
+
+// ---------------------------------------------------------------- ベースライン（計画のバー）
+GanttPlanShape ganttPlanShape(const GanttAxis& ax, const GanttRowShape& cur, const BaselineEntry& e, bool isMs, float scale,
+                              float rowH) {
+  GanttPlanShape p;
+  // 現在のバーの下端は「行の高さ - 6」。その 1 下から高さ 3 の帯（rowH = 0 のときは画面の既定の 26 を使う）
+  const float h = rowH > 0.f ? rowH : 26.f * scale;
+  p.y0 = h - 5.f * scale;
+  p.y1 = h - 2.f * scale;
+  float right = cur.kind == GanttRowShape::Kind::Milestone ? cur.msX + 7.f * scale : cur.x1;
+  if (cur.hasSlack) right = std::max(right, cur.slackX1);
+  if (cur.hasOver) right = std::max(right, cur.overX1);
+  if (e.planFinish) {
+    if (isMs) {
+      p.kind = GanttPlanShape::Kind::Milestone;
+      p.msX = ax.x(*e.planFinish) + ax.px / 2;
+      right = std::max(right, p.msX + 3.f * scale);
+    } else {
+      const Day s0 = e.planStart ? std::min(*e.planStart, *e.planFinish) : *e.planFinish;
+      const GanttSpan b = ganttTaskBar(ax, s0, *e.planFinish);
+      p.kind = GanttPlanShape::Kind::Bar;
+      p.x0 = b.xl;
+      p.x1 = b.xr;
+      p.w = b.w;
+      right = std::max(right, p.x1);
+    }
+  }
+  p.labelX = right + 6.f * scale;
+  return p;
 }
 
 // ---------------------------------------------------------------- 依存の矢印

@@ -66,7 +66,10 @@ class Session {
   const Computed* computed() const { return comp_.get(); }
   // tree()・rows() と同じ時点の課題（添字が T と一致する）。画面はこちらを使う
   const std::vector<Issue>& viewIssues() const { return comp_ ? comp_->issues : P_.issues; }
-  void releaseFrame() { retired_.clear(); }
+  void releaseFrame() {
+    retired_.clear();
+    cmpRetired_.clear();
+  }
   const Calendar& calendar() const { return cal_; }
   const std::string& error() const { return error_; }
   const std::vector<std::string>& loadWarns() const { return loadWarns_; }
@@ -162,6 +165,18 @@ class Session {
   const WeeklyMemo& weekly() const { return P_.settings.weekly; }
   void setWeeklyNotes(const std::string& notes);  // 変わったときだけ保存を予約する。長すぎる・壊れた文字は直す
   void putWeeklySnapshot(WeeklySnapshot s);
+  // ベースライン（計画の日程の保存。取り消しの対象外で、保存はする。Issue #53）
+  const BaselineSet& baselines() const { return P_.settings.baselines; }
+  const Baseline* shownBaseline() const { return baselineShown(P_.settings.baselines); }
+  // いまの日程を名前つきで保存し、そのまま表示するものにする。kBaselineMax を超えるときは理由つきで断る。振った id を返す
+  Result<std::string> addBaseline(const std::string& name);
+  Status renameBaseline(const std::string& id, const std::string& name);
+  bool removeBaseline(const std::string& id);
+  bool showBaseline(const std::string& id);  // 空 = 表示しない。見つからなければ false
+  // 表示するベースラインといまの日程の比較（なければ nullptr）。tree()・rows() と同じ時点で、フレームの終わりまで古いものを残す
+  const BaselineCompare* baselineCompare() const;
+  // 列「計画との差」の絞り込みに使う値を入れた絞り込み（表示するベースラインがなければ planValues は空）
+  ColumnFilter withPlanValues(const ColumnFilter& cf) const;
   // 置き換えの取り込み（Undo で戻せる）
   void replaceIssues(std::vector<Issue> issues, ProjectMeta meta, std::vector<std::string> warns);
 
@@ -200,6 +215,13 @@ class Session {
   Calendar cal_;
   std::shared_ptr<Computed> comp_;
   std::vector<std::shared_ptr<Computed>> retired_;
+  // ベースラインの比較の控え（計算結果・選んだベースライン・ベースラインの版が同じ間は使い回す）
+  mutable std::shared_ptr<BaselineCompare> cmp_;
+  mutable std::shared_ptr<Computed> cmpFor_;  // cmp_ を作った計算結果（アドレスの使い回しで取り違えないよう掴んでおく）
+  mutable std::string cmpId_;
+  mutable std::uint64_t cmpRev_ = 0;
+  mutable std::vector<std::shared_ptr<BaselineCompare>> cmpRetired_;
+  std::uint64_t baselineRev_ = 0;
   std::string error_;
   std::vector<std::string> loadWarns_;
   std::deque<Snapshot> undo_;

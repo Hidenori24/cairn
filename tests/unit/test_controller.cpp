@@ -657,3 +657,75 @@ TEST_CASE("controller: 週次レポートの組み立て・保存・所感とス
   e.c.setWeeklyNotes(std::string("a\0b", 3) + "\xFF");
   CHECK(e.c.weeklyNotes() == "ab\xEF\xBF\xBD");  // 制御文字を捨て、壊れた UTF-8 を直す
 }
+
+// ---------------------------------------------------------------- ベースライン（Issue #53）
+TEST_CASE("controller: ベースラインの保存・名前の変更・削除・5 つの上限と、設定への保存（共有・バックアップには入れない）") {
+  Env e;
+  e.c.start();
+  // プロジェクトを開く前は何もしない（落ちない）
+  CHECK_FALSE(e.c.saveBaseline("x").ok());
+  CHECK_FALSE(e.c.deleteBaseline("b1"));
+  e.c.showBaseline("b1");
+  e.c.createProject(SampleKind::Hierarchy, "階層デモ", "DEV");
+  REQUIRE(e.c.session());
+  CHECK(e.c.defaultBaselineName() == "2026-10-19 の計画");
+  const auto r = e.c.saveBaseline(e.c.defaultBaselineName());
+  REQUIRE(r.ok());
+  CHECK(e.c.toasts().back().text.find("保存しました") != std::string::npos);
+  REQUIRE(e.c.session()->shownBaseline());
+  CHECK(e.c.session()->shownBaseline()->name == "2026-10-19 の計画");
+  CHECK(e.c.session()->shownBaseline()->at == "2026-10-19T18:36");
+  // 描画用の比較は、日程を変えなければぜんぶ計画どおり
+  const BaselineCompare* cmp = e.c.session()->baselineCompare();
+  REQUIRE(cmp);
+  CHECK(cmp->sum.late == 0);
+  CHECK(cmp->sum.early == 0);
+  CHECK(cmp->sum.onPlan > 0);
+  // 名前の変更
+  CHECK(e.c.renameBaseline(r.value(), "キックオフ"));
+  CHECK(e.c.session()->shownBaseline()->name == "キックオフ");
+  CHECK_FALSE(e.c.renameBaseline(r.value(), "\x01"));
+  CHECK(e.c.toasts().back().text.find("名前を変えられません") == 0);
+  // 5 つまで。6 つ目は理由を出して断る
+  for (int i = 0; i < 4; ++i) CHECK(e.c.saveBaseline("n" + std::to_string(i)).ok());
+  CHECK_FALSE(e.c.saveBaseline("6 つ目").ok());
+  CHECK(e.c.toasts().back().text.find("5 つまで") != std::string::npos);
+  CHECK(e.c.session()->baselines().list.size() == kBaselineMax);
+  // 設定に書かれ、開き直しても残る（表示するものも）。共有・バックアップには入れない
+  e.step(500);
+  std::string settingsPath;
+  for (const std::string& p : e.fs.paths())
+    if (p.size() > 21 && p.compare(p.size() - 21, 21, "project.settings.json") == 0) settingsPath = p;
+  REQUIRE_FALSE(settingsPath.empty());
+  CHECK(e.fs.content(settingsPath).find("\"baselines\"") != std::string::npos);
+  CHECK(e.c.exportText("share").find("baselines") == std::string::npos);
+  CHECK(e.c.exportText("backup").find("baselines") == std::string::npos);
+  const std::string shown = e.c.session()->baselines().shown;
+  {
+    AppController c2{e.fs, e.clk, "data", "roadmap_prefs.json"};
+    c2.start();
+    REQUIRE(c2.session());
+    CHECK(c2.session()->baselines().list.size() == kBaselineMax);
+    CHECK(c2.session()->baselines().shown == shown);
+    CHECK(c2.session()->baselines().list[0].name == "キックオフ");
+  }
+  // 表示の切り替えと削除
+  e.c.showBaseline("");
+  CHECK(e.c.session()->baselineCompare() == nullptr);
+  e.c.showBaseline(r.value());
+  REQUIRE(e.c.session()->baselineCompare());
+  CHECK(e.c.deleteBaseline(r.value()));
+  CHECK(e.c.session()->baselineCompare() == nullptr);  // 表示中のものを消したら外れる
+  CHECK(e.c.session()->baselines().list.size() == kBaselineMax - 1);
+  CHECK(e.c.toasts().back().text.find("削除しました") != std::string::npos);
+  CHECK_FALSE(e.c.deleteBaseline(r.value()));
+  // 画面の状態から作る HTML に、選んだベースラインとの比較が入る
+  e.c.showBaseline(e.c.session()->baselines().list[0].id);
+  ExportOptions o;
+  o.list = false;
+  const auto html = e.c.buildReport(o);
+  REQUIRE(html.ok());
+  CHECK(html.value().find("計画との差") != std::string::npos);
+  e.c.showBaseline("");
+  CHECK(e.c.buildReport(o).value().find("計画との差") == std::string::npos);
+}

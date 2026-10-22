@@ -257,3 +257,167 @@ TEST_CASE("gantt_geom: ルート課題の色番号（子を持つか Epic のル
   CHECK(m[static_cast<std::size_t>(f.idx("3"))] == 1);  // 配下は根と同じ
   CHECK(m[static_cast<std::size_t>(f.idx("6"))] == 0);  // 子を持たない単独の作業
 }
+
+// ---------------------------------------------------------------- ベースライン（計画のバー。Issue #53）
+TEST_CASE("gantt_geom: 計画のバー（作業）は計画の開始〜完了で、現在のバーの下に出る") {
+  Fx fx;
+  GanttAxis ax;
+  ax.rs = fx.base - 7;
+  ax.px = 6;
+  ax.left = 100;
+  const int c = fx.idx("4");  // C: 未着手 2 週
+  const ScheduleRow& r = fx.comp.R[static_cast<std::size_t>(c)];
+  const GanttRowShape cur = ganttRowShape(ax, fx.comp.T, r, c, false);
+  BaselineEntry e;
+  e.index = c;
+  e.state = BaselineState::Late;
+  e.hasFinishDiff = true;
+  e.finishDiff = 3;
+  e.planStart = r.asapStart - 7;
+  e.planFinish = r.asapFinish - 5;
+  e.nowStart = r.asapStart;
+  e.nowFinish = r.asapFinish;
+  const GanttPlanShape p = ganttPlanShape(ax, cur, e, false, 1.f);
+  CHECK(p.kind == GanttPlanShape::Kind::Bar);
+  CHECK(p.x0 == doctest::Approx(ax.x(*e.planStart)));
+  CHECK(p.w == doctest::Approx(static_cast<float>(*e.planFinish - *e.planStart + 1) * 6.f));
+  CHECK(p.x1 == doctest::Approx(p.x0 + p.w));
+  // 現在のバーより下（バーの下端 = 行の高さ - 6）に、行の中に収まる
+  const float rowH = 26.f;
+  CHECK(p.y0 >= rowH - 6.f);
+  CHECK(p.y1 > p.y0);
+  CHECK(p.y1 <= rowH - 1.f);
+  // 差の文字は、現在のバーと計画のバーの右端の大きい方の外
+  CHECK(p.labelX >= cur.x1);
+  CHECK(p.labelX >= p.x1);
+  // 倍率で縦の位置が伸びる
+  const GanttPlanShape p2 = ganttPlanShape(ax, cur, e, false, 2.f);
+  CHECK(p2.y1 - p2.y0 == doctest::Approx((p.y1 - p.y0) * 2.f));
+}
+
+TEST_CASE("gantt_geom: 計画のバーは最小幅 3、計画の日付がなければ出さない（差の文字の位置だけ返す）") {
+  Fx fx;
+  GanttAxis ax;
+  ax.rs = fx.base - 7;
+  ax.px = 0.9f;
+  ax.left = 0;
+  const int c = fx.idx("4");
+  const ScheduleRow& r = fx.comp.R[static_cast<std::size_t>(c)];
+  const GanttRowShape cur = ganttRowShape(ax, fx.comp.T, r, c, false);
+  BaselineEntry e;
+  e.index = c;
+  e.state = BaselineState::OnPlan;
+  e.planStart = r.asapStart;
+  e.planFinish = r.asapStart;  // 1 日 × 0.9 < 3
+  e.hasFinishDiff = true;
+  const GanttPlanShape p = ganttPlanShape(ax, cur, e, false, 1.f);
+  CHECK(p.kind == GanttPlanShape::Kind::Bar);
+  CHECK(p.w == doctest::Approx(3.f));
+  // 計画に日付がない / 計画になかった
+  e.planStart.reset();
+  e.planFinish.reset();
+  e.state = BaselineState::Added;
+  e.hasFinishDiff = false;
+  const GanttPlanShape none = ganttPlanShape(ax, cur, e, false, 1.f);
+  CHECK(none.kind == GanttPlanShape::Kind::None);
+  CHECK(none.labelX >= cur.x1);
+}
+
+TEST_CASE("gantt_geom: 計画のマイルストーンは小さな菱形、親のまとめは計画の開始〜完了の帯") {
+  Fx fx;
+  GanttAxis ax;
+  ax.rs = fx.base - 7;
+  ax.px = 6;
+  ax.left = 100;
+  // マイルストーン
+  const int m = fx.idx("5");
+  const ScheduleRow& rm = fx.comp.R[static_cast<std::size_t>(m)];
+  const GanttRowShape curM = ganttRowShape(ax, fx.comp.T, rm, m, false);
+  BaselineEntry em;
+  em.index = m;
+  em.state = BaselineState::Early;
+  em.hasFinishDiff = true;
+  em.finishDiff = -4;
+  em.planStart = rm.asapFinish + 6;
+  em.planFinish = rm.asapFinish + 6;
+  const GanttPlanShape pm = ganttPlanShape(ax, curM, em, true, 1.f);
+  CHECK(pm.kind == GanttPlanShape::Kind::Milestone);
+  CHECK(pm.msX == doctest::Approx(ax.x(*em.planFinish) + 3.f));
+  CHECK(pm.labelX >= curM.msX + 7.f);
+  CHECK(pm.labelX >= pm.msX);
+  // 親
+  const int par = fx.idx("1");
+  const ScheduleRow& rp = fx.comp.R[static_cast<std::size_t>(par)];
+  const GanttRowShape curP = ganttRowShape(ax, fx.comp.T, rp, par, true);
+  BaselineEntry ep;
+  ep.index = par;
+  ep.state = BaselineState::Late;
+  ep.hasFinishDiff = true;
+  ep.finishDiff = 2;
+  ep.planStart = rp.asapStart;
+  ep.planFinish = rp.asapFinish - 2;
+  const GanttPlanShape pp = ganttPlanShape(ax, curP, ep, false, 1.f);
+  CHECK(pp.kind == GanttPlanShape::Kind::Bar);
+  CHECK(pp.x0 == doctest::Approx(ax.x(*ep.planStart)));
+  CHECK(pp.x1 == doctest::Approx(ax.x(*ep.planFinish + 1)));
+}
+
+TEST_CASE("gantt_geom: 時間軸の範囲に、表示中の計画の開始・完了も含める（計画のバーが軸の外に出ない）") {
+  Fx fx;
+  const GanttDayRange plain = ganttDayRange(fx.comp.T, fx.comp.R, fx.base);
+  // 計画なし（nullptr）は、従来の範囲と完全に同じ
+  const GanttDayRange none = ganttDayRange(fx.comp.T, fx.comp.R, fx.base, nullptr);
+  CHECK(none.lo == plain.lo);
+  CHECK(none.hi == plain.hi);
+  // 計画が範囲の中にあれば変わらない
+  BaselineCompare inside;
+  inside.entries.resize(static_cast<std::size_t>(fx.comp.T.n));
+  for (auto& e : inside.entries) {
+    e.planStart = fx.base;
+    e.planFinish = fx.base + 3;
+  }
+  const GanttDayRange same = ganttDayRange(fx.comp.T, fx.comp.R, fx.base, &inside);
+  CHECK(same.lo == plain.lo);
+  CHECK(same.hi == plain.hi);
+  // 計画が現在の日程よりずっと前（日程が後ろへ動いた）: 左端が計画の開始まで広がる
+  BaselineCompare early = inside;
+  early.entries[static_cast<std::size_t>(fx.idx("4"))].planStart = plain.lo - 60;
+  early.entries[static_cast<std::size_t>(fx.idx("4"))].planFinish = plain.lo - 50;
+  const GanttDayRange wl = ganttDayRange(fx.comp.T, fx.comp.R, fx.base, &early);
+  CHECK(wl.lo == plain.lo - 60);
+  CHECK(wl.hi == plain.hi);
+  CHECK(ganttAxisStart(wl.lo) <= *early.entries[static_cast<std::size_t>(fx.idx("4"))].planStart);
+  // 計画が現在の日程よりずっと後（短縮した）: 右端が計画の完了 + 21 日まで広がる
+  BaselineCompare late = inside;
+  late.entries[static_cast<std::size_t>(fx.idx("4"))].planFinish = plain.hi + 100;
+  const GanttDayRange wr = ganttDayRange(fx.comp.T, fx.comp.R, fx.base, &late);
+  CHECK(wr.lo == plain.lo);
+  CHECK(wr.hi == plain.hi + 100 + 21);
+  // 日付のない計画・大きさの合わない比較は無視する
+  BaselineCompare nodate = inside;
+  for (auto& e : nodate.entries) e.planStart = e.planFinish = std::nullopt;
+  CHECK(ganttDayRange(fx.comp.T, fx.comp.R, fx.base, &nodate).hi == plain.hi);
+  BaselineCompare wrong;
+  wrong.entries.resize(1);
+  wrong.entries[0].planStart = plain.lo - 500;
+  CHECK(ganttDayRange(fx.comp.T, fx.comp.R, fx.base, &wrong).lo == plain.lo);
+}
+
+TEST_CASE("gantt_geom: 差の文字を出すのは遅れ・早まり・計画になかった・日付だけ違うとき") {
+  BaselineEntry e;
+  e.hasFinishDiff = true;
+  e.state = BaselineState::OnPlan;
+  CHECK(!baselineShowLabel(e));  // ぴったりなら文字は出さない
+  e.finishDiffers = true;
+  CHECK(baselineShowLabel(e));   // 営業日の差が 0 でも日付が違えば出す
+  e.state = BaselineState::Late;
+  CHECK(baselineShowLabel(e));
+  e.state = BaselineState::Early;
+  CHECK(baselineShowLabel(e));
+  e.state = BaselineState::Added;
+  CHECK(baselineShowLabel(e));
+  e.state = BaselineState::NoDate;
+  CHECK(!baselineShowLabel(e));
+  e.state = BaselineState::Removed;
+  CHECK(!baselineShowLabel(e));
+}

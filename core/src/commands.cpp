@@ -209,6 +209,57 @@ void Session::putWeeklySnapshot(WeeklySnapshot s) {
   persist();
 }
 
+Result<std::string> Session::addBaseline(const std::string& name) {
+  if (!comp_) return Error{"日程を計算できていないため、ベースラインを保存できません"};
+  auto b = captureBaseline(comp_->issues, *comp_, name, nowDT());
+  if (!b.ok()) return Error{b.error()};
+  auto id = baselineAdd(P_.settings.baselines, std::move(b).value());
+  if (!id.ok()) return id;
+  baselineSetShown(P_.settings.baselines, id.value());
+  ++baselineRev_;
+  persist();
+  return id;
+}
+
+Status Session::renameBaseline(const std::string& id, const std::string& name) {
+  const Status st = baselineRename(P_.settings.baselines, id, name);
+  if (!st.ok()) return st;
+  ++baselineRev_;
+  persist();
+  return st;
+}
+
+bool Session::removeBaseline(const std::string& id) {
+  if (!baselineRemove(P_.settings.baselines, id)) return false;
+  ++baselineRev_;
+  persist();
+  return true;
+}
+
+bool Session::showBaseline(const std::string& id) {
+  if (P_.settings.baselines.shown == id) return id.empty() || baselineFind(P_.settings.baselines, id) != nullptr;
+  if (!baselineSetShown(P_.settings.baselines, id)) return false;
+  ++baselineRev_;
+  persist();
+  return true;
+}
+
+const BaselineCompare* Session::baselineCompare() const {
+  const Baseline* b = shownBaseline();
+  if (!b || !comp_) return nullptr;
+  if (cmp_ && cmpFor_ == comp_ && cmpId_ == b->id && cmpRev_ == baselineRev_) return cmp_.get();
+  auto r = compareBaseline(*b, comp_->issues, *comp_, cal_);
+  if (cmp_) cmpRetired_.push_back(std::move(cmp_));  // 描画中の参照が壊れないよう、フレームの終わりまで残す
+  cmp_.reset();
+  cmpFor_.reset();
+  if (!r.ok()) return nullptr;
+  cmp_ = std::make_shared<BaselineCompare>(std::move(r).value());
+  cmpFor_ = comp_;
+  cmpId_ = b->id;
+  cmpRev_ = baselineRev_;
+  return cmp_.get();
+}
+
 std::vector<std::string> Session::applyInherit(Issue& o, const std::string& parentId, const std::string& afterId,
                                                bool& fromSibling) const {
   std::vector<std::string> got;
@@ -932,12 +983,43 @@ std::optional<std::string> Session::resolveRef(const std::string& in) const {
   return std::nullopt;
 }
 
-std::vector<VisibleRow> Session::visibleRows(const Filter& f, const ColumnFilter* cf) const {
+namespace {
+// 列「計画との差」の絞り込みがあるときだけ、表示するベースラインとの比較から値を入れた絞り込みを作る
+bool needsPlanValues(const ColumnFilter* cf) {
+  if (!cf) return false;
+  const auto it = cf->hide.find("plan");
+  return it != cf->hide.end() && !it->second.empty();
+}
+}  // namespace
+
+ColumnFilter Session::withPlanValues(const ColumnFilter& cf) const {
+  ColumnFilter out = cf;
+  out.planValues.clear();
+  const BaselineCompare* c = baselineCompare();
+  if (!c) return out;
+  out.planValues.reserve(c->entries.size());
+  for (const BaselineEntry& e : c->entries) out.planValues.push_back(baselineColumnValue(e));
+  return out;
+}
+
+std::vector<VisibleRow> Session::visibleRows(const Filter& f, const ColumnFilter* cfIn) const {
+  ColumnFilter local;
+  const ColumnFilter* cf = cfIn;
+  if (needsPlanValues(cfIn)) {
+    local = withPlanValues(*cfIn);
+    cf = &local;
+  }
   if (!comp_) return {};
   return roadmap::visibleRows(comp_->T, comp_->issues, comp_->R, viewStateFromUi(comp_->T, P_.settings.ui), f, cf);
 }
 
-std::vector<int> Session::visibleLeaves(const Filter& f, const ColumnFilter* cf) const {
+std::vector<int> Session::visibleLeaves(const Filter& f, const ColumnFilter* cfIn) const {
+  ColumnFilter local;
+  const ColumnFilter* cf = cfIn;
+  if (needsPlanValues(cfIn)) {
+    local = withPlanValues(*cfIn);
+    cf = &local;
+  }
   if (!comp_) return {};
   return roadmap::visibleLeaves(comp_->T, comp_->issues, comp_->R, viewStateFromUi(comp_->T, P_.settings.ui), f, cf);
 }

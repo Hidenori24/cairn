@@ -1,6 +1,7 @@
 // リストビュー（SPEC 10.7.1）と、表の行（ガントの左の表と共有）
 #include <algorithm>
 #include <map>
+#include <set>
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -28,6 +29,7 @@ const char* colTitle(Col c) {
     case Col::Float: return "余裕";
     case Col::Deadline: return "期限";
     case Col::Pred: return "先行";
+    case Col::Plan: return "計画との差";
     default: return "";
   }
 }
@@ -44,6 +46,7 @@ const char* colKey(Col c) {
     case Col::Float: return "float";
     case Col::Deadline: return "deadline";
     case Col::Pred: return "pred";
+    case Col::Plan: return "plan";
     default: return "";
   }
 }
@@ -58,9 +61,13 @@ const char* filterKey(Col c) {
     case Col::Prio: return "prio";
     case Col::Float: return "float";
     case Col::Pred: return "pred";
+    case Col::Plan: return "plan";
     default: return "";
   }
 }
+
+// 列「計画との差」の絞り込みの値の並び（遅れを先頭に）
+const char* const kPlanValueOrder[] = {kBaselineValueLate, kBaselineValueOnPlan, kBaselineValueEarly, kBaselineValueAdded, kBaselineValueNone};
 
 bool columnFiltered(const ColumnFilter& cf, const std::string& col) {
   if (col == "name") return !text::trim(cf.name).empty();
@@ -71,13 +78,30 @@ bool columnFiltered(const ColumnFilter& cf, const std::string& col) {
 // 絞り込みの一覧に出す値（いまある値 + 隠したまま消えた値）を、列ごとの順に
 std::vector<std::string> filterValues(const Session& s, const ColumnFilter& cf, const std::string& col) {
   const Tree& T = *s.tree();
-  std::vector<std::string> v = columnValues(col, T, s.viewIssues(), *s.rows());
+  std::vector<std::string> v;
+  if (col == "plan") {
+    // 表示しているベースラインとの比較に現れる値（末端の課題）
+    if (const BaselineCompare* bc = s.baselineCompare()) {
+      std::set<std::string> seen;
+      for (int id : T.leafOrder)
+        if (static_cast<std::size_t>(id) < bc->entries.size()) seen.insert(baselineColumnValue(bc->entries[static_cast<std::size_t>(id)]));
+      for (const char* x : kPlanValueOrder)
+        if (seen.count(x)) v.push_back(x);
+    }
+  } else {
+    v = columnValues(col, T, s.viewIssues(), *s.rows());
+  }
   if (const auto it = cf.hide.find(col); it != cf.hide.end())
     for (const auto& h : it->second)
       if (std::find(v.begin(), v.end(), h) == v.end()) v.push_back(h);
   const auto rank = [&](const std::string& x) -> int {
     if (col == "status") return static_cast<int>(statusCat(x));
     if (col == "prio") return prioRank(x);
+    if (col == "plan") {
+      for (int k = 0; k < 5; ++k)
+        if (x == kPlanValueOrder[k]) return k;
+      return 5;
+    }
     if (col == "float") {
       static const char* const order[] = {"遅れ", "余裕小", "余裕あり", "完了"};
       for (int k = 0; k < 4; ++k)
@@ -116,9 +140,15 @@ void drawColumnFilterPopup(Frame& f, const std::string& col, const char* title, 
     const auto values = filterValues(*s, cf, col);
     std::map<std::string, int> count;
     const Tree& T = *s->tree();
-    for (int id : T.leafOrder)
+    const BaselineCompare* bc = col == "plan" ? s->baselineCompare() : nullptr;
+    for (int id : T.leafOrder) {
+      if (col == "plan") {
+        if (bc && static_cast<std::size_t>(id) < bc->entries.size()) ++count[baselineColumnValue(bc->entries[static_cast<std::size_t>(id)])];
+        continue;
+      }
       ++count[col == "pred" ? std::string(predColumnValue(!s->computed()->declPreds[id].empty()))
                             : columnValue(col, s->viewIssues()[id], (*s->rows())[id])];
+    }
     bool all = !columnFiltered(cf, col);
     if (ImGui::Checkbox("すべて", &all)) {
       cf.clear(col);
@@ -150,6 +180,10 @@ void drawColumnFilterPopup(Frame& f, const std::string& col, const char* title, 
   ImGui::EndPopup();
 }
 
+ImU32 planColor(const UiState& u, const BaselineEntry& e) {
+  return e.state == BaselineState::Late ? u.t->late : e.state == BaselineState::Early ? u.t->ok : u.t->muted;
+}
+
 void textIn(ImDrawList* dl, const UiState& u, ImVec2 p, ImVec2 sz, const std::string& s, ImU32 col, ImFont* font = nullptr) {
   if (font) ImGui::PushFont(font);
   const std::string t = ellipsize(s, sz.x - u.m.s(8));
@@ -158,6 +192,24 @@ void textIn(ImDrawList* dl, const UiState& u, ImVec2 p, ImVec2 sz, const std::st
   if (font) ImGui::PopFont();
 }
 }  // namespace
+
+std::vector<std::string> planTipLines(const BaselineCompare& bc, const BaselineEntry& e) {
+  std::vector<std::string> L;
+  L.push_back("ベースライン「" + bc.baselineName + "」との差");
+  switch (e.state) {
+    case BaselineState::Added: L.push_back("計画になかった課題です"); return L;
+    case BaselineState::NoDate: L.push_back("計画に日付がないため、比べられません"); return L;
+    default: break;
+  }
+  if (e.planFinish)
+    L.push_back("計画 " + (e.planStart ? fmtLong(*e.planStart) + " 〜 " : std::string()) + fmtLong(*e.planFinish));
+  L.push_back("いま " + fmtLong(e.nowStart) + " 〜 " + fmtLong(e.nowFinish));
+  if (e.hasFinishDiff) L.push_back("完了日の差 " + baselineDiffText(e) + "（営業日。+ は遅れ）");
+  if (e.hasStartDiff && e.startDiff != 0) L.push_back("開始日の差 " + std::string(e.startDiff > 0 ? "+" : "") + std::to_string(e.startDiff) + "日");
+  const std::string note = baselineDiffNote(e);
+  if (!note.empty()) L.push_back(note);
+  return L;
+}
 
 void drawTableHeader(Frame& f, ImVec2 pos, float width, float h, const std::vector<ColDef>& cols, bool sortable) {
   UiState& u = f.u;
@@ -311,6 +363,23 @@ void drawTableRow(Frame& f, const VisibleRow& r, ImVec2 pos, float width, const 
         if (d) textIn(dl, u, cp, cs, fmtMd(*d), u.t->ink, u.fontMono);
         break;
       }
+      case Col::Plan: {
+        const BaselineCompare* bc = s->baselineCompare();
+        if (!bc || static_cast<std::size_t>(r.id) >= bc->entries.size()) break;
+        const BaselineEntry& e = bc->entries[static_cast<std::size_t>(r.id)];
+        const std::string mark = baselineDiffMark(e);
+        textIn(dl, u, cp, cs, (mark.empty() ? std::string() : mark + " ") + baselineDiffText(e), planColor(u, e), u.fontMono);
+        if (inCell && ImGui::IsWindowHovered() && !u.linkDrag.active) {
+          const auto lines = planTipLines(*bc, e);
+          ImGui::BeginTooltip();
+          for (std::size_t q = 0; q < lines.size(); ++q) {
+            if (q == 0) ImGui::TextUnformatted(lines[q].c_str());
+            else ImGui::TextDisabled("%s", lines[q].c_str());
+          }
+          ImGui::EndTooltip();
+        }
+        break;
+      }
       case Col::Pred:
         if (editing(u, id, EditField::Pred)) {
           ImGui::SetCursorScreenPos(ImVec2(x, pos.y + (h - ImGui::GetFrameHeight()) / 2));
@@ -343,6 +412,15 @@ namespace {
 // 並べ替えのキー（SPEC 10.7.1）
 std::vector<int> sortedLeaves(const Session& s, const std::vector<int>& leaves, const std::string& key, int dir) {
   const Tree& T = *s.tree();
+  const BaselineCompare* bc = key == "plan" ? s.baselineCompare() : nullptr;
+  // 列「計画との差」の並べ替え: 完了日の差（営業日）。差のないもの（計画になかった・比べられない）は最後
+  const auto planDiff = [&](int id, bool& none) {
+    none = true;
+    if (!bc || static_cast<std::size_t>(id) >= bc->entries.size()) return 0;
+    const BaselineEntry& e = bc->entries[static_cast<std::size_t>(id)];
+    none = !e.hasFinishDiff;
+    return e.finishDiff;
+  };
   const auto& R = *s.rows();
   const auto& I = s.viewIssues();
   std::vector<int> v = leaves;
@@ -376,6 +454,8 @@ std::vector<int> sortedLeaves(const Session& s, const std::vector<int>& leaves, 
       lastA = predText[a].empty();
       lastB = predText[b].empty();
       cmp = jaCompare(predText[a], predText[b]);
+    } else if (key == "plan") {
+      cmp = planDiff(a, lastA) - planDiff(b, lastB);
     } else if (key == "deadline") {
       lastA = !T.dl[a];
       lastB = !T.dl[b];
@@ -401,6 +481,7 @@ void drawListView(Frame& f, ImVec2 size) {
                               {Col::Finish, u.m.s(104)}, {Col::Dur, u.m.s(64)}, {Col::Float, u.m.s(72)},
                               {Col::Deadline, u.m.s(104)}};
   if (c.uiBool("cols", "pred", false)) cols.insert(cols.begin() + 1, {Col::Pred, u.m.s(140)});  // 件名の次
+  if (s->baselineCompare() && c.uiBool("cols", "plan", false)) cols.push_back({Col::Plan, u.m.s(104)});  // 表示するベースラインがあるときだけ
   float fixed = 0;
   for (const auto& cd : cols) fixed += cd.w;
   // 表の左右には、依存をつなぐハンドルを出す余白を取る（行のボタンや開閉と重ならない）

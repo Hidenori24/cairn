@@ -628,6 +628,97 @@ void drawAgingTop(Frame& f, const TrendReport& tr, float W) {
   }
 }
 
+// 「計画との差」の節（表示するベースラインがあるとき。Issue #53）。件数のタイル → 遅れの大きい順の上位。行を押すと課題を選んで詳細を開く
+void drawPlanDiff(Frame& f, const BaselineCompare& bc, const Tree& T, const std::vector<Issue>& I, float W) {
+  UiState& u = f.u;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const std::string note = "「" + bc.baselineName + "」との比較（営業日の差。+ は計画より遅れ）";
+  sectionHead(f, "計画との差", note.c_str(), W);
+  const BaselineSummary& sm = bc.sum;
+  {
+    const int nt = 5;
+    const float gap = u.m.s(8);
+    const float tw = (W - gap * (nt - 1)) / nt;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    struct T5 {
+      const char* l;
+      int n;
+      ImU32 col;
+    } tl[] = {{"早まり", sm.early, sm.early ? u.t->ok : u.t->ink},
+              {"計画どおり", sm.onPlan, u.t->ink},
+              {"! 遅れ", sm.late, sm.late ? u.t->late : u.t->ink},
+              {"計画になかった", sm.added, u.t->ink},
+              {"消えた", sm.removed, u.t->ink}};
+    for (int i = 0; i < nt; ++i) {
+      ImGui::SetCursorScreenPos(ImVec2(p.x + static_cast<float>(i) * (tw + gap), p.y));
+      tile(f, tl[i].l, std::to_string(tl[i].n) + " 件", tl[i].col, tw);
+    }
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + u.m.s(64) + u.m.s(6)));
+    u.statsPlan.tiles = nt;
+  }
+  if (bc.truncated) ImGui::TextDisabled("ベースラインは課題が多かったため、一部の課題だけです（「計画になかった」は数えません）。");
+  if (sm.sameDayDiffers > 0)
+    ImGui::TextDisabled("営業日の差が 0 でも完了日が違う課題が %d 件あります（休業日・土日をまたいだ日付の違い）。", sm.sameDayDiffers);
+  ImGui::Dummy(ImVec2(0, u.m.s(4)));
+  ImGui::PushFont(u.fontBold);
+  ImGui::Text("遅れの大きい順（上位 %zu 件 / 遅れ %d 件）", bc.topLate.size(), bc.lateTotal);
+  ImGui::PopFont();
+  if (bc.topLate.empty()) {
+    ImGui::TextDisabled("計画より遅れている課題はありません。");
+    return;
+  }
+  const float h = u.m.rowH();
+  const float rankW = u.m.s(30), asgW = std::clamp(W * 0.18f, u.m.s(70), u.m.s(150)), dateW = u.m.s(86), diffW = u.m.s(80);
+  const float nameW = std::max(W - rankW - asgW - dateW * 2 - diffW, u.m.s(80));
+  {
+    const ImVec2 q = ImGui::GetCursorScreenPos();
+    float x = q.x + u.m.s(6);
+    dl->AddText(ImVec2(x, q.y), u.t->muted, "#");
+    x = q.x + rankW;
+    dl->AddText(ImVec2(x, q.y), u.t->muted, "課題");
+    x += nameW;
+    dl->AddText(ImVec2(x, q.y), u.t->muted, "担当");
+    x += asgW;
+    dl->AddText(ImVec2(x, q.y), u.t->muted, "計画の完了");
+    x += dateW;
+    dl->AddText(ImVec2(x, q.y), u.t->muted, "今の見込み");
+    x += dateW;
+    dl->AddText(ImVec2(x, q.y), u.t->muted, "差");
+    ImGui::Dummy(ImVec2(W, ImGui::GetTextLineHeight() + u.m.s(4)));
+  }
+  int rank = 0;
+  for (int idx : bc.topLate) {
+    if (idx < 0 || static_cast<std::size_t>(idx) >= bc.entries.size() || static_cast<std::size_t>(idx) >= I.size()) continue;
+    ++rank;
+    const BaselineEntry& e = bc.entries[static_cast<std::size_t>(idx)];
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool hov = ImGui::IsMouseHoveringRect(p, ImVec2(p.x + W, p.y + h)) && ImGui::IsWindowHovered();
+    if (hov) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + h), u.t->hover, u.m.s(4));
+    const float ty = p.y + (h - ImGui::GetTextLineHeight()) / 2;
+    const std::string& asg = I[static_cast<std::size_t>(idx)].assignee;
+    dl->AddText(ImVec2(p.x + u.m.s(6), ty), u.t->muted, std::to_string(rank).c_str());
+    clippedText(u, ImVec2(p.x + rankW, ty), nameW - u.m.s(10), u.t->ink, T.did[static_cast<std::size_t>(idx)] + "  " + T.name[static_cast<std::size_t>(idx)]);
+    clippedText(u, ImVec2(p.x + rankW + nameW, ty), asgW - u.m.s(10), u.t->muted, asg.empty() ? std::string("（担当なし）") : asg);
+    dl->AddText(ImVec2(p.x + rankW + nameW + asgW, ty), u.t->muted, e.planFinish ? fmtMd(*e.planFinish).c_str() : "-");
+    dl->AddText(ImVec2(p.x + rankW + nameW + asgW + dateW, ty), u.t->ink, fmtMd(e.nowFinish).c_str());
+    dl->AddText(ImVec2(p.x + rankW + nameW + asgW + dateW * 2, ty), u.t->late, (baselineDiffMark(e) + " " + baselineDiffText(e)).c_str());
+    dl->AddLine(ImVec2(p.x, p.y + h), ImVec2(p.x + W, p.y + h), u.t->rowline);
+    u.statsPlan.lateRows.push_back({p, ImVec2(p.x + W, p.y + h), T.ids[static_cast<std::size_t>(idx)]});
+    if (hov) {
+      const auto lines = planTipLines(bc, e);
+      ImGui::BeginTooltip();
+      for (std::size_t q = 0; q < lines.size(); ++q) {
+        if (q == 0) ImGui::TextUnformatted(lines[q].c_str());
+        else ImGui::TextDisabled("%s", lines[q].c_str());
+      }
+      ImGui::TextDisabled("押すと、この課題の詳細を開きます");
+      ImGui::EndTooltip();
+      if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) openDetail(f, T.ids[static_cast<std::size_t>(idx)], 0);
+    }
+    ImGui::Dummy(ImVec2(W, h));
+  }
+}
+
 // 推移の節。担当者・ルート課題の選択（この節の中だけ。上の絞り込みや他の節には効かない）→ 集計 → 3 つの図
 void drawTrends(Frame& f, Session& s, const Tree& T, const std::vector<ScheduleRow>& R, const std::vector<Issue>& I, Day base, float W) {
   UiState& u = f.u;
@@ -786,6 +877,7 @@ void drawStatsView(Frame& f, ImVec2 size) {
   u.statsTrend.drawn = false;  // 推移を描かないフレーム（課題がない・別のビュー）では、前の結果を残さない
   u.statsTrend.weekCols.clear();
   u.statsTrend.agingRows.clear();
+  u.statsPlan = UiState::StatsPlan{};
   Session* s = c.session();
   if (!s || !s->tree()) return;
   const Tree& T = *s->tree();
@@ -809,6 +901,11 @@ void drawStatsView(Frame& f, ImVec2 size) {
   if (st.tasks == 0) {
     ImGui::Dummy(ImVec2(0, u.m.s(12)));
     ImGui::TextUnformatted("集計できる作業がありません。課題を追加すると、ここに進みと内訳が出ます。");
+    // 作業が 0 件（マイルストーンだけ・全部削除）でも、計画との差（消えた課題など）は出す
+    if (const BaselineCompare* bc0 = s->baselineCompare()) {
+      drawPlanDiff(f, *bc0, T, I, W);
+      u.statsPlan.drawn = true;
+    }
     ImGui::EndGroup();
     ImGui::Dummy(ImVec2(0, u.m.s(40)));
     ImGui::EndChild();
@@ -873,6 +970,13 @@ void drawStatsView(Frame& f, ImVec2 size) {
       dl->AddText(ImVec2(p.x + lw + len + u.m.s(8), ty), u.t->muted, std::to_string(st.floatHist[k]).c_str());
       ImGui::Dummy(ImVec2(W, h));
     }
+  }
+
+  // ---- 計画との差（表示するベースラインがあるとき） ----
+  u.statsPlan = UiState::StatsPlan{};
+  if (const BaselineCompare* bc = s->baselineCompare()) {
+    drawPlanDiff(f, *bc, T, I, W);
+    u.statsPlan.drawn = true;
   }
 
   // ---- 週ごとの完了 ----

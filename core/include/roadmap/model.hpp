@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #include "roadmap/calendar.hpp"
+#include "roadmap/baseline.hpp"
 #include "roadmap/weekly_state.hpp"
 
 namespace roadmap {
@@ -129,6 +130,7 @@ struct ProjectSettings {
   std::string scenario = kStdScenario;
   ResourceLimit resource;
   AttachmentMap attachments;      // 添付のメタ情報（空なら settings.json に書かない）
+  BaselineSet baselines;          // ベースライン（計画の日程の保存。空なら settings.json に書かない。共有・バックアップには入れない。Issue #53）
   WeeklyMemo weekly;              // 週次レポートの所感とスナップショット（空なら settings.json に書かない。Issue #43）
   Json ui = Json::object();     // 表示状態。未知のキーも保持
   Json unknown = Json::object();  // settings.json の未知のキー（書き戻す）

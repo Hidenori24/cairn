@@ -349,6 +349,10 @@ std::string exportHtml(const ExportInput& in, const ExportOptions& opt) {
   const bool consistent = T.n > 0 && in.issues.size() == static_cast<std::size_t>(T.n) && in.rows.size() == static_cast<std::size_t>(T.n);
   report::Ctx cx{in, opt, k, opt.dark, {}};
   if (consistent) cx.rows = reportRows(in, opt.scope);
+  // 課題が 0 件（全部削除した）のときは、入力の食い違いではない。有効な比較（消えた課題）は出す
+  const bool noIssues = T.n == 0 && in.issues.empty() && in.rows.empty();
+  if ((consistent || noIssues) && opt.baseline && in.baseline && in.baseline->entries.size() == static_cast<std::size_t>(std::max(T.n, 0)))
+    cx.bl = in.baseline;
 
   const std::string title = in.projectName.empty() ? std::string("報告") : in.projectName;
   std::string h;
@@ -380,6 +384,7 @@ std::string exportHtml(const ExportInput& in, const ExportOptions& opt) {
 
   if (!consistent) {
     h += "<p class=\"empty\">課題がありません。課題を追加してから書き出してください。</p>\n";
+    if (noIssues && cx.bl && opt.stats) h += "<section class=\"part first\">\n" + report::renderStats(cx) + "</section>\n";  // 消えた課題の比較
   } else if (!opt.gantt && !opt.stats && !opt.list) {
     h += "<p class=\"empty\">書き出す内容が選ばれていません。</p>\n";
   } else {

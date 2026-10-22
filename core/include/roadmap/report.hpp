@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "roadmap/baseline.hpp"
 #include "roadmap/calendar.hpp"
 #include "roadmap/clock.hpp"
 #include "roadmap/engine.hpp"
@@ -43,6 +44,7 @@ struct ExportOptions {
   std::string colorBy = "root";      // root / float / asg
   ReportScope scope = ReportScope::All;
   bool showDeps = true;              // ガントに依存の矢印を出す
+  bool baseline = true;              // 表示するベースラインがあれば、ガントに計画のバーを、統計に「計画との差」の節を出す
   std::size_t maxGanttRows = kReportMaxGanttRows;  // テストで小さくできる
 };
 
@@ -64,6 +66,9 @@ struct ExportInput {
   float dimAlpha = 0.3f;
   std::string filterLabel;              // 今の絞り込みの名前（空 = なし。表示範囲の注記に出す）
   int subtreeRoot = -1;                 // ReportScope::Subtree の根の課題（Tree の添字）
+  // 表示するベースラインとの比較（Session::baselineCompare()。null = 出さない）。ガントに計画のバーと差、統計に「計画との差」の節を出す。
+  // 課題の数が合わないものは使わない
+  const BaselineCompare* baseline = nullptr;
 };
 
 // 1 つの HTML（UTF-8、BOM なし）。課題が 0 件でも、案内を書いた HTML を返す

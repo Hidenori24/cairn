@@ -262,6 +262,67 @@ std::string changesHtml(const WeeklyReport& r) {
   return section("先週から変わったこと", b);
 }
 
+std::string baselineHtml(const WeeklyReport& r) {
+  const WeeklyBaseline& bl = r.baseline;
+  const std::string at = baselineAtText(bl.at);
+  std::string b = "<p class=\"sub\">ベースライン「" + E(bl.name) + "」" + (at.empty() ? std::string() : "（保存 " + E(at) + "）") +
+                  "との比較です。営業日の差で、+ は計画より遅れ、- は早まりです。";
+  if (bl.truncated) b += "（ベースラインは課題が多かったため、一部の課題だけです）";
+  b += "</p>\n";
+  b += "<div class=\"tiles\">\n";
+  b += tile("遅れ", std::to_string(bl.sum.late) + " 件", std::string(), bl.sum.late > 0 ? "rk-late" : "");
+  b += tile("早まり", std::to_string(bl.sum.early) + " 件");
+  b += tile("計画どおり", std::to_string(bl.sum.onPlan) + " 件");
+  b += tile("計画になかった", std::to_string(bl.sum.added) + " 件");
+  b += tile("消えた", std::to_string(bl.sum.removed) + " 件");
+  b += "</div>\n";
+  const std::string note = baselineSameDayNote(bl.sum);
+  if (!note.empty()) b += "<p class=\"sub\">" + E(note) + "</p>\n";
+  const auto moves = [&](const std::string& head, const WeeklyBaselineList& l, bool late) {
+    b += "<h3>" + E(head) + "（" + std::to_string(l.total) + " 件）</h3>\n";
+    if (l.items.empty()) {
+      b += noneP();
+    } else {
+      Tbl t;
+      t.head({{"課題", false}, {"担当", false}, {"計画の完了", false}, {"今の見込み", false}, {"差", false}});
+      for (const WeeklyBaselineRow& it : l.items) {
+        const std::string d = it.diffDays > 0 ? "! +" + std::to_string(it.diffDays) + "日" : it.diffDays < 0 ? "-" + std::to_string(-it.diffDays) + "日" : "±0日";
+        t.row({{title(it.did, it.name), false, "nm"},
+               {who(it.assignee), false, ""},
+               {it.planFinish ? fmtMd(*it.planFinish) : std::string("-"), false, ""},
+               {fmtMd(it.nowFinish), false, ""},
+               {d, false, late ? "rk-late" : "rk-ok"}});
+      }
+      b += t.close();
+    }
+    b += moreP(l.omitted());
+  };
+  moves("遅れた課題", bl.late, true);
+  moves("早まった課題", bl.early, false);
+  b += "<h3>計画になかった課題（" + std::to_string(bl.added.total) + " 件）</h3>\n";
+  if (bl.added.items.empty()) {
+    b += noneP();
+  } else {
+    Tbl t;
+    t.head({{"課題", false}, {"担当", false}, {"完了見込み", false}});
+    for (const WeeklyBaselineRow& it : bl.added.items) t.row({{title(it.did, it.name), false, "nm"}, {who(it.assignee), false, ""}, {fmtMd(it.nowFinish), false, ""}});
+    b += t.close();
+  }
+  b += moreP(bl.added.omitted());
+  b += "<h3>消えた課題（" + std::to_string(bl.removed.total) + " 件）</h3>\n";
+  if (bl.removed.items.empty()) {
+    b += noneP();
+  } else {
+    Tbl t;
+    t.head({{"課題", false}, {"Issue Id", false}, {"計画の完了", false}});
+    for (const WeeklyBaselineRow& it : bl.removed.items)
+      t.row({{it.name.empty() ? it.id : it.name, false, "nm"}, {it.id, false, ""}, {it.planFinish ? fmtMd(*it.planFinish) : std::string("-"), false, ""}});
+    b += t.close();
+  }
+  b += moreP(bl.removed.omitted());
+  return section("ベースラインとの差", b);
+}
+
 std::string notesHtml(const WeeklyReport& r) {
   std::string b = "<div class=\"notes\">";
   if (r.notes.empty()) {
@@ -301,6 +362,7 @@ std::string weeklyHtml(const WeeklyReport& r, const IClock* clock) {
   h += "</header>\n<main>\n";
   if (r.empty) {
     h += "<p class=\"empty\">課題がありません。</p>\n";
+    if (r.sections.baseline && r.baseline.available) h += baselineHtml(r);  // 全部削除したあとの「消えた課題」
     if (r.sections.notes) h += notesHtml(r);  // 課題がなくても、所感は書ける
   } else {
     const WeeklySections& s = r.sections;
@@ -313,6 +375,7 @@ std::string weeklyHtml(const WeeklyReport& r, const IClock* clock) {
     if (s.milestones) h += milestonesHtml(r);
     if (s.assignees) h += assigneesHtml(r);
     if (s.changes && r.changes.available) h += changesHtml(r);
+    if (s.baseline && r.baseline.available) h += baselineHtml(r);
     if (s.notes) h += notesHtml(r);
   }
   h += "</main>\n<footer>このアプリで出力（プロジェクト管理）</footer>\n</div>\n</body>\n</html>\n";

@@ -150,11 +150,13 @@ struct NameCellOpts {
 void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const NameCellOpts& o = {});
 
 // 表の列（リストとガントの左の表で共有）
-enum class Col { Grip, Name, Type, Status, Asg, Prio, Start, Finish, Dur, Float, Deadline, Pred };
+enum class Col { Grip, Name, Type, Status, Asg, Prio, Start, Finish, Dur, Float, Deadline, Pred, Plan };
 struct ColDef {
   Col col;
   float w;
 };
+// 列・バーにマウスを載せたときの「計画との差」の説明（ベースライン名・計画・いま・差・注記）
+std::vector<std::string> planTipLines(const BaselineCompare& bc, const BaselineEntry& e);
 // 1行を描き、クリック・ダブルクリック・右クリックを扱う。flat = 並べ替え中（インデントなし）
 void drawTableRow(Frame& f, const VisibleRow& r, ImVec2 pos, float width, const std::vector<ColDef>& cols, bool flat,
                   bool highlight = false);

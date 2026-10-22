@@ -38,6 +38,9 @@ const char* titleOf(Dlg d) {
     case Dlg::AttachPreview: return "画像のプレビュー";
     case Dlg::ExportHtml: return "HTML に書き出す";
     case Dlg::Weekly: return "週次レポート";
+    case Dlg::BaselineSave: return "ベースラインを保存";
+    case Dlg::BaselineManage: return "ベースラインの管理";
+    case Dlg::ConfirmBaselineDelete: return "ベースラインを削除";
     default: return "";
   }
 }
@@ -48,7 +51,10 @@ float widthOf(const UiState& u, Dlg d) {
     case Dlg::ConfirmIssueDelete:
     case Dlg::AttachOpenWarn:
     case Dlg::Conflict:
+    case Dlg::ConfirmBaselineDelete:
     case Dlg::ConfirmQuit: return u.m.s(460);
+    case Dlg::BaselineSave: return u.m.s(560);
+    case Dlg::BaselineManage: return u.m.s(720);
     case Dlg::Import:
     case Dlg::ExportHtml:
     case Dlg::Export: return u.m.s(640);
@@ -68,6 +74,7 @@ void close(Frame& f) {
   // 週次レポートの所感はプロジェクトに覚える（次の週の下書きに前回の所感を残す）
   if (f.u.dlg == Dlg::Weekly && f.c.currentId() == f.u.wkProject) f.c.setWeeklyNotes(f.u.wk.notes);
   f.u.dlg = Dlg::None;
+  f.u.blRenameId.clear();
   f.u.paste = Outline{};  // 貼り付けた内容は残さない
   f.u.pasteParent.clear();
   ImGui::CloseCurrentPopup();
@@ -342,6 +349,11 @@ void dlgExportHtml(Frame& f) {
     ImGui::NewLine();
     ImGui::Checkbox("依存の矢印を出す", &r.showDeps);
   }
+  if (const Baseline* bl = s->shownBaseline(); bl && (r.gantt || r.stats)) {
+    ImGui::SeparatorText("ベースライン");
+    const std::string l = "ベースライン「" + bl->name + "」との差を入れる（ガントに計画のバー、統計に「計画との差」）";
+    ImGui::Checkbox(l.c_str(), &r.baseline);
+  }
   ImGui::SeparatorText("色");
   if (ImGui::RadioButton("ライト（印刷向け・既定）", !r.dark)) r.dark = false;
   ImGui::SameLine(0, u.m.s(16));
@@ -459,6 +471,17 @@ void dlgWeekly(Frame& f) {
   ImGui::Checkbox("先週から変わったこと", &sec.changes);
   ImGui::SameLine(0, u.m.s(16));
   ImGui::Checkbox("所感・課題・お願い", &sec.notes);
+  {
+    // 表示するベースラインがあるときだけ選べる（既定はオフ）
+    const Baseline* bl = s->shownBaseline();
+    ImGui::BeginDisabled(bl == nullptr);
+    ImGui::Checkbox("ベースラインとの差", &sec.baseline);
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (bl) ImGui::TextDisabled("（「%s」と比べます）", bl->name.c_str());
+    else ImGui::TextDisabled("（「ベースラインの管理…」で表示するものを選ぶと使えます）");
+    if (!bl) sec.baseline = false;
+  }
   const bool any = sec.any();
 
   if (sec.notes) {
@@ -474,7 +497,7 @@ void dlgWeekly(Frame& f) {
 
   // プレビュー（条件が変わったときだけ作り直す）
   std::string key = std::to_string(s->version()) + "|" + std::to_string(u.wkPeriod) + "|" + std::to_string(o.from) + "|" + std::to_string(o.to) + "|";
-  for (bool b : {sec.summary, sec.done, sec.progress, sec.next, sec.risks, sec.milestones, sec.assignees, sec.changes, sec.notes}) key += b ? '1' : '0';
+  for (bool b : {sec.summary, sec.done, sec.progress, sec.next, sec.risks, sec.milestones, sec.assignees, sec.changes, sec.notes, sec.baseline}) key += b ? '1' : '0';
   key += "|" + o.notes;
   if (key != u.wkPreviewKey) {
     const auto r = c.renderWeekly(o, false);
@@ -535,6 +558,174 @@ void dlgWeekly(Frame& f) {
     if (!path) return;  // やめた
     (void)f.c.exportWeekly(*path, opt, html);
   });
+}
+
+// ベースラインを保存（Issue #53）。名前を付けて、いまの日程を残す
+void dlgBaselineSave(Frame& f) {
+  UiState& u = f.u;
+  app::AppController& c = f.c;
+  Session* s = c.session();
+  if (!s || !s->tree()) return close(f);
+  if (ImGui::IsWindowAppearing()) {
+    u.dName = c.defaultBaselineName();
+    ImGui::SetKeyboardFocusHere();
+  }
+  const std::size_t have = s->baselines().list.size();
+  const bool full = have >= kBaselineMax;
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextUnformatted("いまの各課題の、見込みの開始日・完了日・期限と状況を、名前をつけて保存します。あとで今の見込みと比べ、ガント・リスト・統計に「計画との差」を出します。");
+  ImGui::PopTextWrapPos();
+  ImGui::TextUnformatted("名前（例: キックオフ、v1.0 合意）");
+  ImGui::SetNextItemWidth(-1);
+  ImGui::InputText("##blname", &u.dName);
+  const bool enter = ImGui::IsItemFocused() && enterPressed(u);
+  const std::string clean = baselineSanitizeName(u.dName);
+  if (text::codepointCount(u.dName) > kBaselineMaxNameChars)
+    ImGui::TextDisabled("名前は %zu 文字までです（超えた分は切って保存します）。", kBaselineMaxNameChars);
+  ImGui::TextDisabled("保存済み %zu / %zu", have, kBaselineMax);
+  ImGui::Spacing();
+  ImGui::PushTextWrapPos(0);
+  ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->tight));
+  ImGui::TextUnformatted("件名が設定ファイル（project.settings.json）に入ります（担当者名は入りません）。共有・バックアップ用のJSONには入りません。フォルダごと渡す前に、内容を確かめてください。");
+  ImGui::PopStyleColor();
+  if (full) {
+    ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
+    ImGui::Text("ベースラインは %zu つまで保存できます。「ベースラインの管理…」で不要なものを削除してから保存してください。", kBaselineMax);
+    ImGui::PopStyleColor();
+  }
+  ImGui::PopTextWrapPos();
+  const bool ok = !full && !clean.empty();
+  const int b = buttons(f, {"保存", "キャンセル", "ベースラインの管理…"}, false, ok);
+  if (b == 2) {
+    close(f);
+    openDialog(f, Dlg::BaselineManage);
+    return;
+  }
+  if (b == 1) return close(f);
+  if (b == 0 || (enter && ok)) {
+    (void)c.saveBaseline(u.dName);
+    close(f);
+  }
+}
+
+// ベースラインの管理（一覧・表示するものの選択・名前の変更・削除）
+void dlgBaselineManage(Frame& f) {
+  UiState& u = f.u;
+  app::AppController& c = f.c;
+  Session* s = c.session();
+  if (!s) return close(f);
+  const BaselineSet& set = s->baselines();
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextUnformatted("表示するベースラインを選ぶと、ガントに計画のバーと差、リストの列「計画との差」、統計の節、HTML・週次レポートに比較が出ます。");
+  ImGui::PopTextWrapPos();
+  if (set.list.empty()) {
+    ImGui::Spacing();
+    ImGui::TextDisabled("ベースラインはまだありません。「…」メニューの「ベースラインを保存…」で、いまの日程を残せます。");
+  } else {
+    ImGui::Spacing();
+    if (ImGui::RadioButton("表示しない", set.shown.empty())) c.showBaseline("");
+    ImGui::TextDisabled("保存済み %zu / %zu", set.list.size(), kBaselineMax);
+    if (ImGui::BeginTable("##bltable", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+      ImGui::TableSetupColumn("表示", ImGuiTableColumnFlags_WidthFixed, u.m.s(48));
+      ImGui::TableSetupColumn("名前", ImGuiTableColumnFlags_WidthStretch);
+      ImGui::TableSetupColumn("保存した日時", ImGuiTableColumnFlags_WidthFixed, u.m.s(130));
+      ImGui::TableSetupColumn("課題", ImGuiTableColumnFlags_WidthFixed, u.m.s(64));
+      ImGui::TableSetupColumn("操作", ImGuiTableColumnFlags_WidthFixed, u.m.s(170));
+      ImGui::TableHeadersRow();
+      std::string renameDone, renameTo, remove;
+      for (const Baseline& b : set.list) {
+        ImGui::TableNextRow();
+        ImGui::PushID(b.id.c_str());
+        ImGui::TableSetColumnIndex(0);
+        if (ImGui::RadioButton("##show", set.shown == b.id)) c.showBaseline(b.id);
+        ImGui::TableSetColumnIndex(1);
+        if (u.blRenameId == b.id) {
+          if (u.blRenameFocus) {
+            ImGui::SetKeyboardFocusHere();
+            u.blRenameFocus = false;
+          }
+          ImGui::SetNextItemWidth(-1);
+          ImGui::InputText("##rn", &u.dText);
+          if (ImGui::IsItemFocused() && enterPressed(u)) {
+            renameDone = b.id;
+            renameTo = u.dText;
+          }
+        } else {
+          if (set.shown == b.id) ImGui::PushFont(u.fontBold);
+          ImGui::TextUnformatted(b.name.c_str());
+          if (set.shown == b.id) ImGui::PopFont();
+        }
+        ImGui::TableSetColumnIndex(2);
+        ImGui::TextDisabled("%s", b.at.empty() ? "-" : (b.at.substr(0, 10) + " " + b.at.substr(11)).c_str());
+        ImGui::TableSetColumnIndex(3);
+        ImGui::TextDisabled("%zu 件%s", b.items.size(), b.truncated ? "+" : "");
+        ImGui::TableSetColumnIndex(4);
+        if (u.blRenameId == b.id) {
+          if (ImGui::SmallButton("決定")) {
+            renameDone = b.id;
+            renameTo = u.dText;
+          }
+          ImGui::SameLine();
+          if (ImGui::SmallButton("取消")) u.blRenameId.clear();
+        } else {
+          if (ImGui::SmallButton("名前の変更")) {
+            u.blRenameId = b.id;
+            u.blRenameFocus = true;
+            u.dText = b.name;
+          }
+          ImGui::SameLine();
+          if (ImGui::SmallButton("削除")) remove = b.id;
+        }
+        ImGui::PopID();
+      }
+      ImGui::EndTable();
+      if (!renameDone.empty()) {
+        if (c.renameBaseline(renameDone, renameTo)) u.blRenameId.clear();
+      }
+      if (!remove.empty()) {
+        u.blDeleteId = remove;
+        close(f);
+        openDialog(f, Dlg::ConfirmBaselineDelete);
+        return;
+      }
+    }
+  }
+  ImGui::Spacing();
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextDisabled("ベースラインは project.settings.json に入ります（共有・バックアップ用のJSONには入りません）。");
+  ImGui::PopTextWrapPos();
+  const bool full = set.list.size() >= kBaselineMax;
+  const int b = buttons(f, {"閉じる", "いまの日程を保存…"}, false, true);
+  if (b == 0) return close(f);
+  if (b == 1) {
+    if (full) {
+      c.toast("ベースラインは " + std::to_string(kBaselineMax) + " つまで保存できます。不要なものを削除してから保存してください");
+      return;
+    }
+    close(f);
+    openDialog(f, Dlg::BaselineSave);
+  }
+}
+
+void dlgConfirmBaselineDelete(Frame& f) {
+  UiState& u = f.u;
+  app::AppController& c = f.c;
+  Session* s = c.session();
+  const Baseline* b = s ? baselineFind(s->baselines(), u.blDeleteId) : nullptr;
+  if (!b) {
+    close(f);
+    return;
+  }
+  ImGui::PushTextWrapPos(0);
+  ImGui::Text("ベースライン「%s」を削除します。", b->name.c_str());
+  ImGui::TextDisabled("保存した計画の日程が消えます。元に戻せません。");
+  ImGui::PopTextWrapPos();
+  const int r = buttons(f, {"削除", "キャンセル"}, true);
+  if (r < 0) return;
+  if (r == 0) (void)c.deleteBaseline(u.blDeleteId);
+  u.blDeleteId.clear();
+  close(f);
+  openDialog(f, Dlg::BaselineManage);
 }
 
 // 以前の平置きのプロジェクトがあるときだけ出す。自動では動かさず、ここで押したときに移す
@@ -1005,6 +1196,10 @@ void dlgSettings(Frame& f) {
     bool v = c.uiBool("cols", "pred", false);  // 既定はオフ
     if (ImGui::Checkbox("先行の列（リストとガントの表に出す）", &v)) c.setUiSub("cols", "pred", v);
   }
+  {
+    bool v = c.uiBool("cols", "plan", false);  // 既定はオフ。ベースラインを表示しているときだけ出る
+    if (ImGui::Checkbox("計画との差の列（ベースラインを表示しているとき、リストとガントの表に出す）", &v)) c.setUiSub("cols", "plan", v);
+  }
   if (ImGui::Button("テーマ・密度・文字の大きさ・保存先（アプリの設定）…")) {
     close(f);
     openDialog(f, Dlg::AppSettings);
@@ -1274,7 +1469,7 @@ void drawDialogs(Frame& f) {
   }
   // Esc と外側クリックで閉じる（確認ダイアログは外側クリックでは閉じない）
   const bool confirm = u.dlg == Dlg::ConfirmDelete || u.dlg == Dlg::ConfirmQuit || u.dlg == Dlg::Conflict ||
-                       u.dlg == Dlg::ConfirmIssueDelete || u.dlg == Dlg::AttachOpenWarn || (u.dlg == Dlg::AppSettings && !u.pendingDir.empty());
+                       u.dlg == Dlg::ConfirmIssueDelete || u.dlg == Dlg::AttachOpenWarn || u.dlg == Dlg::ConfirmBaselineDelete || (u.dlg == Dlg::AppSettings && !u.pendingDir.empty());
   const bool outside = ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                        !ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup |
                                                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
@@ -1306,6 +1501,9 @@ void drawDialogs(Frame& f) {
     case Dlg::AttachPreview: dlgAttachPreview(f); break;
     case Dlg::ExportHtml: dlgExportHtml(f); break;
     case Dlg::Weekly: dlgWeekly(f); break;
+    case Dlg::BaselineSave: dlgBaselineSave(f); break;
+    case Dlg::BaselineManage: dlgBaselineManage(f); break;
+    case Dlg::ConfirmBaselineDelete: dlgConfirmBaselineDelete(f); break;
     default: close(f); break;
   }
   if (!open) close(f);

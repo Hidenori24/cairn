@@ -52,6 +52,25 @@ void sortCands(std::vector<Cand>& v, const Tree& T) {
   });
 }
 
+// ベースラインの節の見出し・件数・消えた課題（現在の課題がなくても作れる部分）
+void fillBaselineHeader(WeeklyBaseline& wb, const BaselineCompare& bc, std::size_t cap) {
+  wb.available = true;
+  wb.name = cleanText(bc.baselineName);
+  wb.at = bc.baselineAt;
+  wb.truncated = bc.truncated;
+  wb.sum = bc.sum;
+  for (const BaselineEntry& e : bc.removed) {
+    if (e.parent) continue;
+    ++wb.removed.total;
+    if (wb.removed.items.size() >= cap) continue;
+    WeeklyBaselineRow row;
+    row.id = cleanText(e.id);
+    row.name = cleanText(e.title);
+    row.planFinish = e.planFinish;
+    wb.removed.items.push_back(std::move(row));
+  }
+}
+
 }  // namespace
 
 WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) {
@@ -76,6 +95,9 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
   if (n == 0 || in.issues.size() != n || in.rows.size() != n || T.dfs.size() != n || T.dfsPos.size() != n || T.kids.size() != n ||
       T.did.size() != n || T.name.size() != n || T.kind.size() != n || T.dl.size() != n || T.preds.size() != n || T.ids.size() != n) {
     r.empty = true;
+    // 課題が 0 件（全部削除した）ときは、入力の食い違いではないので、有効な比較（消えた課題）は出す
+    if (n == 0 && in.issues.empty() && in.rows.empty() && opt.sections.baseline && in.baseline && in.baseline->entries.empty())
+      fillBaselineHeader(r.baseline, *in.baseline, std::max<std::size_t>(1, opt.maxItems));
     return r;
   }
   const std::size_t cap = std::max<std::size_t>(1, opt.maxItems);
@@ -320,6 +342,47 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
       ch.finishMoved.push_back(std::move(mv));
     }
   }
+
+  // ---- ベースラインとの差 ----
+  if (opt.sections.baseline && in.baseline && in.baseline->entries.size() == n) {
+    const BaselineCompare& bc = *in.baseline;
+    WeeklyBaseline& wb = r.baseline;
+    fillBaselineHeader(wb, bc, cap);
+    const auto rowOf = [&](int i) {
+      const std::size_t k = static_cast<std::size_t>(i);
+      const BaselineEntry& e = bc.entries[k];
+      WeeklyBaselineRow row;
+      row.index = i;
+      row.id = cleanText(e.id);
+      row.did = cleanText(T.did[k]);
+      row.name = cleanText(T.name[k]);
+      row.assignee = cleanText(assigneeOf(i));
+      row.planFinish = e.planFinish;
+      row.nowFinish = e.nowFinish;
+      row.diffDays = e.finishDiff;
+      row.differs = e.finishDiffers;
+      row.done = e.done;
+      return row;
+    };
+    std::vector<Cand> cLate, cEarly, cAdded;
+    for (int i : T.dfs) {
+      if (!inTree(i)) continue;
+      const std::size_t k = static_cast<std::size_t>(i);
+      if (!T.kids[k].empty()) continue;  // 親のまとめは子の差を言い換えたものなので数えない
+      const BaselineEntry& e = bc.entries[k];
+      if (e.state == BaselineState::Late) cLate.push_back({i, -static_cast<std::int64_t>(e.finishDiff)});
+      else if (e.state == BaselineState::Early) cEarly.push_back({i, static_cast<std::int64_t>(e.finishDiff)});  // 早い順（負の大きい方が先）
+      else if (e.state == BaselineState::Added) cAdded.push_back({i, 0});
+    }
+    const auto fillB = [&](WeeklyBaselineList& list, std::vector<Cand>& c) {
+      sortCands(c, T);
+      list.total = static_cast<int>(c.size());
+      for (std::size_t q = 0; q < c.size() && q < cap; ++q) list.items.push_back(rowOf(c[q].idx));
+    };
+    fillB(wb.late, cLate);
+    fillB(wb.early, cEarly);
+    fillB(wb.added, cAdded);
+  }
   return r;
 }
 
@@ -474,6 +537,34 @@ std::string diffPhrase(const WeeklyMilestone& m) {
 std::string loadText(int percentValue) { return percentValue < 0 ? std::string("-") : std::to_string(percentValue) + "%"; }
 
 std::string moreText(int omitted) { return "ほか " + std::to_string(omitted) + " 件"; }
+
+std::string baselineAtText(const std::string& at) {
+  if (at.size() != 16) return {};
+  return at.substr(0, 4) + "/" + at.substr(5, 2) + "/" + at.substr(8, 2) + " " + at.substr(11, 5);
+}
+
+std::string baselineMoveText(const WeeklyBaselineRow& r) {
+  std::string s = "計画 " + (r.planFinish ? fmtMd(*r.planFinish) : std::string("-")) + " → 見込み " + fmtMd(r.nowFinish) + "・";
+  if (r.diffDays == 0) return s + "営業日の差は 0（休業日・土日をまたいだ日付の違い）";
+  const int a = r.diffDays < 0 ? -r.diffDays : r.diffDays;
+  return s + "計画より " + std::to_string(a) + " 営業日" + (r.diffDays > 0 ? "遅れ" : "早い");
+}
+
+std::string baselineAddedText(const WeeklyBaselineRow& r) { return "完了見込み " + fmtMd(r.nowFinish); }
+
+std::string baselineRemovedText(const WeeklyBaselineRow& r) {
+  return "計画の完了 " + (r.planFinish ? fmtMd(*r.planFinish) : std::string("-"));
+}
+
+std::string baselineCountsText(const BaselineSummary& s) {
+  return "遅れ " + std::to_string(s.late) + " 件 ／ 早まり " + std::to_string(s.early) + " 件 ／ 計画どおり " + std::to_string(s.onPlan) +
+         " 件 ／ 計画になかった " + std::to_string(s.added) + " 件 ／ 消えた " + std::to_string(s.removed) + " 件";
+}
+
+std::string baselineSameDayNote(const BaselineSummary& s) {
+  if (s.sameDayDiffers <= 0) return {};
+  return "営業日の差が 0 でも完了日が違う課題が " + std::to_string(s.sameDayDiffers) + " 件あります（休業日・土日をまたいだ日付の違い）。";
+}
 
 }  // namespace weeklyfmt
 
