@@ -495,7 +495,14 @@ void AppController::afterEdit() {
   absorbNotices();
   if (session_->version() != seenVersion_) {
     seenVersion_ = session_->version();
-    ws_->update(currentId_, recordOf(session_->data()));
+    if (session_->contentVersion() != seenContentVersion_) {
+      seenContentVersion_ = session_->contentVersion();
+      ws_->update(currentId_, recordOf(session_->data()));
+    } else {
+      // 課題を編集していない間の変更（履歴の記録・表示状態など）は設定だけを書く。元の CSV を再エクスポートして
+      // 形を変えたり、取り込み時に読み飛ばした行を消したりしない
+      ws_->updateSettings(currentId_, session_->data().settings);
+    }
     pruneSelection();
     if (ws_->hasDirty()) scheduleSave();
   }
@@ -605,6 +612,7 @@ void AppController::openSession(const std::string& id, bool keepHistory) {
   if (!session_->error().empty()) toast("このプロジェクトを計算できません: " + session_->error());
   absorbNotices();
   seenVersion_ = session_->version();
+  seenContentVersion_ = session_->contentVersion();
   if (currentId_ != id) colFilter_ = ColumnFilter{};  // 列の値はプロジェクトごとに違う
   currentId_ = id;
   firstRun_ = false;
@@ -615,6 +623,7 @@ void AppController::openSession(const std::string& id, bool keepHistory) {
     prefs_.currentProject = id;
     savePrefs();
   }
+  recordHistory(HistoryTrigger::Open);  // 開いたとき、その週の点がなければ記録する（Issue #64）
 }
 
 bool AppController::openProject(const std::string& id) {
@@ -805,6 +814,7 @@ Result<std::string> AppController::buildReport(const ExportOptions& opt) const {
   if (!s || !s->tree() || !s->rows()) return Error{"プロジェクトが開かれていません"};
   ExportInput in(*s->tree(), s->viewIssues(), *s->rows(), s->calendar());
   in.baseline = s->baselineCompare();
+  in.history = &s->history();
   in.base = s->baseDay();
   in.meta = &s->meta();
   in.projectName = s->settings().name;
@@ -893,6 +903,7 @@ void AppController::recordWeekly(const WeeklyOptions& opt) {
   WeeklySnapshot snap = makeWeeklySnapshot(in);
   s->setWeeklyNotes(opt.notes);
   s->putWeeklySnapshot(std::move(snap));
+  recordHistory(HistoryTrigger::Weekly);  // 週報を出した週の件数も覚える（Issue #64）
   afterEdit();
 }
 
@@ -918,6 +929,28 @@ Status AppController::exportWeekly(const std::string& path, const WeeklyOptions&
 void AppController::releaseFrame() {
   retiredSessions_.clear();
   if (session_) session_->releaseFrame();
+}
+
+// ---------------------------------------------------------------- 状況の件数の履歴
+// 履歴を書く入口はここだけ。今は読み取り専用で開く仕組みがないので常に書けるが、将来（#62 のロックなど）
+// 読み取り専用のときはここで何もせず返す
+void AppController::recordHistory(HistoryTrigger why) {
+  Session* s = session_.get();
+  if (!s) return;
+  const bool manual = why == HistoryTrigger::Manual;
+  const auto r = s->recordHistory(why == HistoryTrigger::Open ? HistoryMode::IfMissing : HistoryMode::Replace);
+  if (!r.ok()) {
+    if (manual) toast("記録できません: " + r.error());
+    return;
+  }
+  if (r.value() == HistoryResult::Recorded || r.value() == HistoryResult::Replaced) afterEdit();
+  if (!manual) return;
+  switch (r.value()) {
+    case HistoryResult::Recorded: toast("今週の件数を記録しました"); break;
+    case HistoryResult::Replaced: toast("今週の記録を更新しました"); break;
+    case HistoryResult::Unchanged: toast("今週の記録から変わりはありません"); break;
+    default: break;
+  }
 }
 
 // ---------------------------------------------------------------- ベースライン

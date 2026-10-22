@@ -67,7 +67,8 @@ struct ProjectEntry {
   std::string stem;        // 対応するフォルダ名（Flat ではファイル名の stem。まだ書いていなければ空）
   Layout layout = Layout::Folder;
   std::int64_t mtime = 0;  // 最後に自分が書いた/読んだ時点の mtime
-  bool dirty = false;      // 未保存の編集がある
+  bool dirty = false;      // 未保存の編集がある（CSV と設定の両方を書く）
+  bool settingsDirty = false;  // 設定だけに未保存の変更がある（CSV は元のまま。課題を編集するまで書き換えない）
   std::string lastSig;     // 最後に書いた内容（CSV + 設定JSON）
   const std::string& id() const { return rec.settings.id; }
 };
@@ -94,6 +95,9 @@ class Workspace {
   std::string add(ProjectRecord rec, bool dirty = true);
   // 内容を差し替える。変わっていれば dirty にする
   void update(const std::string& id, ProjectRecord rec);
+  // 設定（と CSV に入らないシナリオ名以外の設定）だけを差し替える。CSV の文字列には触れず、変わっていれば settingsDirty にする。
+  // 課題を編集していない間の設定の変更（履歴の記録・表示状態など）で、元の CSV を再エクスポートして書き換えないために使う
+  void updateSettings(const std::string& id, ProjectSettings settings);
   bool hasDirty() const;
 
   // 未保存のものを書く。内容が前回と同じなら書かない
@@ -130,6 +134,7 @@ class Workspace {
 
  private:
   Status writeEntry(ProjectEntry& e);
+  Status writeSettingsOnly(ProjectEntry& e);  // 設定の JSON だけを書く（CSV と控えには触れない）。まだ書いていないものは writeEntry
   Status backupOnce(const ProjectEntry& e);
   std::string backupDirOf(const ProjectEntry& e) const;
   void pruneBackups(const std::string& bdir);

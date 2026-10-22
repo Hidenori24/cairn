@@ -3119,6 +3119,193 @@ int main() {
     ui::applyStyle(*h.u.t, h.u.m);
     h.frame(2);
   }
+  // 統計ビューの「状況の件数の推移（累積フロー）」（Issue #64）: 案内・図・ホバー・記録なし・「いま記録する」・開いたときの自動記録・狭い幅
+  {
+    const auto settingsPathOf = [&](const char* folder) {
+      std::string found;
+      for (const std::string& p : h.fs.paths())
+        if (p.find(folder) != std::string::npos && p.size() > 21 && p.compare(p.size() - 21, 21, "project.settings.json") == 0) found = p;
+      return found;
+    };
+    const auto goTo = [&](int y, int m, int d) { h.clk.set(LocalTime{y, m, d, 9, 0, 0}); };
+    const std::string csvText =
+        "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Resolved,Duration (weeks)\n"
+        "1,Epic,基盤,,,,High,,\n"
+        "2,Task,設計,1,田中,Done,High,2026-10-13,1\n"
+        "3,Task,実装,1,田中,In Progress,Medium,,2\n"
+        "4,Task,評価,1,鈴木,To Do,Medium,,1\n"
+        "5,Task,調整,,鈴木,To Do,Low,,1\n"
+        "6,Milestone,節目,,,,Low,,0\n";
+    goTo(2026, 10, 19);
+    h.u.t = &ui::lightTokens();
+    h.u.m.compact = false;
+    h.u.m.scale = 1.0f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.c.filter() = Filter{};
+    h.c.clearSelection();
+    h.u.detailOpen = false;
+    // 作業のない新規プロジェクトに課題を足す: 開いたときは記録されず、記録 0 件の案内が出る
+    h.c.createProject(app::SampleKind::Empty, "累積フロー空", "CFE");
+    check(h.c.session() && h.c.session()->history().empty(), "作業のない新規プロジェクトには自動で記録しない");
+    h.c.session()->addIssue("", "", "A");
+    h.c.session()->addIssue("", "", "B");
+    h.c.afterEdit();
+    h.c.setView(app::View::Stats);
+    h.clk.advanceMs(15000);  // 作成の通知（左下）が消えてから押す
+    h.frame(4);
+    auto& cf = h.u.statsCfd;
+    check(cf.drawn && cf.recorded == 0 && cf.pending && !cf.chart, "記録が 0 件なら「記録が溜まるとここに出ます（いま 0 週ぶん）」の案内だけを出す");
+    // 「いま記録する」を押すと 1 件になる（まだ案内。図は 2 点から）
+    const auto recVisible = [&] { return cf.recA.y > 130 && cf.recB.y < 860; };
+    const auto scrollToRec = [&] {
+      ImGuiIO& io = ImGui::GetIO();
+      io.AddMousePosEvent(700, 450);
+      for (int k = 0; k < 20 && cf.recA.y < 130; ++k) {
+        io.AddMouseWheelEvent(0, 20);
+        h.frame(1);
+      }
+      for (int k = 0; k < 200 && !recVisible(); ++k) {
+        io.AddMouseWheelEvent(0, -1);
+        h.frame(2);
+      }
+    };
+    scrollToRec();
+    check(recVisible(), "「いま記録する」ボタンが見える位置までスクロールできる");
+    if (recVisible()) {
+      h.click((cf.recA.x + cf.recB.x) / 2, (cf.recA.y + cf.recB.y) / 2);
+      h.frame(3);
+      check(h.c.session()->history().points.size() == 1, "「いま記録する」で今週の点が 1 つ入る");
+      check(cf.recorded == 1 && cf.pending && !cf.chart, "記録が 1 件なら案内だけで図は描かない（いま 1 週ぶん）");
+      check(!h.c.toasts().empty() && h.c.toasts().back().text.find("記録しました") != std::string::npos, "記録したことを通知する");
+      // もう一度押しても、同じ週なら点は増えない（変わりがなければそう知らせる）
+      h.clk.advanceMs(15000);
+      h.frame(2);
+      scrollToRec();
+      if (recVisible()) {
+        h.click((cf.recA.x + cf.recB.x) / 2, (cf.recA.y + cf.recB.y) / 2);
+        h.frame(3);
+        check(h.c.session()->history().points.size() == 1, "同じ週にもう一度押しても点は増えない");
+        check(h.c.toasts().back().text.find("変わりはありません") != std::string::npos, "変わりがなければそう知らせる");
+      }
+    }
+    h.c.deleteCurrentProject();
+
+    // 複数の週: 開いたときの自動記録（同じ週は設定ファイルを書き換えない）、週をまたぐと追加、間が空けば「記録なし」
+    check(h.c.importText(csvText, "累積フロー", app::ImportMode::New).ok, "累積フロー用の取り込み");
+    const std::string id = h.c.currentId();
+    check(h.c.session()->history().points.size() == 1, "取り込んで開いたとき、今週の点が自動で入る");
+    h.c.setView(app::View::Stats);
+    h.frame(3);
+    h.clk.advanceMs(1000);
+    h.c.tick();
+    h.clk.advanceMs(1000);
+    h.c.tick();
+    const std::string sp = settingsPathOf("累積フロー");
+    check(!sp.empty(), "設定ファイルの場所");
+    const std::string before = sp.empty() ? std::string() : h.fs.content(sp);
+    const int writes = h.fs.writeCount();
+    check(before.find("\"history\"") != std::string::npos, "設定ファイルに履歴が書かれる");
+    check(h.c.openProject(id), "同じ週にもう一度開く");
+    h.frame(3);
+    h.clk.advanceMs(1000);
+    h.c.tick();
+    h.clk.advanceMs(1000);
+    h.c.tick();
+    check(h.c.session()->history().points.size() == 1, "同じ週に開き直しても点は増えない");
+    check(h.fs.writeCount() == writes && (sp.empty() || h.fs.content(sp) == before), "同じ週に開き直しても設定ファイルは書き換えない（内容も書き込み回数も同じ）");
+    goTo(2026, 10, 26);
+    check(h.c.openProject(id), "翌週に開く");
+    check(h.c.session()->history().points.size() == 2, "週が変わったら開いたとき 1 点足す");
+    h.frame(3);
+    check(cf.drawn && cf.recorded == 2 && cf.chart && cf.weeks == 2 && cf.gaps == 0, "2 週ぶんあれば図が描かれる");
+    goTo(2026, 11, 9);  // 11/2 の週は開いていない
+    check(h.c.openProject(id), "2 週あとに開く");
+    h.frame(3);
+    check(cf.chart && cf.recorded == 3 && cf.weeks == 4 && cf.gaps == 1 && cf.cols.size() == 4, "間の 1 週は「記録なし」として列に残る");
+
+    // ホバー: 記録のある週・ない週とも値（または「記録なし」）のツールチップが出る
+    ImGuiIO& io = ImGui::GetIO();
+    const auto colsVisible = [&] { return cf.cols.size() == 4 && cf.cols.front().a.y > 130 && cf.cols.front().b.y < 860; };
+    io.AddMousePosEvent(700, 450);
+    for (int k = 0; k < 20; ++k) {
+      io.AddMouseWheelEvent(0, 20);
+      h.frame(1);
+    }
+    for (int k = 0; k < 200 && !colsVisible(); ++k) {
+      io.AddMouseWheelEvent(0, -1);
+      h.frame(2);
+    }
+    check(colsVisible(), "累積フロー図が見える位置までスクロールできる");
+    if (colsVisible()) {
+      for (int i : {0, 2, 3}) {  // 2 番目（添字 2）が記録なし
+        const auto& col = cf.cols[static_cast<std::size_t>(i)];
+        io.AddMousePosEvent((col.a.x + col.b.x) / 2, (col.a.y + col.b.y) / 2);
+        h.frame(3);
+        ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+        check(tip && tip->Active, i == 2 ? "記録のない週にマウスを載せると「記録なし」が出る" : "週の上にマウスを載せると 3 つの値が出る");
+        io.AddMousePosEvent(5, 5);
+        h.frame(2);
+      }
+      check(cf.cols[2].a.x > cf.cols[1].a.x && cf.chartX1 >= cf.cols.back().b.x - 0.5f, "列は左から順で、図の幅に収まる");
+    }
+    // ダーク・コンパクト・高DPI でも描ける
+    h.u.t = &ui::darkTokens();
+    h.u.m.compact = true;
+    h.u.m.scale = 1.5f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(4);
+    check(cf.chart && cf.recorded == 3, "ダーク・コンパクト・高DPI でも累積フロー図が描かれる");
+    h.u.t = &ui::lightTokens();
+    h.u.m.compact = false;
+    h.u.m.scale = 1.0f;
+    ui::applyStyle(*h.u.t, h.u.m);
+
+    // 幅が狭い（ウィンドウが小さく、詳細パネルも開いている）とき: 104 週ぶんの列が幅に収まり、最後の列もホバーできる
+    for (int i = 0; i < 110; ++i) {
+      const Day d = *parseIso("2026-11-16") + i * 7;
+      const Ymd ymd = civilFromDays(d);
+      goTo(ymd.y, ymd.m, ymd.d);
+      h.c.recordHistory(app::AppController::HistoryTrigger::Manual);
+    }
+    check(h.c.session()->history().points.size() == kHistoryMaxWeeks, "上限 104 週を超えたら古いものから落ちる");
+    {
+      ImGuiIO& io2 = ImGui::GetIO();
+      io2.DisplaySize = ImVec2(900, 900);
+      h.u.detailOpen = true;
+      h.frame(4);
+      check(cf.chart && cf.weeks == static_cast<int>(kHistoryMaxWeeks) && cf.cols.size() == kHistoryMaxWeeks, "104 週の列がすべて描かれる");
+      check(cf.chartX1 < 700, "図は詳細パネルの左に収まる");
+      const auto lastVisible = [&] { return !cf.cols.empty() && cf.cols.back().a.y > 130 && cf.cols.back().b.y < 860; };
+      io2.AddMousePosEvent(300, 450);
+      for (int k = 0; k < 20; ++k) {
+        io2.AddMouseWheelEvent(0, 20);
+        h.frame(1);
+      }
+      for (int k = 0; k < 200 && !lastVisible(); ++k) {
+        io2.AddMouseWheelEvent(0, -1);
+        h.frame(2);
+      }
+      check(lastVisible(), "狭い幅でも図が見える位置までスクロールできる");
+      if (lastVisible()) {
+        check(cf.cols.back().b.x <= cf.chartX1 + 0.5f && cf.cols.front().a.x >= 0, "最後の列が図の幅に収まる");
+        const auto& lc = cf.cols.back();
+        io2.AddMousePosEvent((lc.a.x + lc.b.x) / 2, (lc.a.y + lc.b.y) / 2);
+        h.frame(3);
+        ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+        check(tip && tip->Active, "狭い幅でも最後の列にマウスを載せると値が出る");
+        io2.AddMousePosEvent(5, 5);
+        h.frame(2);
+      }
+      io2.DisplaySize = ImVec2(1440, 900);
+      h.u.detailOpen = false;
+      h.frame(3);
+    }
+    goTo(2026, 10, 19);
+    h.c.deleteCurrentProject();
+    h.u.t = &ui::darkTokens();
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(2);
+  }
   // 5,000 件で日付つきの推移（集計は毎フレーム。重くならない）
   {
     std::string text = "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Created,Updated,Resolved,Duration (weeks)\n";

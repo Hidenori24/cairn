@@ -372,6 +372,18 @@ struct UiState {
     std::vector<AgingRow> agingRows;
     ImVec2 whoA{0, 0}, whoB{0, 0}, rootA{0, 0}, rootB{0, 0};  // 担当者・ルート課題の選択欄
   } statsTrend;
+  // 統計ビューの「状況の件数の推移（累積フロー）」（Issue #64）: 前のフレームの描画の結果（煙テストが当たり位置と件数を知るために使う）
+  struct StatsCfd {
+    bool drawn = false;         // 節を描いた
+    bool chart = false;         // 図を描いた（記録が 2 点以上）
+    bool pending = false;       // 「記録が溜まるとここに出ます」の案内を出した
+    int recorded = 0;           // 記録のある週の数
+    int weeks = 0;              // 図の列の数
+    int gaps = 0;               // 記録のない週の数
+    float chartX1 = 0;          // 図の右端（画面の座標）
+    std::vector<StatsTrend::Col> cols;  // 週ごとの当たり
+    ImVec2 recA{0, 0}, recB{0, 0};      // 「いま記録する」ボタン
+  } statsCfd;
   struct RowDrag {
     std::string id;
     bool active = false;

@@ -1079,6 +1079,130 @@ int main(int argc, char** argv) {
     u.t = &ui::lightTokens();
     ui::applyStyle(*u.t, u.m);
   }
+  // 統計ビューの「状況の件数の推移（累積フロー）」（Issue #64）: ライト・ダーク・記録なしの週あり・案内（記録 1 件）・狭い幅・ホバー
+  {
+    const auto goTo = [&](Day d) {
+      const Ymd ymd = civilFromDays(d);
+      clk.set(LocalTime{ymd.y, ymd.m, ymd.d, 18, 36, 0});
+    };
+    const auto cfdScroll = [&](const std::function<bool()>& reached) {
+      c.setView(app::View::Stats);
+      clk.advanceMs(15000);
+      frames(3);
+      ImGui::GetIO().AddMousePosEvent(700, 450);
+      for (int k = 0; k < 40; ++k) {
+        ImGui::GetIO().AddMouseWheelEvent(0, 20);
+        frames(1);
+      }
+      for (int k = 0; k < 300 && !reached(); ++k) {
+        ImGui::GetIO().AddMouseWheelEvent(0, -1);
+        frames(2);
+      }
+    };
+    const auto cfdAway = [&](const std::string& name) {
+      ImGui::GetIO().AddMousePosEvent(5, 5);
+      frames(2);
+      shot(name);
+    };
+    const auto cfdVisible = [&] {
+      return u.statsCfd.drawn && u.statsCfd.recA.y > 130 && u.statsCfd.recA.y < 520 &&
+             (!u.statsCfd.chart || (!u.statsCfd.cols.empty() && u.statsCfd.cols.back().b.y < 880));
+    };
+    const Day first = *parseIso("2026-07-27");
+    c.createProject(app::SampleKind::Hierarchy, "累積フロー（階層デモ）", "CFD");
+    Session* s = c.session();
+    cfdScroll(cfdVisible);
+    cfdAway("65_cfd_pending");  // 記録 1 件: 案内だけ
+    // 12 週ぶんを少しずつ進めながら記録する。第 4・5・8 週は開かなかった（記録なし）
+    std::vector<std::string> leafIds;
+    for (int id : s->tree()->leafOrder)
+      if (s->tree()->kind[static_cast<std::size_t>(id)] != Kind::Ms) leafIds.push_back(s->tree()->ids[static_cast<std::size_t>(id)]);
+    for (int w = 0; w <= 12; ++w) {
+      const std::size_t doneN = leafIds.size() * static_cast<std::size_t>(w) * static_cast<std::size_t>(w) / (12 * 12 + 40);
+      const std::size_t doingN = std::min(leafIds.size() - doneN, std::size_t(4 + w / 2));
+      for (std::size_t k = 0; k < leafIds.size(); ++k) {
+        const std::string st = k < doneN ? "Done" : (k < doneN + doingN ? "In Progress" : "To Do");
+        s->setField(leafIds[k], [&](Issue& o) {
+          o.status = st;
+          if (st != "Done") o.resolved = OptDay{};
+        });
+      }
+      c.afterEdit();
+      if (w == 4 || w == 5 || w == 8) continue;  // 開かなかった週
+      goTo(first + w * 7 + 2);
+      c.recordHistory(app::AppController::HistoryTrigger::Manual);
+    }
+    goTo(*parseIso("2026-10-19"));
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    cfdScroll(cfdVisible);
+    cfdAway("66_cfd_light");
+    if (u.statsCfd.cols.size() > 6) {  // 記録のない週（第 4 週）にマウスを載せる
+      const auto& col = u.statsCfd.cols[4];
+      ImGui::GetIO().AddMousePosEvent((col.a.x + col.b.x) / 2, (col.a.y + col.b.y) / 2);
+      frames(2);
+      shot("66b_cfd_gap_tip");
+      const auto& col2 = u.statsCfd.cols[10];  // 記録のある週
+      ImGui::GetIO().AddMousePosEvent((col2.a.x + col2.b.x) / 2, (col2.a.y + col2.b.y) / 2);
+      frames(2);
+      shot("66c_cfd_week_tip");
+    }
+    u.t = &ui::darkTokens();
+    ui::applyStyle(*u.t, u.m);
+    cfdScroll(cfdVisible);
+    cfdAway("67_cfd_dark");
+    // 狭い幅（詳細パネルを開く）
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    io.DisplaySize = ImVec2(900, 900);
+    u.detailOpen = true;
+    cfdScroll(cfdVisible);
+    cfdAway("68_cfd_narrow");
+    // 未着手・進行中・完了がどれもある状態にしてから（境界が重ならない）
+    for (std::size_t k = 0; k < leafIds.size(); ++k) {
+      const std::string st = k < 5 ? "Done" : (k < 9 ? "In Progress" : "To Do");
+      s->setField(leafIds[k], [&](Issue& o) {
+        o.status = st;
+        if (st != "Done") o.resolved = OptDay{};
+      });
+    }
+    c.afterEdit();
+    // 104 週・件数が一定・幅が最小（破線・点線が 1 区間より長いパターンで続くことを確かめる）
+    for (int w = 0; w < 110; ++w) {
+      goTo(first + 12 * 7 + w * 7 + 2);
+      c.recordHistory(app::AppController::HistoryTrigger::Manual);
+    }
+    io.DisplaySize = ImVec2(620, 900);
+    frames(4);
+    ImGui::GetIO().AddMousePosEvent(150, 450);  // 詳細パネルの上ではなく、統計の上でスクロールする
+    for (int k = 0; k < 60; ++k) {
+      ImGui::GetIO().AddMouseWheelEvent(0, -2);
+      frames(1);
+    }
+    clk.advanceMs(15000);  // 記録の通知（左下）が消えてから撮る
+    frames(3);
+    cfdAway("69_cfd_104w_narrow");
+    io.DisplaySize = ImVec2(1440, 900);
+    u.detailOpen = false;
+    goTo(*parseIso("2026-10-19"));
+    // 書き出した HTML（ブラウザで開いて確かめる。ライト・ダーク）
+    for (const bool dark : {false, true}) {
+      ExportOptions opt;
+      opt.gantt = opt.list = false;
+      opt.dark = dark;
+      const auto html = c.buildReport(opt);
+      if (html.ok()) {
+        const std::string file = dark ? "html_cfd_dark.html" : "html_cfd_light.html";
+        std::ofstream o(out + "/" + file, std::ios::binary);
+        o << html.value();
+        std::printf("wrote %s/%s (%zu KB)\n", out.c_str(), file.c_str(), html.value().size() / 1024);
+      }
+    }
+    c.deleteCurrentProject();
+    goTo(*parseIso("2026-10-19"));
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+  }
   // HTML に書き出す（Issue #42）: 「…」メニュー・ダイアログ・通知と、書き出した HTML（ブラウザで開いて確かめる）
   {
     const auto dumpHtml = [&](const std::string& file, ExportOptions opt) {
