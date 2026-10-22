@@ -140,6 +140,22 @@ void trimImages(Frame& f);
 // マウスを載せる（少し待つ）と、課題 issueId の添付のサムネイルのツールチップを出す（SPEC 10.9。載せていないときは画像を読まない）
 float drawAttachBadge(Frame& f, const std::string& issueId, ImVec2 pos, float cy, int count, bool* clicked);
 
+// ---- 関連リンク（app/ui/panel_links.cpp。Issue #60）----
+// 詳細パネルの「添付」タブの中の「リンク」の節（i = 課題の添字）。追加・編集・貼り付けて追加・一覧・右クリックのメニュー
+void drawLinksSection(Frame& f, int i);
+// リンクを開く。許可リストにないものは開かず理由を通知する。parentFolder = 「場所（フォルダ）を開く」（ファイルの親のフォルダ）。
+// 実行ファイルなどは先に警告のダイアログ（Dlg::LinkOpenWarn）を出す。存在は確かめない（開けなければ理由を通知）
+void openLinkAt(Frame& f, const std::string& issueId, std::size_t index, bool parentFolder);
+// 検査・警告が済んだ場所を開く（IPlatform::openLink。開けなければ理由を通知）
+void openLinkNow(Frame& f, const std::string& target);
+// 並べ替えのドラッグで、位置 pos に離したときの挿入位置（0〜リンクの数）。リンクの一覧の外なら -1
+int linkReorderSlot(const UiState& u, const std::string& issueId, ImVec2 pos);
+// リンクの数のバッジ（外へ出る矢印のアイコンと数）。添付のクリップとは別。クリックで添付タブ（リンクの節）を開く。
+// マウスを載せる（少し待つ）と、課題 issueId のリンクの一覧（先頭の 6 件と「ほか N 件」）のツールチップを出す
+float drawLinkBadge(Frame& f, const std::string& issueId, ImVec2 pos, float cy, int count, bool* clicked);
+// 種類のアイコンの名前（risky = 実行ファイルなどの警告の印）
+const char* linkIconName(LinkKind kind, bool risky);
+
 // 件名セル（開閉・種別・表示ID・件名・コメント数・ホバー時の小ボタン）
 struct NameCellOpts {
   bool showHoverButtons = true;

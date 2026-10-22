@@ -18,6 +18,7 @@
 #include "app_controller.hpp"
 #include "roadmap/gen.hpp"
 #include "roadmap/schedule.hpp"
+#include "roadmap/links.hpp"
 #include "ui/app_ui.hpp"
 #include "ui/internal.hpp"
 
@@ -1375,6 +1376,127 @@ int main(int argc, char** argv) {
         }
       }
     }
+  }
+  // 関連リンク（Issue #60）: 添付タブの「リンク」の節（一覧・断った理由・右クリックのメニュー・編集中）、実行ファイルの警告、
+  // 行・カードのバッジとツールチップ。ライト・ダークの両方
+  {
+    c.createProject(app::SampleKind::Hierarchy, "リンクの画面", "LNK");
+    c.addLink("11", "設計書（最新）", "https://example.com/wiki/design/spec");
+    c.addLink("11", "", "\\\\ファイルサーバー\\共有\\案件A\\設計\\仕様書_v3.xlsx");
+    c.addLink("11", "", "S:\\案件A\\共有フォルダ\\");
+    c.addLink("11", "ビルド手順", "C:\\tools\\build_all.bat");
+    c.addLink("11", "GitHub の PR", "https://github.com/Hidenori24/task_management_tool/pull/61");
+    c.addLink("12", "議事録", "https://example.com/minutes");
+    c.addLink("12", "", "\\\\ファイルサーバー\\共有\\議事録\\");
+    for (int k = 0; k < 8; ++k) c.addLink("8", "リンク" + std::to_string(k + 1), "https://example.com/p/" + std::to_string(k + 1));
+    c.clearSelection();
+    ImGuiIO& lio = ImGui::GetIO();
+    for (const bool dark : {false, true}) {
+      u.t = dark ? &ui::darkTokens() : &ui::lightTokens();
+      ui::applyStyle(*u.t, u.m);
+      const std::string tag = dark ? "dark" : "light";
+      u.linkTargetBuf.clear();
+      u.linkTitleBuf.clear();
+      u.linkError.clear();
+      u.linkEditing = false;
+      c.setView(app::View::List);
+      c.select("11");
+      u.detailOpen = true;
+      u.detailTab = 3;
+      lio.AddMousePosEvent(5, 890);
+      frames(6);
+      shot("70_links_tab_" + tag);
+      // 断った理由（入力は残す）
+      u.linkTargetBuf = "javascript:alert(1)";
+      u.linkError = classifyLink(u.linkTargetBuf).reason;
+      shot("71_links_error_" + tag);
+      u.linkTargetBuf.clear();
+      u.linkError.clear();
+      frames(3);  // 理由の行がなくなった並びで、行の位置を取り直す
+      // 右クリックのメニュー
+      if (u.linkRows.size() > 1) {
+        const auto& r = u.linkRows[1];
+        const ImVec2 at(r.first.x + 150, (r.first.y + r.second.y) / 2);
+        lio.AddMousePosEvent(at.x, at.y);
+        frames(2);
+        lio.AddMouseButtonEvent(1, true);
+        frames(2);
+        lio.AddMouseButtonEvent(1, false);
+        frames(3);
+        shot("72_links_menu_" + tag);
+        lio.AddKeyEvent(ImGuiKey_Escape, true);
+        frames(2);
+        lio.AddKeyEvent(ImGuiKey_Escape, false);
+        frames(2);
+        // 行に載せて少し待つと、場所の全体
+        lio.AddMousePosEvent(5, 890);
+        frames(3);
+        lio.AddMousePosEvent(at.x, at.y);
+        frames(30);
+        shot("73_links_row_tip_" + tag);
+        lio.AddMousePosEvent(5, 890);
+        frames(3);
+      }
+      // 編集中
+      u.linkEditing = true;
+      u.linkEditIssue = "11";
+      u.linkEditIndex = 0;
+      u.linkEditOrig = c.linksOf("11")[0].target;
+      u.linkTargetBuf = c.linksOf("11")[0].target;
+      u.linkTitleBuf = c.linksOf("11")[0].title;
+      shot("74_links_edit_" + tag);
+      u.linkEditing = false;
+      u.linkTargetBuf.clear();
+      u.linkTitleBuf.clear();
+      // 実行ファイルの警告
+      {
+        ui::Frame lf{c, u, p};
+        ui::openLinkAt(lf, "11", 3, false);
+        shot("75_links_warn_" + tag);
+        u.dlg = ui::Dlg::None;
+        u.linkWarnTarget.clear();
+        frames(2);
+      }
+      // 行のバッジとツールチップ（一覧・ボード）
+      u.detailOpen = false;
+      c.clearSelection();
+      c.setView(app::View::List);
+      lio.AddMousePosEvent(5, 890);
+      for (int k = 0; k < 8; ++k) {
+        lio.AddMouseWheelEvent(0, 10);
+        frames(2);
+      }
+      frames(4);
+      shot("76_links_badges_list_" + tag);
+      const auto badgeMid = [&](const std::string& id) {
+        for (const auto& b : u.linkBadges)
+          if (b.id == id && b.a.y > 120 && b.b.y < 850) return ImVec2((b.a.x + b.b.x) / 2, (b.a.y + b.b.y) / 2);
+        return ImVec2(-1, -1);
+      };
+      if (const ImVec2 m = badgeMid("8"); m.x >= 0) {
+        lio.AddMousePosEvent(m.x, m.y);
+        frames(30);
+        shot("77_links_tip_list_" + tag);
+      }
+      c.setView(app::View::Board);
+      lio.AddMousePosEvent(700, 500);
+      for (int k = 0; k < 8; ++k) {
+        lio.AddMouseWheelEvent(0, 10);
+        frames(2);
+      }
+      shot("78_links_badges_board_" + tag);
+      if (const ImVec2 m = badgeMid("8"); m.x >= 0) {
+        lio.AddMousePosEvent(m.x, m.y);
+        frames(30);
+        shot("79_links_tip_board_" + tag);
+      }
+      lio.AddMousePosEvent(5, 890);
+      frames(3);
+      c.setView(app::View::Gantt);
+      shot("79b_links_badges_gantt_" + tag);
+    }
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
   }
   ImGui::DestroyContext();
   return 0;

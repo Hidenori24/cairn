@@ -470,8 +470,9 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
   }
   const int nc = static_cast<int>(is.comments.size());
   const int na = static_cast<int>(f.c.attachmentCount(id));
+  const int nl = static_cast<int>(f.c.linkCountOf(id));
   const bool hov = ImGui::IsMouseHoveringRect(pos, ImVec2(pos.x + size.x, pos.y + size.y)) && o.showHoverButtons;
-  float avail = right - x - (nc ? u.m.s(30) : 0) - (na ? u.m.s(30) : 0) - (hov ? u.m.s(72) : 0);
+  float avail = right - x - (nc ? u.m.s(30) : 0) - (na ? u.m.s(30) : 0) - (nl ? u.m.s(30) : 0) - (hov ? u.m.s(72) : 0);
   if (r.isPar) ImGui::PushFont(u.fontBold);
   const std::string nm = ellipsize(T.name[r.id], std::max(10.f, avail));
   const ImVec2 nsz = ImGui::CalcTextSize(nm.c_str());
@@ -488,6 +489,13 @@ void drawNameCell(Frame& f, const VisibleRow& r, ImVec2 pos, ImVec2 size, const 
     bool clicked = false;
     ImGui::PushID(id.c_str());
     x += drawAttachBadge(f, id, ImVec2(x, pos.y), cy, na, &clicked) + u.m.s(8);
+    ImGui::PopID();
+    if (clicked) openDetail(f, id, 3);
+  }
+  if (nl) {  // 関連リンクの数（添付のクリップとは別のアイコン。Issue #60）
+    bool clicked = false;
+    ImGui::PushID(id.c_str());
+    x += drawLinkBadge(f, id, ImVec2(x, pos.y), cy, nl, &clicked) + u.m.s(8);
     ImGui::PopID();
     if (clicked) openDetail(f, id, 3);
   }
@@ -1410,6 +1418,11 @@ void collectGlyphs(const AppController& c, std::set<ImWchar>& out) {
     }
   }
   for (const auto& w : s->allWarns()) add(w);
+  for (const auto& [id, list] : s->links())  // 関連リンクの表示名・場所（日本語のパスなど。Issue #60）
+    for (const auto& l : list) {
+      add(l.title);
+      add(l.target);
+    }
 }
 
 void drawApp(AppController& c, UiState& u, IPlatform& p) {
@@ -1427,6 +1440,14 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
   if (c.currentId() != u.imageProject) {  // プロジェクトを切り替えたら、画像のテクスチャを全部捨てる
     releaseImages(f);
     u.imageProject = c.currentId();
+    // リンクの入力欄・編集中の状態・警告中の場所も捨てる（別のプロジェクトの場所を持ち越さない）
+    u.linkTargetBuf.clear();
+    u.linkTitleBuf.clear();
+    u.linkError.clear();
+    u.linkEditing = false;
+    u.linkEditIssue.clear();
+    u.linkEditOrig.clear();
+    u.linkWarnTarget.clear();
   }
   processDrop(f);  // エクスプローラーからのドロップ（前のフレームに描いたドロップ先と照らす）
   processAttachDrag(f);  // 添付のサムネイルのドラッグ（離した位置を、同じく前のフレームのドロップ先と照らす）
@@ -1508,6 +1529,8 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
   u.dropBuild.clear();
   u.attachBadges = std::move(u.attachBadgeBuild);
   u.attachBadgeBuild.clear();
+  u.linkBadges = std::move(u.linkBadgeBuild);
+  u.linkBadgeBuild.clear();
   u.openColFilter.clear();  // 見出しが出ていない列の要求は捨てる
   c.afterEdit();
   c.releaseFrame();

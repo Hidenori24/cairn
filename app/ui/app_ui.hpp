@@ -48,6 +48,14 @@ class IPlatform {
   }
   // 関連付けられたアプリでファイルを開く（添付の「開く」。実行ファイルの警告は UI が先に出す）。パスは UTF-8
   virtual void openFile(const std::string& path) { (void)path; }
+  // 関連リンク（URL・ファイル・フォルダの場所）を既定のブラウザ／アプリ／エクスプローラーで開く（Issue #60）。target は UI が
+  // classifyLink で検査し、実行ファイルの警告も済ませた場所。プラットフォームも許可リストを確かめる。存在確認はしない。
+  // 開けなければ false と理由（日本語）を error に入れる。場所は個人情報を含みうるので、ログには出さない
+  virtual bool openLink(const std::string& target, std::string* error) {
+    (void)target;
+    if (error) *error = "このアプリでは開けません";
+    return false;
+  }
   // 画像（RGBA 8bit）をテクスチャにする（サムネイル・プレビュー）。作れなければ nullptr。不要になったら releaseTexture
   virtual ImTextureID createTexture(const unsigned char* rgba, int w, int h) {
     (void)rgba, (void)w, (void)h;
@@ -74,7 +82,7 @@ class IPlatform {
 enum class Dlg {
   None, NewProject, EditProject, ConfirmDelete, Import, Export, Folder, Settings, Workload, Warnings, Shortcuts,
   TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete, PasteChildren, AttachOpenWarn, AttachPreview,
-  ExportHtml, Weekly, BaselineSave, BaselineManage, ConfirmBaselineDelete
+  ExportHtml, Weekly, BaselineSave, BaselineManage, ConfirmBaselineDelete, LinkOpenWarn
 };
 
 enum class EditField { None, Name, Assignee, Dur, Pred };
@@ -141,8 +149,9 @@ struct UiState {
   // Esc・プロジェクトの切り替え・ダイアログを開いたときは取り消す
   struct AttachDrag {
     bool active = false;
-    std::string issueId;   // つかんだ添付の課題
-    std::size_t index = 0; // つかんだ添付の番号
+    bool link = false;     // true = つかんだのは添付でなく関連リンク（リンクの行。Issue #60）。移動先の判定・Esc などは同じ仕組み
+    std::string issueId;   // つかんだ添付（リンク）の課題
+    std::size_t index = 0; // つかんだ添付（リンク）の番号
     std::string project;   // 始めたプロジェクト
   } attachDrag;
   int attachDragEscFrame = -10;      // 添付のドラッグを Esc で取り消したフレーム（そのフレームの Esc は、ほかの Esc の動作に使わない）
@@ -155,6 +164,35 @@ struct UiState {
   std::pair<ImVec2, ImVec2> attachRowsClip{{0, 0}, {0, 0}};
   // 前のフレームの添付タブの「ファイルを選んで追加」ボタンとサムネイルの大きさのスライダーの範囲（画面の座標）。煙テストの当たり位置
   std::pair<ImVec2, ImVec2> attachPickBtn{{0, 0}, {0, 0}}, attachSlider{{0, 0}, {0, 0}};
+  // ---- 関連リンク（Issue #60。添付タブの中の「リンク」の節）----
+  std::string linkTargetBuf, linkTitleBuf;  // 追加・編集の入力欄（場所・表示名）
+  std::string linkError;                    // 直前の追加・編集で断られた理由（入力欄の下に出す。入力しなおすと消える）
+  bool linkEditing = false;                 // 編集中（入力欄に既存のリンクを入れている）
+  std::string linkEditIssue, linkEditOrig;  // 編集中のリンクの課題・もとの場所（一覧が変わって別のリンクを指したら編集をやめる）
+  std::size_t linkEditIndex = 0;
+  bool linkFocusTarget = false;             // 次のフレームで場所の入力欄にフォーカスを入れる
+  std::string linkWarnTarget;               // 開く前に警告しているリンクの場所（Dlg::LinkOpenWarn）
+  // 前のフレームのリンクの行の範囲（画面の座標）。並べ替えの位置の判定と、煙テストの当たり位置に使う（attachRows と同じ）
+  std::vector<std::pair<ImVec2, ImVec2>> linkRows;
+  std::string linkRowsIssue;
+  int linkRowsFrame = -10;
+  std::pair<ImVec2, ImVec2> linkRowsClip{{0, 0}, {0, 0}};
+  // 前のフレームのリンクの節の部品の範囲（画面の座標。煙テストが当たり位置を知るため）
+  std::pair<ImVec2, ImVec2> linkTargetBox{{0, 0}, {0, 0}}, linkTitleBox{{0, 0}, {0, 0}}, linkAddBtn{{0, 0}, {0, 0}},
+      linkPasteBtn{{0, 0}, {0, 0}}, linkCancelBtn{{0, 0}, {0, 0}};
+  // リンクの右クリックのメニュー: 開いたリンク（課題・番号）と、前のフレームの項目の範囲（煙テストが押す位置を知るため）
+  std::string linkCtxIssue;
+  std::size_t linkCtxIndex = 0;
+  bool linkCtxRequest = false;
+  struct MenuItemGeom {
+    std::string label;
+    ImVec2 a{0, 0}, b{0, 0};
+    bool enabled = true;
+  };
+  std::vector<MenuItemGeom> linkCtxItems;
+  // 行・カードのリンクのバッジの範囲（前のフレームのものが linkBadges）と、最後に出したバッジのツールチップの行（煙テスト用）
+  std::vector<DropTarget> linkBadges, linkBadgeBuild;
+  std::vector<std::string> linkTipLines;
   // 添付の画像（サムネイル・プレビュー）のテクスチャ。キー = パス・大きさ・日時・縮小の上限。
   // 使わなくなったものは解放し、プロジェクトを切り替えたら全部解放する（releaseImages / trimImages）
   struct ImageTex {

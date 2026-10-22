@@ -120,6 +120,11 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, const 
       x += drawAttachBadge(f, sid, ImVec2(x, y + u.m.s(1)), y + lh / 2 + u.m.s(1), na, &clicked) + u.m.s(8);
       if (clicked) openDetail(f, sid, 3);
     }
+    if (const int nl = static_cast<int>(c.linkCountOf(sid)); nl > 0) {  // 関連リンクの数（Issue #60）
+      bool clicked = false;
+      x += drawLinkBadge(f, sid, ImVec2(x, y + u.m.s(1)), y + lh / 2 + u.m.s(1), nl, &clicked) + u.m.s(8);
+      if (clicked) openDetail(f, sid, 3);
+    }
     ImGui::PushFont(u.fontMono);
     const std::string dates = fmtShort(r.asapStart) + "〜" + fmtShort(r.asapFinish);
     dl->AddText(ImVec2(x, y), u.t->muted, dates.c_str());

@@ -715,7 +715,9 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
     if (std::find(x.blocks.begin(), x.blocks.end(), o.id) != x.blocks.end()) ++nPred;
   const std::string tLinks = "依存関係 " + std::to_string(nPred + static_cast<int>(o.blocks.size())) + "###links";
   const std::string tCom = "コメント " + std::to_string(o.comments.size()) + "###comments";
-  const std::string tAtt = "添付 " + std::to_string(c.attachmentCount(o.id)) + "###attach";
+  // 「添付」タブの中にリンクの節もある。リンクがあるときだけ、数をタブにも出す
+  const std::string tAtt = "添付 " + std::to_string(c.attachmentCount(o.id)) +
+                           (c.linkCountOf(o.id) ? "・リンク " + std::to_string(c.linkCountOf(o.id)) : std::string()) + "###attach";
   if (ImGui::BeginTabBar("##dtabs")) {
     if (ImGui::BeginTabItem("詳細", nullptr, u.detailTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
       if (ImGui::IsItemClicked()) u.detailTab = 0;
