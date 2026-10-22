@@ -422,6 +422,9 @@ std::string renderStats(const Ctx& cx) {
     }
     out += "<div class=\"card\"><h3>優先度別</h3>\n" + groupRows(s, lines, 100, std::clamp(kW * 0.3, 100.0, 300.0), "優先度別") + "</div>\n";
   }
+
+  // 推移（作成日・完了日・更新日から）
+  out += renderTrends(cx);
   (void)k;
   return out;
 }

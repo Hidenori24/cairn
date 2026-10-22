@@ -1,11 +1,14 @@
 // 統計ビュー: 進み・状況の内訳・余裕の分布・週ごとの完了・担当別・ルート別・優先度別（集計は core/stats）
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdio>
 #include <string>
 
 #include "roadmap/load.hpp"
 #include "roadmap/stats.hpp"
 #include "roadmap/text.hpp"
+#include "roadmap/trends.hpp"
 #include "ui/icons.hpp"
 #include "ui/internal.hpp"
 
@@ -370,11 +373,416 @@ void drawDoneByAssignee(Frame& f, const LoadReport& lr, float W) {
   }
   if (lr.done.size() > 1) line(0, "合計", sumN, sumW, true);
 }
+
+// ---------------------------------------------------------------- 推移（Issue #54 の A）
+
+// 点線（線種でも区別する。色だけに頼らない）
+void dashedLine(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col, float th, float dash, float gap) {
+  const float dx = b.x - a.x, dy = b.y - a.y;
+  const float len = std::sqrt(dx * dx + dy * dy);
+  if (len < 0.5f) return;
+  const float ux = dx / len, uy = dy / len;
+  for (float t = 0; t < len; t += dash + gap) {
+    const float e = std::min(t + dash, len);
+    dl->AddLine(ImVec2(a.x + ux * t, a.y + uy * t), ImVec2(a.x + ux * e, a.y + uy * e), col, th);
+  }
+}
+
+// 折れ線グラフの凡例（四角の見本と、実線・点線の見本）
+void burnLegend(Frame& f) {
+  UiState& u = f.u;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const auto swatch = [&](const char* label, ImU32 col) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float s = u.m.s(10);
+    dl->AddRectFilled(ImVec2(p.x, p.y + u.m.s(4)), ImVec2(p.x + s, p.y + u.m.s(4) + s), col, u.m.s(2));
+    ImGui::Dummy(ImVec2(s, s));
+    ImGui::SameLine(0, u.m.s(5));
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(0, u.m.s(16));
+  };
+  const auto sample = [&](const char* label, ImU32 col, bool dashed) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = u.m.s(24), y = p.y + ImGui::GetTextLineHeight() / 2;
+    if (dashed) dashedLine(dl, ImVec2(p.x, y), ImVec2(p.x + w, y), col, u.m.s(2), u.m.s(4), u.m.s(3));
+    else dl->AddLine(ImVec2(p.x, y), ImVec2(p.x + w, y), col, u.m.s(2));
+    ImGui::Dummy(ImVec2(w, ImGui::GetTextLineHeight()));
+    ImGui::SameLine(0, u.m.s(5));
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(0, u.m.s(16));
+  };
+  swatch("作った数", u.t->accent);
+  swatch("完了した数", u.t->ok);
+  sample("残り（実線）", u.t->ink, false);
+  sample("ペース予測（点線）", u.t->accent, true);
+  ImGui::NewLine();
+}
+
+// 週ごとの作った数・完了した数（棒）と、残り（折れ線）。ペース予測は点線で先へ伸ばす
+void drawBurn(Frame& f, const TrendReport& tr, float W) {
+  UiState& u = f.u;
+  UiState::StatsTrend& st = u.statsTrend;
+  const TrendBurn& b = tr.burn;
+  if (b.weeks.empty()) {
+    ImGui::TextUnformatted("作成日（Created）のある作業がないので、バーンダウンは出せません。");
+    return;
+  }
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const int nPast = static_cast<int>(b.weeks.size());
+  const int nFut = b.forecast.ok ? std::min(b.forecast.weeksAhead, kFutureWeeks) : 0;
+  const int cols = nPast + nFut;
+  const float bw = std::clamp(W / static_cast<float>(cols), u.m.s(12), u.m.s(44));
+  const float barsH = u.m.s(90), lineH = u.m.s(110), axisH = u.m.s(20);
+  const int every = bw < u.m.s(26) ? (bw < u.m.s(16) ? 4 : 2) : 1;
+  const bool labels = bw >= u.m.s(28);
+  const Day lastStart = b.weeks.back().start;
+  const auto weekStartOf = [&](int k) { return lastStart + (k - (nPast - 1)) * 7; };
+
+  burnLegend(f);
+  ImGui::TextDisabled("作った数と完了した数（週ごと。棒の上の数字が件数）");
+  const ImVec2 p1 = ImGui::GetCursorScreenPos();
+  ImGui::Dummy(ImVec2(W, barsH + axisH));
+  ImGui::TextDisabled("残り（その週の終わり。基準日の週は基準日。点線は今のペースで続けた場合）");
+  const ImVec2 p2 = ImGui::GetCursorScreenPos();
+  ImGui::Dummy(ImVec2(W, lineH + axisH));
+
+  const auto colX = [&](int k) { return p1.x + bw * static_cast<float>(k); };
+  const auto xLabels = [&](const ImVec2& p, float chartH) {
+    for (int k = 0; k < cols; ++k) {
+      const bool now = k == b.nowIndex;
+      if (k % every != 0 && !now) continue;
+      const std::string lb = fmtShort(weekStartOf(k));
+      const float tw = ImGui::CalcTextSize(lb.c_str()).x;
+      dl->AddText(ImVec2(colX(k) + (bw - tw) / 2, p.y + chartH + u.m.s(3)), now ? u.t->ink : (k < nPast ? u.t->muted : withAlpha(u.t->muted, 0.7f)),
+                  lb.c_str());
+    }
+  };
+  // 基準日の週の強調
+  const auto baseBand = [&](const ImVec2& p, float h) {
+    dl->AddRectFilled(ImVec2(colX(b.nowIndex), p.y), ImVec2(colX(b.nowIndex) + bw, p.y + h), u.t->selbg);
+    dl->AddLine(ImVec2(p.x, p.y + h), ImVec2(p.x + bw * static_cast<float>(cols), p.y + h), u.t->line);
+  };
+  baseBand(p1, barsH);
+  baseBand(p2, lineH);
+
+  // ---- 棒: 作った数（左）・完了した数（右）----
+  {
+    int mx = 1;
+    for (const TrendWeek& w : b.weeks) mx = std::max({mx, w.created, w.resolved});
+    const float unit = (barsH - u.m.s(18)) / static_cast<float>(mx);
+    for (int k = 0; k < nPast; ++k) {
+      const TrendWeek& w = b.weeks[static_cast<std::size_t>(k)];
+      const float x = colX(k);
+      const auto bar = [&](float x0, float x1, int n, ImU32 col) {
+        if (n <= 0) return;
+        const float h = std::max(unit * static_cast<float>(n), u.m.s(2));
+        dl->AddRectFilled(ImVec2(x0, p1.y + barsH - h), ImVec2(x1, p1.y + barsH), col, u.m.s(2));
+        if (labels) {
+          const std::string ns = std::to_string(n);
+          const float tw = ImGui::CalcTextSize(ns.c_str()).x;
+          dl->AddText(ImVec2((x0 + x1 - tw) / 2, p1.y + barsH - h - ImGui::GetTextLineHeight() - u.m.s(1)), u.t->muted, ns.c_str());
+        }
+      };
+      bar(x + bw * 0.12f, x + bw * 0.48f, w.created, u.t->accent);
+      bar(x + bw * 0.52f, x + bw * 0.88f, w.resolved, u.t->ok);
+    }
+    xLabels(p1, barsH);
+  }
+
+  // ---- 折れ線: 残り ----
+  {
+    int mx = 1;
+    for (const TrendWeek& w : b.weeks) mx = std::max(mx, w.remaining);
+    const float top = u.m.s(18);
+    const auto yOf = [&](double v) { return p2.y + lineH - (lineH - top) * static_cast<float>(v / static_cast<double>(mx)); };
+    const auto ptOf = [&](int k, double v) { return ImVec2(colX(k) + bw / 2, yOf(v)); };
+    for (int k = 1; k < nPast; ++k)
+      dl->AddLine(ptOf(k - 1, b.weeks[static_cast<std::size_t>(k) - 1].remaining), ptOf(k, b.weeks[static_cast<std::size_t>(k)].remaining), u.t->ink,
+                  u.m.s(2));
+    for (int k = 0; k < nPast; ++k) {
+      const int v = b.weeks[static_cast<std::size_t>(k)].remaining;
+      const ImVec2 pt = ptOf(k, v);
+      if (k == nPast - 1) {  // 基準日の週は白抜き（途中の値）
+        dl->AddCircleFilled(pt, u.m.s(4), u.t->surface);
+        dl->AddCircle(pt, u.m.s(4), u.t->ink, 0, u.m.s(2));
+      } else {
+        dl->AddCircleFilled(pt, u.m.s(3), u.t->ink);
+      }
+      if (labels || k == 0 || k == nPast - 1) {
+        const std::string ns = std::to_string(v);
+        const float tw = ImGui::CalcTextSize(ns.c_str()).x;
+        dl->AddText(ImVec2(pt.x - tw / 2, pt.y - ImGui::GetTextLineHeight() - u.m.s(5)), u.t->muted, ns.c_str());
+      }
+    }
+    if (b.forecast.ok && nFut > 0) {
+      const double perWeek = b.forecast.perWeek;
+      const bool reaches = b.forecast.weeksAhead <= nFut;
+      const int endK = reaches ? nPast - 1 + b.forecast.weeksAhead : nPast - 1 + nFut;
+      const double endV = reaches ? 0.0 : std::max(0.0, static_cast<double>(b.remainingNow) - perWeek * nFut);
+      const ImVec2 a = ptOf(nPast - 1, b.remainingNow), e = ptOf(endK, endV);
+      dashedLine(dl, a, e, u.t->accent, u.m.s(2), u.m.s(5), u.m.s(4));
+      // 終点のしるし（ひし形）と、終わる週
+      const float r = u.m.s(5);
+      dl->AddQuadFilled(ImVec2(e.x, e.y - r), ImVec2(e.x + r, e.y), ImVec2(e.x, e.y + r), ImVec2(e.x - r, e.y), u.t->accent);
+      const std::string lb = reaches ? "完了の見込み " + fmtShort(b.forecast.finishWeek) : std::string("さらに先");
+      const float tw = ImGui::CalcTextSize(lb.c_str()).x;
+      const ImVec2 tp(std::min(e.x - tw / 2, p2.x + W - tw), e.y - ImGui::GetTextLineHeight() - u.m.s(10));
+      // 点線と重なっても読めるように、地の色の帯を敷く
+      dl->AddRectFilled(ImVec2(tp.x - u.m.s(3), tp.y - u.m.s(1)), ImVec2(tp.x + tw + u.m.s(3), tp.y + ImGui::GetTextLineHeight() + u.m.s(1)),
+                        u.t->bg, u.m.s(3));
+      dl->AddText(tp, u.t->accent, lb.c_str());
+    }
+    xLabels(p2, lineH);
+  }
+
+  // ---- ホバー: 週ごとの値（予測の週は予測の値）----
+  st.weekCols.clear();
+  for (int k = 0; k < cols; ++k) {
+    const ImVec2 a(colX(k), p1.y), c(colX(k) + bw, p2.y + lineH + axisH);
+    if (k < nPast) st.weekCols.push_back({a, ImVec2(c.x, p1.y + barsH)});
+    if (!ImGui::IsMouseHoveringRect(a, c) || !ImGui::IsWindowHovered()) continue;
+    if (k < nPast) {
+      const TrendWeek& w = b.weeks[static_cast<std::size_t>(k)];
+      ImGui::SetTooltip("%s からの週%s\n作った %d 件\n完了 %d 件\n残り %d 件", fmtMd(w.start).c_str(), w.partial ? "（基準日まで）" : "", w.created,
+                        w.resolved, w.remaining);
+    } else {
+      const double left = std::max(0.0, static_cast<double>(b.remainingNow) - b.forecast.perWeek * static_cast<double>(k - (nPast - 1)));
+      ImGui::SetTooltip("%s からの週（予測）\n残り およそ %d 件\n（直近 %d 週の平均 週 %s 件のペース）", fmtMd(weekStartOf(k)).c_str(),
+                        static_cast<int>(left + 0.5), kTrendPaceWeeks, num(b.forecast.perWeek).c_str());
+    }
+  }
+  ImGui::Dummy(ImVec2(0, u.m.s(4)));
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+  const std::string line = trendForecastText(b.forecast, b.remainingNow);
+  const bool bad = !b.forecast.ok && !line.empty() && line[0] == '!';
+  ImGui::PushStyleColor(ImGuiCol_Text, bad ? u.t->tight : u.t->ink);
+  ImGui::TextUnformatted(line.c_str());
+  ImGui::PopStyleColor();
+  ImGui::PopTextWrapPos();
+}
+
+// 階級別の棒（0-1 / 2-4 / 5-9 / 10-19 / 20+ 営業日）。bangLast なら最後の階級に「!」を付ける
+void drawBuckets(Frame& f, const std::array<int, kTrendBuckets>& hist, int total, const ImU32 (&cols)[kTrendBuckets], bool bangLast, float W) {
+  UiState& u = f.u;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  int mx = 1;
+  for (int h : hist) mx = std::max(mx, h);
+  const float lw = u.m.s(110), cw = u.m.s(90);
+  const float bw = std::max(W - lw - cw - u.m.s(8), u.m.s(80));
+  for (int k = 0; k < kTrendBuckets; ++k) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = u.m.s(22);
+    const float ty = p.y + (h - ImGui::GetTextLineHeight()) / 2;
+    const std::string lb = std::string(bangLast && k == kTrendBuckets - 1 ? "! " : "") + trendBucketLabel(k) + " 営業日";
+    dl->AddText(ImVec2(p.x + u.m.s(6), ty), bangLast && k == kTrendBuckets - 1 ? u.t->late : u.t->ink, lb.c_str());
+    const int n = hist[static_cast<std::size_t>(k)];
+    const float len = bw * static_cast<float>(n) / static_cast<float>(mx);
+    if (len > 0.5f) dl->AddRectFilled(ImVec2(p.x + lw, p.y + u.m.s(4)), ImVec2(p.x + lw + len, p.y + h - u.m.s(4)), cols[k], u.m.s(3));
+    std::string cnt = std::to_string(n) + " 件";
+    if (total > 0) cnt += "（" + pct(static_cast<double>(n) / total) + "）";
+    dl->AddText(ImVec2(p.x + lw + len + u.m.s(8), ty), u.t->muted, cnt.c_str());
+    if (ImGui::IsMouseHoveringRect(p, ImVec2(p.x + W, p.y + h)) && ImGui::IsWindowHovered())
+      ImGui::SetTooltip("%s 営業日: %d 件", trendBucketLabel(k), n);
+    ImGui::Dummy(ImVec2(W, h));
+  }
+}
+
+// 滞留の上位の一覧。行を押すと、その課題を選んで詳細を開く
+void drawAgingTop(Frame& f, const TrendReport& tr, float W) {
+  UiState& u = f.u;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float h = u.m.rowH();
+  const float rankW = u.m.s(30), asgW = std::clamp(W * 0.22f, u.m.s(80), u.m.s(180)), daysW = u.m.s(96);
+  const float nameW = std::max(W - rankW - asgW - daysW, u.m.s(80));
+  {
+    const ImVec2 q = ImGui::GetCursorScreenPos();
+    dl->AddText(ImVec2(q.x + u.m.s(6), q.y), u.t->muted, "#");
+    dl->AddText(ImVec2(q.x + rankW, q.y), u.t->muted, "課題");
+    dl->AddText(ImVec2(q.x + rankW + nameW, q.y), u.t->muted, "担当");
+    dl->AddText(ImVec2(q.x + rankW + nameW + asgW, q.y), u.t->muted, "動いていない日数");
+    ImGui::Dummy(ImVec2(W, ImGui::GetTextLineHeight() + u.m.s(4)));
+  }
+  int rank = 0;
+  for (const AgingItem& it : tr.aging.top) {
+    ++rank;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool hov = ImGui::IsMouseHoveringRect(p, ImVec2(p.x + W, p.y + h)) && ImGui::IsWindowHovered();
+    if (hov) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + h), u.t->hover, u.m.s(4));
+    const float ty = p.y + (h - ImGui::GetTextLineHeight()) / 2;
+    const bool old = trendBucket(it.days) == kTrendBuckets - 1;
+    dl->AddText(ImVec2(p.x + u.m.s(6), ty), u.t->muted, std::to_string(rank).c_str());
+    clippedText(u, ImVec2(p.x + rankW, ty), nameW - u.m.s(10), u.t->ink, it.name);
+    clippedText(u, ImVec2(p.x + rankW + nameW, ty), asgW - u.m.s(10), u.t->muted, it.assignee.empty() ? std::string("（担当なし）") : it.assignee);
+    dl->AddText(ImVec2(p.x + rankW + nameW + asgW, ty), old ? u.t->late : u.t->ink, ((old ? "! " : "") + std::to_string(it.days) + " 営業日").c_str());
+    dl->AddLine(ImVec2(p.x, p.y + h), ImVec2(p.x + W, p.y + h), u.t->rowline);
+    u.statsTrend.agingRows.push_back({it.id, p, ImVec2(p.x + W, p.y + h)});
+    if (hov) {
+      const char* from = it.from == AgingFrom::Updated ? "更新日（Updated）" : it.from == AgingFrom::Start ? "開始日" : "作成日（Created）";
+      ImGui::SetTooltip("%s\n最後に動いた日: %s（%s）\n押すと、この課題の詳細を開きます", it.id.c_str(), fmtLong(it.last).c_str(), from);
+      if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) openDetail(f, it.id, 0);
+    }
+    ImGui::Dummy(ImVec2(W, h));
+  }
+}
+
+// 推移の節。担当者・ルート課題の選択（この節の中だけ。上の絞り込みや他の節には効かない）→ 集計 → 3 つの図
+void drawTrends(Frame& f, Session& s, const Tree& T, const std::vector<ScheduleRow>& R, const std::vector<Issue>& I, Day base, float W) {
+  UiState& u = f.u;
+  UiState::StatsTrend& st = u.statsTrend;
+  if (st.projectId != f.c.currentId()) {  // プロジェクトを切り替えたら選択を初期化する
+    st = UiState::StatsTrend{};
+    st.projectId = f.c.currentId();
+  }
+  if (!st.rootId.empty()) {  // 消えた・ルートでなくなった課題は外す
+    const int r = T.find(st.rootId);
+    if (r < 0 || T.parentOf[static_cast<std::size_t>(r)] >= 0 || T.kids[static_cast<std::size_t>(r)].empty()) st.rootId.clear();
+  }
+  sectionHead(f, "推移", "作成日・完了日・更新日から出しています。状況の履歴は記録していません", W);
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+  ImGui::TextDisabled("週は月曜始まりです。営業日は休業日を除きます。CSV の Created（作成日）・Resolved（完了日）・Updated（更新日）を読みます。");
+  ImGui::PopTextWrapPos();
+  ImGui::Dummy(ImVec2(0, u.m.s(4)));
+
+  // ---- 絞り込み（担当者・ルート課題）----
+  {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("担当者");
+    ImGui::SameLine();
+    std::string pv = "全員";
+    if (st.who == TrendFilter::Who::Unassigned) pv = "担当なし";
+    else if (st.who == TrendFilter::Who::Name) pv = st.name;
+    ImGui::SetNextItemWidth(u.m.s(180));
+    const bool whoOpen = ImGui::BeginCombo("##trendWho", pv.c_str());
+    st.whoA = ImGui::GetItemRectMin();
+    st.whoB = ImGui::GetItemRectMax();
+    if (whoOpen) {
+      if (ImGui::Selectable("全員", st.who == TrendFilter::Who::All)) st.who = TrendFilter::Who::All;
+      if (ImGui::Selectable("担当なし", st.who == TrendFilter::Who::Unassigned)) st.who = TrendFilter::Who::Unassigned;
+      for (const std::string& a : s.assignees())
+        if (ImGui::Selectable(a.c_str(), st.who == TrendFilter::Who::Name && st.name == a)) {
+          st.who = TrendFilter::Who::Name;
+          st.name = a;
+        }
+      ImGui::EndCombo();
+    }
+    ImGui::SameLine(0, u.m.s(16));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("ルート課題");
+    ImGui::SameLine();
+    std::string rv = "すべて";
+    if (st.standalone) rv = "親のない単独の課題";
+    else if (!st.rootId.empty()) {
+      const int r = T.find(st.rootId);
+      if (r >= 0) rv = T.did[static_cast<std::size_t>(r)] + "  " + T.name[static_cast<std::size_t>(r)];
+    }
+    ImGui::SetNextItemWidth(u.m.s(260));
+    const bool rootOpen = ImGui::BeginCombo("##trendRoot", rv.c_str());
+    st.rootA = ImGui::GetItemRectMin();
+    st.rootB = ImGui::GetItemRectMax();
+    if (rootOpen) {
+      if (ImGui::Selectable("すべて", !st.standalone && st.rootId.empty())) {
+        st.standalone = false;
+        st.rootId.clear();
+      }
+      bool anyAlone = false;
+      for (int r : T.roots)
+        if (T.kids[static_cast<std::size_t>(r)].empty() && T.kind[static_cast<std::size_t>(r)] != Kind::Ms) anyAlone = true;
+      if (anyAlone && ImGui::Selectable("親のない単独の課題", st.standalone)) {
+        st.standalone = true;
+        st.rootId.clear();
+      }
+      for (int r : T.roots) {
+        const std::size_t ri = static_cast<std::size_t>(r);
+        if (T.kids[ri].empty()) continue;
+        ImGui::PushID(r);
+        if (ImGui::Selectable((T.did[ri] + "  " + T.name[ri]).c_str(), !st.standalone && st.rootId == T.ids[ri])) {
+          st.standalone = false;
+          st.rootId = T.ids[ri];
+        }
+        ImGui::PopID();
+      }
+      ImGui::EndCombo();
+    }
+  }
+  ImGui::Dummy(ImVec2(0, u.m.s(6)));
+
+  TrendFilter flt;
+  flt.who = st.who;
+  flt.name = st.name;
+  if (st.standalone) flt.root = TrendFilter::kStandalone;
+  else if (!st.rootId.empty()) flt.root = T.find(st.rootId);
+  const Result<TrendReport> res = computeTrends(T, I, s.meta(), R, s.calendar(), base, flt);
+  if (!res.ok()) {
+    ImGui::TextUnformatted("推移を集計できません。");
+    return;
+  }
+  const TrendReport& tr = res.value();
+  st.drawn = true;
+  st.items = tr.items;
+  st.weeks = static_cast<int>(tr.burn.weeks.size());
+  st.forecastOk = tr.burn.forecast.ok;
+  st.leadN = tr.lead.n;
+  st.agingN = tr.aging.n;
+  if (tr.items == 0) {
+    ImGui::TextUnformatted("この条件に当てはまる作業がありません。");
+    return;
+  }
+  ImGui::TextDisabled("対象の作業 %d 件（マイルストーンを除く）", tr.items);
+
+  // ---- バーンダウン／バーンアップ ----
+  ImGui::Dummy(ImVec2(0, u.m.s(6)));
+  ImGui::PushFont(u.fontBold);
+  ImGui::TextUnformatted("バーンダウン／バーンアップ");
+  ImGui::PopFont();
+  drawBurn(f, tr, W);
+
+  // ---- リードタイム ----
+  ImGui::Dummy(ImVec2(0, u.m.s(14)));
+  ImGui::PushFont(u.fontBold);
+  ImGui::TextUnformatted("リードタイム（作成 → 完了の営業日）");
+  ImGui::PopFont();
+  if (tr.lead.n == 0) {
+    ImGui::TextUnformatted("作成日と完了日の両方がある完了済みの作業がないので、リードタイムは出せません。");
+  } else {
+    ImGui::Text("完了 %d 件　中央値 %s 営業日　90 パーセンタイル %d 営業日　最長 %d 営業日", tr.lead.n, num(tr.lead.median).c_str(), tr.lead.p90,
+                tr.lead.maxDays);
+    const ImU32 cols[kTrendBuckets] = {u.t->accent, u.t->accent, u.t->accent, u.t->accent, u.t->accent};
+    drawBuckets(f, tr.lead.hist, tr.lead.n, cols, false, W);
+  }
+
+  // ---- 滞留日数 ----
+  ImGui::Dummy(ImVec2(0, u.m.s(14)));
+  ImGui::PushFont(u.fontBold);
+  ImGui::TextUnformatted("滞留日数（未完了で、最後に動いた日から基準日までの営業日）");
+  ImGui::PopFont();
+  if (tr.aging.n == 0) {
+    ImGui::TextUnformatted("最後に動いた日のわかる未完了の作業がないので、滞留は出せません。");
+  } else {
+    ImGui::TextDisabled("最後に動いた日は、更新日（Updated）、なければ開始日、なければ作成日（Created）です。基準日より先の日付は 0 日です。");
+    const ImU32 cols[kTrendBuckets] = {u.t->ok, u.t->ok, u.t->tight, u.t->tight, u.t->late};
+    drawBuckets(f, tr.aging.hist, tr.aging.n, cols, true, W);
+    ImGui::Dummy(ImVec2(0, u.m.s(8)));
+    ImGui::Text("長く動いていない順（上位 %d 件。行を押すと詳細を開きます）", static_cast<int>(tr.aging.top.size()));
+    drawAgingTop(f, tr, W);
+  }
+
+  // ---- 数えなかったもの ----
+  const std::vector<std::string> notes = trendNotes(tr);
+  if (!notes.empty()) {
+    ImGui::Dummy(ImVec2(0, u.m.s(8)));
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+    for (const std::string& n : notes) ImGui::TextDisabled("・%s", n.c_str());
+    ImGui::PopTextWrapPos();
+  }
+}
 }  // namespace
 
 void drawStatsView(Frame& f, ImVec2 size) {
   UiState& u = f.u;
   app::AppController& c = f.c;
+  u.statsTrend.drawn = false;  // 推移を描かないフレーム（課題がない・別のビュー）では、前の結果を残さない
+  u.statsTrend.weekCols.clear();
+  u.statsTrend.agingRows.clear();
   Session* s = c.session();
   if (!s || !s->tree()) return;
   const Tree& T = *s->tree();
@@ -391,7 +799,7 @@ void drawStatsView(Frame& f, ImVec2 size) {
   ImGui::TextUnformatted("プロジェクトの統計");
   ImGui::PopFont();
   ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
-  ImGui::TextDisabled("絞り込みに関係なく、プロジェクト全体の集計です。数える対象は作業（子を持たない課題）で、マイルストーンは別に数えます。基準日は %s です。",
+  ImGui::TextDisabled("絞り込みに関係なく、プロジェクト全体の集計です（「推移」の節だけ、その中の選択欄で担当者・ルート課題を絞れます）。数える対象は作業（子を持たない課題）で、マイルストーンは別に数えます。基準日は %s です。",
                       fmtLong(base).c_str());
   ImGui::PopTextWrapPos();
 
@@ -551,6 +959,9 @@ void drawStatsView(Frame& f, ImVec2 size) {
       groupRow(f, g, names[k], "完了 " + std::to_string(g.nDone) + "／未完了 " + std::to_string(g.nTodo), nameW, barW, W, false);
     }
   }
+
+  // ---- 推移（作成日・完了日・更新日から。担当者・ルート課題の選択はこの節の中）----
+  drawTrends(f, *s, T, R, I, base, W);
 
   ImGui::EndGroup();
   ImGui::Dummy(ImVec2(0, u.m.s(40)));

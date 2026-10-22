@@ -2466,6 +2466,199 @@ int main() {
     ui::applyStyle(*h.u.t, h.u.m);
     h.frame(2);
   }
+  // 統計ビューの「推移」（Issue #54 の A）: バーンダウン・リードタイム・滞留日数、ホバー、滞留の行 → 詳細、担当者・ルート課題の絞り込み
+  {
+    const std::string csvText =
+        "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Created,Updated,Resolved,Duration (weeks)\n"
+        "1,Epic,基盤,,,,High,2026-09-01,,,\n"
+        "2,Task,設計,1,田中,Done,High,2026-09-01,2026-09-30,2026-09-30,1\n"
+        "3,Task,実装,1,田中,In Progress,Medium,2026-09-08,2026-10-14,,2\n"
+        "4,Task,評価,1,鈴木,To Do,Medium,2026-09-15,2026-09-16,,1\n"
+        "5,Task,調整,,鈴木,To Do,Low,2026-10-12,,,1\n"
+        "6,Task,資料,,,Done,Low,2026-10-01,2026-10-13,2026-10-13,1\n"
+        "7,Task,検証,,田中,Done,Medium,2026-10-05,2026-10-12,2026-10-12,1\n"
+        "8,Task,下見,,田中,To Do,Low,,,,1\n";
+    check(h.c.importText(csvText, "推移の確認", app::ImportMode::New).ok, "推移の確認用の取り込み");
+    h.u.t = &ui::lightTokens();
+    h.u.m.compact = false;
+    h.u.m.scale = 1.0f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.c.filter() = Filter{};
+    h.c.clearSelection();
+    h.u.detailOpen = false;
+    h.c.setView(app::View::Stats);
+    h.clk.advanceMs(15000);
+    h.frame(3);
+    auto& st = h.u.statsTrend;
+    ImGuiIO& io = ImGui::GetIO();
+    check(st.drawn, "統計ビューに推移が描かれる");
+    check(st.items == 7, "推移の対象は作業 7 件（親とマイルストーンを除く）");
+    check(st.weeks == 8, "週は 8/31 から基準日の週まで 8 つ");
+    check(st.forecastOk, "ペース予測が出る（直近 4 週に完了のある週が 2 つ）");
+    check(st.leadN == 3, "リードタイムは完了 3 件");
+    check(st.agingN == 3, "滞留は未完了で日付のある 3 件（日付のない 1 件は数えない）");
+    check(st.agingRows.size() == 3 && st.agingRows[0].id == "4" && st.agingRows[1].id == "5" && st.agingRows[2].id == "3",
+          "滞留は長い順（評価 → 調整 → 実装）");
+    // ホバー: 週ごとの値
+    const auto colsVisible = [&] {
+      return !st.weekCols.empty() && st.weekCols.front().a.y > 130 && st.weekCols.front().b.y < 800;
+    };
+    io.AddMousePosEvent(700, 450);
+    for (int k = 0; k < 120 && !colsVisible(); ++k) {
+      io.AddMouseWheelEvent(0, -1);
+      h.frame(2);
+    }
+    check(colsVisible(), "週ごとのグラフが見える位置までスクロールできる");
+    if (colsVisible()) {
+      const auto& col = st.weekCols[0];
+      io.AddMousePosEvent((col.a.x + col.b.x) / 2, (col.a.y + col.b.y) / 2);
+      h.frame(3);
+      ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+      check(tip && tip->Active, "週の上にマウスを載せると値のツールチップが出る");
+      io.AddMousePosEvent(5, 5);
+      h.frame(2);
+      tip = ImGui::FindWindowByName("##Tooltip_00");
+      check(!(tip && tip->Active), "マウスを外すとツールチップが消える");
+    }
+    // 担当者・ルート課題の選択（この節の中）。選択欄を押すと一覧が開き、項目を選ぶと絞り込まれる
+    const auto whoVisible = [&] { return st.whoA.y > 130 && st.whoB.y < 800; };
+    io.AddMousePosEvent(700, 450);
+    for (int k = 0; k < 60 && !whoVisible(); ++k) {
+      io.AddMouseWheelEvent(0, 1);
+      h.frame(2);
+    }
+    check(whoVisible(), "担当者の選択欄が見える");
+    if (whoVisible()) {
+      h.click((st.whoA.x + st.whoB.x) / 2, (st.whoA.y + st.whoB.y) / 2);
+      h.frame(2);
+      ImGuiWindow* pop = ImGui::FindWindowByName("##Combo_00");
+      check(pop && pop->Active, "担当者の選択欄を押すと一覧が開く");
+      if (pop && pop->Active) {
+        // 一覧は 全員・担当なし・田中・鈴木 の順。鈴木（4 番目）を押す
+        const float lh = ImGui::GetTextLineHeight(), sp = ImGui::GetStyle().ItemSpacing.y;
+        const float y = pop->Pos.y + ImGui::GetStyle().WindowPadding.y + 3 * (lh + sp) + lh / 2;
+        h.click(pop->Pos.x + 30, y);
+        h.frame(3);
+        check(st.who == TrendFilter::Who::Name && st.name == "鈴木", "一覧から担当者を選べる");
+        check(st.items == 2, "鈴木の作業は 2 件（評価・調整）");
+      }
+    }
+    h.c.filter() = Filter{};  // 上の絞り込みには連動しない（推移の選択だけ）
+    h.frame(2);
+    check(st.items == 2, "上のバーの絞り込みを変えても推移の選択は変わらない");
+    st.who = TrendFilter::Who::Name;
+    st.name = "田中";
+    h.frame(3);
+    check(st.items == 4 && st.leadN == 2 && st.agingN == 1, "田中: 作業 4 件・完了 2 件・滞留 1 件");
+    st.rootId = "1";
+    h.frame(3);
+    check(st.items == 2, "田中 × ルート課題「基盤」は 2 件");
+    st.rootId.clear();
+    st.standalone = true;
+    st.who = TrendFilter::Who::Unassigned;
+    h.frame(3);
+    check(st.items == 1 && st.leadN == 1, "担当なし × 親のない単独の課題は 1 件（資料）");
+    st.who = TrendFilter::Who::Name;
+    st.name = "いない人";
+    h.frame(3);
+    check(st.drawn && st.items == 0 && st.weekCols.empty() && st.agingRows.empty(), "該当がなければ案内を出す（落ちない）");
+    st.who = TrendFilter::Who::All;
+    st.standalone = false;
+    h.frame(3);
+    check(st.items == 7, "絞り込みを戻すと 7 件に戻る");
+
+    // 滞留の行を押すと、その課題を選んで詳細を開く
+    const auto agingVisible = [&] {
+      if (st.agingRows.size() != 3) return false;
+      for (const auto& r : st.agingRows)
+        if (r.a.y < 130 || r.b.y > 860) return false;
+      return true;
+    };
+    io.AddMousePosEvent(700, 450);
+    for (int k = 0; k < 120 && !agingVisible(); ++k) {
+      io.AddMouseWheelEvent(0, -2);
+      h.frame(2);
+    }
+    check(agingVisible(), "滞留の一覧が見える位置までスクロールできる");
+    if (agingVisible()) {
+      const auto row = st.agingRows[1];  // 調整（5）
+      const ImVec2 mid((row.a.x + row.b.x) / 2, (row.a.y + row.b.y) / 2);
+      io.AddMousePosEvent(mid.x, mid.y);
+      h.frame(3);
+      ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+      check(tip && tip->Active, "滞留の行にマウスを載せると説明が出る");
+      h.click(mid.x, mid.y);
+      h.frame(3);
+      check(h.c.selection().size() == 1 && h.c.selection()[0] == row.id, "滞留の行を押すとその課題が選ばれる");
+      check(h.u.detailOpen, "滞留の行を押すと詳細パネルが開く");
+      check(h.c.view() == app::View::Stats, "統計ビューのまま（詳細は横に開く）");
+    }
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    // ダーク・コンパクト・高DPI でも描ける
+    h.u.t = &ui::darkTokens();
+    h.u.m.compact = true;
+    h.u.m.scale = 1.5f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(4);
+    check(st.drawn && st.items == 7, "ダーク・コンパクト・高DPI でも推移が描かれる");
+    h.u.t = &ui::lightTokens();
+    h.u.m.compact = false;
+    h.u.m.scale = 1.0f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    // 日付の列がない CSV: 落ちずに案内と注記を出す
+    const std::string noCols =
+        "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Resolved,Duration (weeks)\n"
+        "1,Task,日付なし,,田中,To Do,Medium,,1\n"
+        "2,Task,完了,,田中,Done,Medium,2026-10-13,1\n";
+    check(h.c.importText(noCols, "列なし", app::ImportMode::New).ok, "列なしの取り込み");
+    h.c.setView(app::View::Stats);
+    h.frame(3);
+    check(st.drawn && st.items == 2 && st.weeks == 0 && st.leadN == 0 && st.agingN == 0 && !st.forecastOk, "Created 列がなければ図は出さず、注記で案内する");
+    check(st.who == TrendFilter::Who::All && st.rootId.empty(), "プロジェクトを切り替えると推移の選択は初期化される");
+    // 空のプロジェクト: 統計ビューは案内だけで、推移は描かない
+    h.c.createProject(app::SampleKind::Empty, "空", "EMP");
+    h.c.setView(app::View::Stats);
+    h.frame(3);
+    check(!st.drawn && st.weekCols.empty() && st.agingRows.empty(), "空のプロジェクトでは推移を描かない（落ちない）");
+    h.c.deleteCurrentProject();
+    h.c.deleteCurrentProject();
+    h.c.deleteCurrentProject();
+    h.u.t = &ui::darkTokens();
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(2);
+  }
+  // 5,000 件で日付つきの推移（集計は毎フレーム。重くならない）
+  {
+    std::string text = "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Created,Updated,Resolved,Duration (weeks)\n";
+    const Day base = *parseIso("2026-10-19");
+    const char* const who[] = {"田中", "鈴木", "佐藤", ""};
+    for (int i = 0; i < 5000; ++i) {
+      const Day created = base - 400 + (i * 37) % 380;
+      const bool done = i % 3 == 0;
+      text += std::to_string(i + 1) + ",Task,課題" + std::to_string(i + 1) + ",," + who[i % 4] + "," + (done ? "Done" : "To Do") + ",Medium," + fmtIso(created) + "," +
+              fmtIso(created + (i * 11) % 300) + "," + (done ? fmtIso(created + i % 40) : std::string()) + ",1\n";
+    }
+    check(h.c.importText(text, "推移の大きい", app::ImportMode::New).ok, "5000件（日付つき）の取り込み");
+    h.c.setView(app::View::Stats);
+    h.clk.advanceMs(15000);
+    h.frame(3);
+    auto& st = h.u.statsTrend;
+    check(st.drawn && st.items == 5000, "5000件でも推移を集計する");
+    check(st.weeks == 27 && st.agingRows.size() == 10, "5000件: 27 週と滞留の上位 10 件");
+    const auto t0 = std::chrono::steady_clock::now();
+    h.frame(10);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 10;
+    std::fprintf(stderr, "ui_smoke: 5000件の統計ビュー（推移つき） 1フレーム %.1f ms\n", ms);
+#ifdef ROADMAP_SANITIZED
+    check(ms < 400, "5000件の統計ビュー（推移つき）が重くない（サニタイザ付き）");
+#else
+    check(ms < 100, "5000件の統計ビュー（推移つき）が重くない");
+#endif
+    h.c.deleteCurrentProject();
+    h.c.setView(app::View::List);
+    h.frame(2);
+  }
   // HTML に書き出す（Issue #42）: コマンドパレット → ダイアログ → 保存ダイアログ（スタブ）→ IFileStore に書く → 通知
   {
     h.c.createProject(app::SampleKind::Hierarchy, "報告/テスト", "RPT");

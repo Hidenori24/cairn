@@ -54,6 +54,7 @@ struct ExportInput {
   const std::vector<Issue>& issues;
   const std::vector<ScheduleRow>& rows;
   const Calendar& calendar;
+  const ProjectMeta* meta = nullptr;  // 統計の「推移」が Created・Updated 列を探すのに使う（なければ日付の列なし扱い）
   Day base = 0;
   std::string projectName;
   ResourceLimit resource;

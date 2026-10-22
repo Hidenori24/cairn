@@ -37,6 +37,7 @@ add_library(roadmap_core STATIC
   src/report.cpp
   src/report_gantt.cpp
   src/report_stats.cpp
+  src/report_trends.cpp
   src/report_list.cpp
   src/weekly_state.cpp
   src/weekly.cpp

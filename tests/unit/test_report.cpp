@@ -53,6 +53,7 @@ struct Proj {
   ExportInput input(const char* name = "テストプロジェクト") const {
     ExportInput in(comp.T, issues, comp.R, cal);
     in.base = base;
+    in.meta = &meta;
     in.projectName = name;
     in.clock = &clk;
     return in;
@@ -633,6 +634,58 @@ TEST_CASE("report: 統計は画面の統計と同じ内容（タイル・状況�
   ExportInput in = p.input();
   in.resource = {true, 2};
   CHECK(contains(exportHtml(in, o), "同時に 2 件が動いている状態"));
+}
+
+TEST_CASE("report: 統計に「推移」の節（バーンダウン・ペース予測・リードタイム・滞留日数）を、同じ内容で出す") {
+  Proj p = Proj::fromCsv(
+      "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Created,Updated,Resolved,Duration (weeks)\n"
+      "1,Task,<img src=x onerror=alert(1)>,,田中,To Do,High,2026-09-01,2026-09-10,,1\n"
+      "2,Task,B,,田中,Done,High,2026-09-01,,2026-10-06,1\n"
+      "3,Task,C,,鈴木,Done,High,2026-09-02,,2026-10-07,1\n"
+      "4,Task,D,,鈴木,Done,High,2026-09-02,,2026-10-13,1\n"
+      "5,Task,E,,鈴木,Done,High,2026-09-03,,2026-10-14,1\n"
+      "6,Task,F,,,To Do,Low,2026-10-12,,,1\n"
+      "7,Task,G,,,To Do,Low,,,,1\n"
+      "8,Task,H,,,Done,Low,2026-10-12,,2026-10-09,1\n");
+  ExportOptions o;
+  o.gantt = false;
+  o.list = false;
+  const std::string h = exportHtml(p.input(), o);
+  for (const char* s : {"<h2>推移</h2>", "バーンダウン／バーンアップ", "ペース予測（点線）", "stroke-dasharray", "完了の見込み", "リードタイム", "90 パーセンタイル",
+                        "滞留日数", "! 20+ 営業日", "動いていない日数", "長く動いていない順", "絞り込みに関係なく", "作成日（Created）のない 1 件は数えていません",
+                        "1 件は完了日が作成日より前"})
+    CHECK_MESSAGE(contains(h, s), s);
+  CHECK(contains(h, "&lt;img src=x onerror=alert(1)&gt;"));  // 件名はエスケープされて表に入る
+  CHECK_FALSE(contains(h, "<img"));
+  CHECK_FALSE(contains(h, "<script"));
+  std::string bad;
+  CHECK_MESSAGE(onlyKnownTags(h, &bad), bad);
+  CHECK(text::isValidUtf8(h));
+  // 統計を出さないときは「推移」も出さない
+  ExportOptions off;
+  off.gantt = true;
+  off.stats = false;
+  off.list = false;
+  CHECK_FALSE(contains(exportHtml(p.input(), off), "推移"));
+  // ダークでも出る
+  ExportOptions dk = o;
+  dk.dark = true;
+  CHECK(contains(exportHtml(p.input(), dk), "バーンダウン／バーンアップ"));
+}
+
+TEST_CASE("report: 推移 — 日付の列がない CSV（meta なし）でも落ちず、案内を出す") {
+  Proj p = Proj::fromCsv(kBasic);
+  ExportOptions o;
+  o.gantt = false;
+  o.list = false;
+  ExportInput in = p.input();
+  in.meta = nullptr;
+  const std::string h = exportHtml(in, o);
+  CHECK(contains(h, "<h2>推移</h2>"));
+  CHECK(contains(h, "Created（作成日）の列がないので、バーンダウンとリードタイムは出せません"));
+  CHECK(contains(h, "作成日（Created）のある作業がないので、バーンダウンは出せません"));
+  std::string bad;
+  CHECK_MESSAGE(onlyKnownTags(h, &bad), bad);
 }
 
 TEST_CASE("report: 負荷が 100% を超えたセルには「!」が付く（色だけに頼らない）") {
