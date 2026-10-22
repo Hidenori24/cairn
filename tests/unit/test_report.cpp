@@ -689,6 +689,118 @@ TEST_CASE("report: 推移 — 日付の列がない CSV（meta なし）でも�
   CHECK_MESSAGE(onlyKnownTags(h, &bad), bad);
 }
 
+TEST_CASE("report: 推移に状況の件数の累積フロー図（記録のない週は「記録なし」。スクリプトなし）") {
+  Proj p = Proj::fromCsv(kBasic);
+  History h;
+  const auto put = [&](const char* w, int t, int d, int n) {
+    HistoryPoint x;
+    x.weekStart = w;
+    x.todo = t;
+    x.doing = d;
+    x.done = n;
+    x.total = t + d + n;
+    REQUIRE(recordHistory(h, x).ok());
+  };
+  put("2026-09-28", 6, 0, 0);
+  put("2026-10-05", 5, 1, 0);
+  put("2026-10-19", 3, 1, 2);  // 10/12 の週は記録なし
+  ExportOptions o;
+  o.gantt = false;
+  o.list = false;
+  ExportInput in = p.input();
+  in.history = &h;
+  const std::string html = exportHtml(in, o);
+  for (const char* want : {"状況の件数の推移（累積フロー）", "完了（実線）", "進行中（破線）", "未着手（点線）", "記録なし（線を引かない）", "記録のない週が 1 週あります",
+                        "10/12(月) からの週", "未着手 3 件", "合計 6", "stroke-dasharray", "件数だけで、課題の名前は覚えません"}) {
+    INFO("missing: " << want);
+    CHECK(contains(html, std::string(want)));
+  }
+  CHECK(contains(html, ">記録なし<"));  // 帯の中の文字（<title> の「記録なし」とは別に、見える文字として）
+  CHECK_FALSE(contains(html, "<script"));
+  CHECK_FALSE(contains(html, "状況の履歴は記録していません"));
+  std::string bad;
+  CHECK_MESSAGE(onlyKnownTags(html, &bad), bad);
+  CHECK(text::isValidUtf8(html));
+  // 履歴を渡さなければ節は出ない
+  CHECK_FALSE(contains(exportHtml(p.input(), o), "累積フロー"));
+  // 統計を出さないときは出さない
+  ExportOptions off = o;
+  off.stats = false;
+  off.gantt = true;
+  CHECK_FALSE(contains(exportHtml(in, off), "累積フロー"));
+  // ダークでも出る
+  ExportOptions dk = o;
+  dk.dark = true;
+  CHECK(contains(exportHtml(in, dk), "状況の件数の推移（累積フロー）"));
+}
+
+TEST_CASE("report: 累積フロー図 — 破線・点線は記録のある連続した週で 1 本の折れ線（週の組ごとに切らない）") {
+  Proj p = Proj::fromCsv(kBasic);
+  History h;
+  const auto put = [&](Day d, int i) {
+    HistoryPoint x;
+    x.weekStart = fmtIso(d);
+    x.todo = 3;
+    x.doing = 2;
+    x.done = i;
+    x.total = 5 + i;
+    REQUIRE(recordHistory(h, x).ok());
+  };
+  const Day w0 = *parseIso("2026-01-05");
+  for (int i = 0; i < 30; ++i) put(w0 + i * 7, i);       // 30 週続けて記録
+  for (int i = 33; i < 40; ++i) put(w0 + i * 7, i);      // 3 週あいて、また 7 週
+  ExportOptions o;
+  o.gantt = false;
+  o.list = false;
+  ExportInput in = p.input();
+  in.history = &h;
+  in.base = w0 + 39 * 7;
+  const std::string html = exportHtml(in, o);
+  const std::size_t at = html.find("状況の件数の推移（累積フロー図）");
+  REQUIRE(at != std::string::npos);
+  const std::string svg = html.substr(at, html.find("</svg>", at) - at);
+  CHECK(count(svg, "stroke-dasharray=\"5 4\"") == 2);  // 進行中の境界: 連続した 2 区間に 1 本ずつ
+  CHECK(count(svg, "stroke-dasharray=\"2 3\"") == 2 + 1);  // 未着手の境界 2 本 + 記録なしの帯 1 つ（3 週で 1 つの帯）
+}
+
+TEST_CASE("report: 累積フロー図 — 記録が 0 件・1 件なら案内だけ。104 週でも落ちない。日付の列がなくても出る") {
+  Proj p = Proj::fromCsv(kBasic);
+  ExportOptions o;
+  o.gantt = false;
+  o.list = false;
+  History h;
+  ExportInput in = p.input();
+  in.history = &h;
+  CHECK(contains(exportHtml(in, o), "記録が溜まるとここに出ます（いま 0 週ぶん）"));
+  HistoryPoint x;
+  x.weekStart = "2026-10-19";
+  x.todo = 2;
+  x.total = 2;
+  REQUIRE(recordHistory(h, x).ok());
+  const std::string one = exportHtml(in, o);
+  CHECK(contains(one, "記録が溜まるとここに出ます（いま 1 週ぶん）"));
+  // 104 週
+  History full;
+  for (int i = 0; i < 104; ++i) {
+    HistoryPoint y;
+    y.weekStart = fmtIso(*parseIso("2025-01-06") + i * 7);
+    y.todo = i % 7;
+    y.doing = 1;
+    y.done = i;
+    y.total = y.todo + y.doing + y.done;
+    REQUIRE(recordHistory(full, y).ok());
+  }
+  in.history = &full;
+  in.base = *parseIso("2026-12-28");
+  const std::string big = exportHtml(in, o);
+  CHECK(contains(big, "状況の件数の推移（累積フロー）"));
+  std::string bad;
+  CHECK_MESSAGE(onlyKnownTags(big, &bad), bad);
+  // meta がない（日付の列がない）でも、履歴の図は出る
+  in.meta = nullptr;
+  CHECK(contains(exportHtml(in, o), "状況の件数の推移（累積フロー）"));
+}
+
 TEST_CASE("report: 負荷が 100% を超えたセルには「!」が付く（色だけに頼らない）") {
   // 田中に 3 週間の作業を 2 件並行で入れる（資源制限なし）→ 週の負荷 200%
   Proj p = Proj::fromCsv(

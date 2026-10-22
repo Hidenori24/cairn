@@ -218,8 +218,18 @@ void Workspace::update(const std::string& id, ProjectRecord rec) {
   if (changed) e->dirty = true;
 }
 
+void Workspace::updateSettings(const std::string& id, ProjectSettings settings) {
+  ProjectEntry* e = find(id);
+  if (!e) return;
+  ProjectRecord next = e->rec;  // csv も写るが、ここでは変えない
+  next.settings = std::move(settings);
+  const bool changed = settingsToJson(next) != settingsToJson(e->rec);
+  e->rec = std::move(next);
+  if (changed) e->settingsDirty = true;
+}
+
 bool Workspace::hasDirty() const {
-  return std::any_of(entries_.begin(), entries_.end(), [](const ProjectEntry& e) { return e.dirty; });
+  return std::any_of(entries_.begin(), entries_.end(), [](const ProjectEntry& e) { return e.dirty || e.settingsDirty; });
 }
 
 std::string Workspace::signature(const ProjectRecord& rec) const { return rec.csv + "\n" + dumpJs(settingsToJson(rec)); }
@@ -303,18 +313,33 @@ Status Workspace::writeEntry(ProjectEntry& e) {
   e.mtime = m;
   e.lastSig = sig;
   e.dirty = false;
+  e.settingsDirty = false;
   fileStems_.insert(text::toLower(e.stem));
+  return okStatus();
+}
+
+Status Workspace::writeSettingsOnly(ProjectEntry& e) {
+  if (e.stem.empty()) return writeEntry(e);  // まだ書いていない（CSV もない）ものは全部書く
+  const std::string sig = signature(e.rec);
+  if (auto s = fs_.writeAtomic(settingsPathOf(e), dumpJs(settingsToJson(e.rec))); !s) return s;
+  std::int64_t m = 0;
+  if (auto a = fs_.stat(csvPathOf(e))) m = std::max(m, a->mtime);
+  if (auto b = fs_.stat(settingsPathOf(e))) m = std::max(m, b->mtime);
+  e.mtime = m;
+  e.lastSig = sig;
+  e.settingsDirty = false;
   return okStatus();
 }
 
 Status Workspace::flush() {
   for (auto& e : entries_) {
-    if (!e.dirty) continue;
+    if (!e.dirty && !e.settingsDirty) continue;
     if (!e.stem.empty() && e.lastSig == signature(e.rec)) {
       e.dirty = false;  // 内容が変わっていなければ書かない
+      e.settingsDirty = false;
       continue;
     }
-    if (auto s = writeEntry(e); !s) return s;
+    if (auto s = e.dirty ? writeEntry(e) : writeSettingsOnly(e); !s) return s;
   }
   return okStatus();
 }
@@ -460,6 +485,7 @@ Result<SyncReport> Workspace::sync() {
       e->rec = std::move(*rec);
       e->mtime = f->mtime;
       e->lastSig = signature(e->rec);
+      e->settingsDirty = false;  // ファイルの版を採る（設定だけの未保存の変更は、開き直したときの記録などでやり直す）
       sum.loaded++;
       sum.reloadedIds.push_back(id);
     } else if (e->dirty) {

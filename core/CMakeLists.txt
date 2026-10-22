@@ -40,6 +40,7 @@ add_library(roadmap_core STATIC
   src/report_trends.cpp
   src/report_list.cpp
   src/baseline.cpp
+  src/history.cpp
   src/links.cpp
   src/github_ref.cpp
   src/weekly_state.cpp

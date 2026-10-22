@@ -105,6 +105,15 @@ class AppController {
   // 組み立てて path に書く。成功したら recordWeekly と「フォルダを開く」つきの通知、失敗したら理由を通知する（例外は出さない）
   Status exportWeekly(const std::string& path, const WeeklyOptions& opt, bool html);
 
+  // ---- 状況の件数の履歴（累積フロー図。Issue #64。取り消しの対象外で、project.settings.json の "history" に保存する）----
+  // 記録のきっかけ。Session::recordHistory を呼ぶのはここ（recordHistory）だけにまとめている
+  enum class HistoryTrigger {
+    Open,    // プロジェクトを開いたとき: その週の点がなければ追加（あれば何もしない＝開くたびに設定ファイルを書き換えない）
+    Manual,  // 統計の「いま記録する」: 同じ週は置き換え、結果を通知する
+    Weekly   // 週次レポートをコピー・保存したとき: 同じ週は置き換え（通知しない）
+  };
+  void recordHistory(HistoryTrigger why);
+
   // ---- ベースライン（計画の日程の保存。Issue #53。取り消しの対象外で、project.settings.json に保存する）----
   // 保存するときの名前の初期値 "2026-10-19 の計画"
   std::string defaultBaselineName() const;
@@ -322,6 +331,7 @@ class AppController {
   std::vector<std::unique_ptr<Session>> retiredSessions_;
   std::string currentId_;
   std::uint64_t seenVersion_ = 0;
+  std::uint64_t seenContentVersion_ = 0;
   bool firstRun_ = false;
 
   std::vector<std::string> sel_;

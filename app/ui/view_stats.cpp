@@ -4,7 +4,9 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
+#include "roadmap/history.hpp"
 #include "roadmap/load.hpp"
 #include "roadmap/stats.hpp"
 #include "roadmap/text.hpp"
@@ -388,6 +390,30 @@ void dashedLine(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col, float th, float d
   }
 }
 
+// 折れ線を破線・点線で引く。破線の位相（パターンのどこまで進んだか）を点から点へ持ち越すので、
+// 1 区間が dash より短くても（104 週を狭い幅に収めたとき）破線に見える
+void dashedPolyline(ImDrawList* dl, const std::vector<ImVec2>& pts, ImU32 col, float th, float dash, float gap) {
+  const float period = dash + gap;
+  if (pts.size() < 2 || period <= 0.f) return;
+  float pos = 0;  // パターンの先頭からの距離
+  for (std::size_t k = 1; k < pts.size(); ++k) {
+    const ImVec2 a = pts[k - 1], b = pts[k];
+    const float dx = b.x - a.x, dy = b.y - a.y;
+    const float len = std::sqrt(dx * dx + dy * dy);
+    if (len < 0.001f) continue;
+    const float ux = dx / len, uy = dy / len;
+    float t = 0;
+    while (t < len) {
+      const float phase = std::fmod(pos, period);
+      const bool on = phase < dash;
+      const float step = std::min((on ? dash : period) - phase, len - t);
+      if (on) dl->AddLine(ImVec2(a.x + ux * t, a.y + uy * t), ImVec2(a.x + ux * (t + step), a.y + uy * (t + step)), col, th);
+      t += step;
+      pos += step;
+    }
+  }
+}
+
 // 折れ線グラフの凡例（四角の見本と、実線・点線の見本）
 void burnLegend(Frame& f) {
   UiState& u = f.u;
@@ -719,8 +745,222 @@ void drawPlanDiff(Frame& f, const BaselineCompare& bc, const Tree& T, const std:
   }
 }
 
+// ---------------------------------------------------------------- 状況の件数の推移（累積フロー。Issue #64）
+
+// 背景 bg に fg を不透明度 a で重ねた不透明な色（半透明の面を隣どうしで描くと、継ぎ目が濃い線に見えるので、あらかじめ混ぜておく）
+ImU32 blendOver(ImU32 bg, ImU32 fg, float a) {
+  const ImVec4 b = ImGui::ColorConvertU32ToFloat4(bg), f = ImGui::ColorConvertU32ToFloat4(fg);
+  return ImGui::ColorConvertFloat4ToU32(ImVec4(b.x + (f.x - b.x) * a, b.y + (f.y - b.y) * a, b.z + (f.z - b.z) * a, 1.f));
+}
+
+// 凡例の見本: 面の色の四角に、境界の線種（実線・破線・点線）を重ねる
+void cfdLegend(Frame& f, const CfdWeek* latest, float W) {
+  UiState& u = f.u;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float x0 = ImGui::GetCursorScreenPos().x;
+  // 幅に収まらないときは次の行へ（狭い画面・詳細パネルを開いたとき）
+  const auto wrapIfNeeded = [&](float itemW) {
+    const float x = ImGui::GetCursorScreenPos().x;
+    if (x > x0 + 1.f && x + itemW > x0 + W) ImGui::NewLine();
+  };
+  const float swW = u.m.s(26);
+  const auto sample = [&](const std::string& label, ImU32 fill, int style) {
+    wrapIfNeeded(swW + u.m.s(5) + ImGui::CalcTextSize(label.c_str()).x);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = ImGui::GetTextLineHeight();
+    dl->AddRectFilled(ImVec2(p.x, p.y + u.m.s(2)), ImVec2(p.x + swW, p.y + h - u.m.s(2)), blendOver(u.t->bg, fill, 0.55f), 0);
+    const float y = p.y + u.m.s(2);
+    if (style == 0) dl->AddLine(ImVec2(p.x, y), ImVec2(p.x + swW, y), u.t->ink, u.m.s(2));
+    else if (style == 1) dashedLine(dl, ImVec2(p.x, y), ImVec2(p.x + swW, y), u.t->ink, u.m.s(2), u.m.s(5), u.m.s(4));
+    else dashedLine(dl, ImVec2(p.x, y), ImVec2(p.x + swW, y), u.t->ink, u.m.s(2), u.m.s(2), u.m.s(3));
+    ImGui::Dummy(ImVec2(swW, h));
+    ImGui::SameLine(0, u.m.s(5));
+    ImGui::TextUnformatted(label.c_str());
+    ImGui::SameLine(0, u.m.s(16));
+  };
+  sample(latest ? "完了（実線） " + std::to_string(latest->done) : std::string("完了（実線）"), u.t->ok, 0);
+  sample(latest ? "進行中（破線） " + std::to_string(latest->doing) : std::string("進行中（破線）"), u.t->accent, 1);
+  sample(latest ? "未着手（点線） " + std::to_string(latest->todo) : std::string("未着手（点線）"), u.t->line2, 2);
+  {  // 記録なし: 点線の枠
+    const char* label = "記録なし（線を引かない）";
+    wrapIfNeeded(swW + u.m.s(5) + ImGui::CalcTextSize(label).x);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = ImGui::GetTextLineHeight();
+    const ImVec2 a(p.x, p.y + u.m.s(2)), b(p.x + swW, p.y + h - u.m.s(2));
+    dl->AddRectFilled(a, b, withAlpha(u.t->muted, 0.08f));
+    dashedLine(dl, a, ImVec2(b.x, a.y), u.t->muted, 1.f, u.m.s(2), u.m.s(2));
+    dashedLine(dl, ImVec2(a.x, b.y), b, u.t->muted, 1.f, u.m.s(2), u.m.s(2));
+    ImGui::Dummy(ImVec2(swW, h));
+    ImGui::SameLine(0, u.m.s(5));
+    ImGui::TextUnformatted(label);
+  }
+}
+
+// 週ごとの未着手・進行中・完了の件数を積み上げた面。記録のない週は線を引かず「記録なし」と薄く出す
+void drawCfdChart(Frame& f, const CfdSeries& cs, float W) {
+  UiState& u = f.u;
+  UiState::StatsCfd& sc = u.statsCfd;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const int cols = static_cast<int>(cs.weeks.size());
+  // 列は W に収まるまで縮める（最大 104 列でも幅を超えない）。狭いほど日付の見出しを間引く
+  const float bw = std::min(W / static_cast<float>(cols), u.m.s(64));
+  const float chartH = u.m.s(150), axisH = u.m.s(20), top = u.m.s(22);
+  const int every = std::max(1, static_cast<int>(std::ceil(u.m.s(34) / bw)));
+
+  const CfdWeek* latest = nullptr;
+  for (int i = cols - 1; i >= 0 && !latest; --i)
+    if (!cs.weeks[static_cast<std::size_t>(i)].gap) latest = &cs.weeks[static_cast<std::size_t>(i)];
+  cfdLegend(f, latest, W);
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  ImGui::Dummy(ImVec2(W, chartH + axisH));
+  sc.chartX1 = p.x + W;
+
+  const float unit = (chartH - top) / static_cast<float>(std::max(1, cs.maxTotal));
+  const auto xOf = [&](int i) { return p.x + bw * static_cast<float>(i) + bw / 2; };
+  const auto yAt = [&](int v) { return p.y + chartH - unit * static_cast<float>(v); };
+  const auto at = [&](int i) -> const CfdWeek& { return cs.weeks[static_cast<std::size_t>(i)]; };
+  const float baseY = p.y + chartH;
+
+  // 記録のない週: 薄い帯と点線の枠（連続する週はひとつの帯にして「記録なし」と書く）
+  for (int i = 0; i < cols;) {
+    if (!at(i).gap) {
+      ++i;
+      continue;
+    }
+    int j = i;
+    while (j < cols && at(j).gap) ++j;
+    const ImVec2 a(p.x + bw * static_cast<float>(i), p.y), b(p.x + bw * static_cast<float>(j), baseY);
+    dl->AddRectFilled(a, b, withAlpha(u.t->muted, 0.08f));
+    dashedLine(dl, a, ImVec2(a.x, b.y), withAlpha(u.t->muted, 0.5f), 1.f, u.m.s(2), u.m.s(3));
+    dashedLine(dl, ImVec2(b.x, a.y), b, withAlpha(u.t->muted, 0.5f), 1.f, u.m.s(2), u.m.s(3));
+    dashedLine(dl, a, ImVec2(b.x, a.y), withAlpha(u.t->muted, 0.5f), 1.f, u.m.s(2), u.m.s(3));
+    const float tw = ImGui::CalcTextSize("記録なし").x;
+    if (b.x - a.x >= tw + u.m.s(6))
+      dl->AddText(ImVec2((a.x + b.x - tw) / 2, p.y + chartH / 2 - ImGui::GetTextLineHeight() / 2), withAlpha(u.t->muted, 0.8f), "記録なし");
+    i = j;
+  }
+  dl->AddLine(ImVec2(p.x, baseY), ImVec2(p.x + bw * static_cast<float>(cols), baseY), u.t->line);
+
+  // 隣り合う記録のある週のあいだだけ面で塗る。孤立した週は細い柱（前後を補って線を作らない）
+  const auto quad = [&](float x0, float ya0, float yb0, float x1, float ya1, float yb1, ImU32 col) {
+    dl->AddConvexPolyFilled(std::array<ImVec2, 4>{ImVec2(x0, ya0), ImVec2(x1, ya1), ImVec2(x1, yb1), ImVec2(x0, yb0)}.data(), 4, blendOver(u.t->bg, col, 0.55f));
+  };
+  const ImDrawListFlags oldFlags = dl->Flags;
+  dl->Flags &= ~ImDrawListFlags_AntiAliasedFill;  // 隣どうしの面の継ぎ目に薄い線が出ないよう、面の縁は塗りつぶし（境界の線は別に引く）
+  for (int i = 0; i + 1 < cols; ++i) {
+    if (at(i).gap || at(i + 1).gap) continue;
+    const CfdWeek &a = at(i), &b = at(i + 1);
+    const float x0 = xOf(i), x1 = xOf(i + 1);
+    quad(x0, baseY, yAt(a.done), x1, baseY, yAt(b.done), u.t->ok);
+    quad(x0, yAt(a.done), yAt(a.done + a.doing), x1, yAt(b.done), yAt(b.done + b.doing), u.t->accent);
+    quad(x0, yAt(a.done + a.doing), yAt(a.total), x1, yAt(b.done + b.doing), yAt(b.total), u.t->line2);
+  }
+  dl->Flags = oldFlags;
+  // 境界の線。記録のある連続した週ごとにひとつの折れ線として引き、破線・点線の位相はその中で持ち越す
+  // （週の組ごとにリセットすると、1 区間が破線より短い 104 週では実線に見えてしまう）。記録なしの区間でだけ切れる
+  for (int i = 0; i < cols;) {
+    if (at(i).gap) {
+      ++i;
+      continue;
+    }
+    int j = i;
+    while (j < cols && !at(j).gap) ++j;
+    if (j - i >= 2) {
+      std::vector<ImVec2> done, doing, total;
+      for (int k = i; k < j; ++k) {
+        done.push_back(ImVec2(xOf(k), yAt(at(k).done)));
+        doing.push_back(ImVec2(xOf(k), yAt(at(k).done + at(k).doing)));
+        total.push_back(ImVec2(xOf(k), yAt(at(k).total)));
+      }
+      dl->AddPolyline(done.data(), static_cast<int>(done.size()), u.t->ink, ImDrawFlags_None, u.m.s(2));
+      dashedPolyline(dl, doing, u.t->ink, u.m.s(2), u.m.s(5), u.m.s(4));
+      dashedPolyline(dl, total, u.t->ink, u.m.s(2), u.m.s(2), u.m.s(3));
+    }
+    i = j;
+  }
+  const float colW = std::min(u.m.s(6), bw * 0.5f);
+  for (int i = 0; i < cols; ++i) {
+    const CfdWeek& w = at(i);
+    if (w.gap) continue;
+    const bool prevOk = i > 0 && !at(i - 1).gap, nextOk = i + 1 < cols && !at(i + 1).gap;
+    if (!prevOk && !nextOk) {
+      const float x = xOf(i) - colW / 2;
+      dl->AddRectFilled(ImVec2(x, yAt(w.done)), ImVec2(x + colW, baseY), blendOver(u.t->bg, u.t->ok, 0.55f));
+      dl->AddRectFilled(ImVec2(x, yAt(w.done + w.doing)), ImVec2(x + colW, yAt(w.done)), blendOver(u.t->bg, u.t->accent, 0.55f));
+      dl->AddRectFilled(ImVec2(x, yAt(w.total)), ImVec2(x + colW, yAt(w.done + w.doing)), blendOver(u.t->bg, u.t->line2, 0.55f));
+    }
+    if (bw >= u.m.s(10) || !prevOk || !nextOk) dl->AddCircleFilled(ImVec2(xOf(i), yAt(w.total)), u.m.s(2.5f), u.t->ink);  // 列が細いときは、点が連なって点線を隠さないよう、連続した週の中の点は省く
+  }
+  // 最新の記録の合計（数字でも読める）
+  if (latest) {
+    const int li = static_cast<int>(latest - cs.weeks.data());
+    const std::string lb = "合計 " + std::to_string(latest->total);
+    const float tw = ImGui::CalcTextSize(lb.c_str()).x;
+    dl->AddText(ImVec2(std::min(xOf(li) - tw, p.x + W - tw), yAt(latest->total) - ImGui::GetTextLineHeight() - u.m.s(4)), u.t->muted, lb.c_str());
+  }
+  // 横軸の週の見出し
+  for (int i = 0; i < cols; ++i) {
+    if (i % every != 0 && i != cols - 1) continue;
+    const std::string lb = fmtShort(at(i).start);
+    const float tw = ImGui::CalcTextSize(lb.c_str()).x;
+    dl->AddText(ImVec2(xOf(i) - tw / 2, baseY + u.m.s(3)), at(i).gap ? withAlpha(u.t->muted, 0.7f) : u.t->muted, lb.c_str());
+  }
+  // ホバー: 週ごとの値（記録のない週は「記録なし」）
+  sc.cols.clear();
+  for (int i = 0; i < cols; ++i) {
+    const ImVec2 a(p.x + bw * static_cast<float>(i), p.y), b(p.x + bw * static_cast<float>(i + 1), baseY + axisH);
+    sc.cols.push_back({a, ImVec2(b.x, baseY)});
+    if (ImGui::IsMouseHoveringRect(a, b) && ImGui::IsWindowHovered()) ImGui::SetTooltip("%s", cfdWeekText(at(i)).c_str());
+  }
+}
+
+// 状況の件数の推移の節。履歴は Session が覚えている（開いたとき・週次レポート・「いま記録する」で週に 1 回まで）
+void drawCfd(Frame& f, Session& s, Day base, float W) {
+  UiState& u = f.u;
+  UiState::StatsCfd& sc = u.statsCfd;
+  sc = UiState::StatsCfd{};
+  sc.drawn = true;
+  const History& hist = s.history();
+  const CfdSeries cs = cfdSeries(hist, base);
+  sc.recorded = cs.recorded;
+  sc.weeks = static_cast<int>(cs.weeks.size());
+  sc.gaps = sc.weeks - cs.recorded;
+
+  ImGui::Dummy(ImVec2(0, u.m.s(14)));
+  ImGui::PushFont(u.fontBold);
+  ImGui::TextUnformatted("状況の件数の推移（累積フロー）");
+  ImGui::PopFont();
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+  ImGui::TextDisabled("アプリを開いたとき・週次レポートを出したとき・下のボタンで、週に 1 回までの件数を覚えています（最大 %d 週）。件数だけで、課題の名前は覚えません。絞り込みに関係なく、プロジェクト全体です。",
+                      static_cast<int>(kHistoryMaxWeeks));
+  ImGui::PopTextWrapPos();
+  ImGui::Dummy(ImVec2(0, u.m.s(2)));
+  if (ImGui::Button("いま記録する")) f.c.recordHistory(app::AppController::HistoryTrigger::Manual);
+  sc.recA = ImGui::GetItemRectMin();
+  sc.recB = ImGui::GetItemRectMax();
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("今週の件数を記録します。同じ週にもう記録があれば、いまの状態で置き換えます");
+  ImGui::SameLine(0, u.m.s(10));
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextDisabled("記録 %d 週ぶん", cs.recorded);
+  ImGui::Dummy(ImVec2(0, u.m.s(4)));
+  if (!cs.drawable()) {
+    sc.pending = true;
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+    ImGui::TextUnformatted(cfdPendingText(cs.recorded).c_str());
+    ImGui::PopTextWrapPos();
+    return;
+  }
+  sc.chart = true;
+  drawCfdChart(f, cs, W);
+  if (sc.gaps > 0) {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+    ImGui::TextDisabled("記録のない週が %d 週あります（点線の枠の帯。線は引かず、補いません）。", sc.gaps);
+    ImGui::PopTextWrapPos();
+  }
+}
+
 // 推移の節。担当者・ルート課題の選択（この節の中だけ。上の絞り込みや他の節には効かない）→ 集計 → 3 つの図
-void drawTrends(Frame& f, Session& s, const Tree& T, const std::vector<ScheduleRow>& R, const std::vector<Issue>& I, Day base, float W) {
+void drawTrendBody(Frame& f, Session& s, const Tree& T, const std::vector<ScheduleRow>& R, const std::vector<Issue>& I, Day base, float W) {
   UiState& u = f.u;
   UiState::StatsTrend& st = u.statsTrend;
   if (st.projectId != f.c.currentId()) {  // プロジェクトを切り替えたら選択を初期化する
@@ -731,7 +971,7 @@ void drawTrends(Frame& f, Session& s, const Tree& T, const std::vector<ScheduleR
     const int r = T.find(st.rootId);
     if (r < 0 || T.parentOf[static_cast<std::size_t>(r)] >= 0 || T.kids[static_cast<std::size_t>(r)].empty()) st.rootId.clear();
   }
-  sectionHead(f, "推移", "作成日・完了日・更新日から出しています。状況の履歴は記録していません", W);
+  sectionHead(f, "推移", "作成日・完了日・更新日から出しています（最後の図だけ、記録した件数から出します）", W);
   ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
   ImGui::TextDisabled("週は月曜始まりです。営業日は休業日を除きます。CSV の Created（作成日）・Resolved（完了日）・Updated（更新日）を読みます。");
   ImGui::PopTextWrapPos();
@@ -869,6 +1109,12 @@ void drawTrends(Frame& f, Session& s, const Tree& T, const std::vector<ScheduleR
     ImGui::PopTextWrapPos();
   }
 }
+
+// 推移の節: 日付から出す 3 つの図（担当者・ルート課題の選択つき）→ 記録した件数の累積フロー
+void drawTrends(Frame& f, Session& s, const Tree& T, const std::vector<ScheduleRow>& R, const std::vector<Issue>& I, Day base, float W) {
+  drawTrendBody(f, s, T, R, I, base, W);
+  drawCfd(f, s, base, W);
+}
 }  // namespace
 
 void drawStatsView(Frame& f, ImVec2 size) {
@@ -878,6 +1124,7 @@ void drawStatsView(Frame& f, ImVec2 size) {
   u.statsTrend.weekCols.clear();
   u.statsTrend.agingRows.clear();
   u.statsPlan = UiState::StatsPlan{};
+  u.statsCfd = UiState::StatsCfd{};  // 描かないフレームでは前の結果を残さない
   Session* s = c.session();
   if (!s || !s->tree()) return;
   const Tree& T = *s->tree();

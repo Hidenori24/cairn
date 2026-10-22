@@ -49,6 +49,10 @@ struct LinkPreview {
   int delayDays = 0;               // 後続（相手）の配下の葉の最大の遅れ（営業日。遅れなければ 0）
 };
 
+// 履歴の記録のしかた（Issue #64）
+enum class HistoryMode { IfMissing, Replace };
+enum class HistoryResult { Recorded, Replaced, Unchanged, AlreadyHave, Skipped };
+
 class Session {
  public:
   explicit Session(ProjectData data, const IClock* clock = nullptr, std::vector<std::string> loadWarns = {});
@@ -80,6 +84,9 @@ class Session {
 
   // 変更のたびに増える（保存の予約・再描画の判断に使う）
   std::uint64_t version() const { return version_; }
+  // 課題・メタ情報（CSV に入るもの）を変えた回数。設定だけの変更（表示状態・履歴・ベースラインなど）では進まない。
+  // 保存側が、課題を編集していない間は元の CSV を再エクスポートして書き換えないために使う
+  std::uint64_t contentVersion() const { return contentVersion_; }
   // 通知（UI が取り出して表示する）
   std::vector<Notice> takeNotices();
   void notify(std::string text, NoticeAction a = NoticeAction::None);
@@ -172,6 +179,11 @@ class Session {
   const WeeklyMemo& weekly() const { return P_.settings.weekly; }
   void setWeeklyNotes(const std::string& notes);  // 変わったときだけ保存を予約する。長すぎる・壊れた文字は直す
   void putWeeklySnapshot(WeeklySnapshot s);
+  // 状況の件数の履歴（取り消しの対象外で、保存はする。Issue #64）。記録するのはここだけ（呼ぶ側は AppController の 1 か所）
+  const History& history() const { return P_.settings.history; }
+  // いまの週の点を記録する。IfMissing = その週の点がなければ追加（あれば何もせず、保存も予約しない。作業が 0 件なら Skipped）。
+  // Replace = 同じ週は置き換える（内容が変わらなければ保存を予約しない）。日程を計算できていないときはエラー
+  Result<HistoryResult> recordHistory(HistoryMode mode);
   // ベースライン（計画の日程の保存。取り消しの対象外で、保存はする。Issue #53）
   const BaselineSet& baselines() const { return P_.settings.baselines; }
   const Baseline* shownBaseline() const { return baselineShown(P_.settings.baselines); }
@@ -236,6 +248,7 @@ class Session {
   std::vector<Notice> notices_;
   InheritSpec inherit_;
   std::uint64_t version_ = 0;
+  std::uint64_t contentVersion_ = 0;
   int batchDepth_ = 0;
   std::optional<Snapshot> batchSnap_;
 };
