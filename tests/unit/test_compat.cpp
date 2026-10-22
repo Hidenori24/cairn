@@ -47,7 +47,7 @@ const Sample kSamples[] = {
     {"v0.5", "pcompat05b2", "portal-v05/project.csv", "portal-v05/project.settings.json", false, "", 100},
     {"v0.7", "pcompat07c3", "expense-v07/project.csv", "expense-v07/project.settings.json", false, "Sprint", 125},
     {"v0.9", "pcompat09d4", "manual-v09/project.csv", "manual-v09/project.settings.json", false, "Attachment", 100},
-    {"v0.10", "pcompat10e5", "inventory-v10/project.csv", "inventory-v10/project.settings.json", false, "Created", 100},
+    {"v0.9.1", "pcompat091e5", "inventory-v091/project.csv", "inventory-v091/project.settings.json", false, "Created", 100},
 };
 
 const Json kMarker = Json{{"n", 1}, {"s", "x"}};  // 「今の版が知らない」キーの値
@@ -178,7 +178,7 @@ TEST_CASE("compat: その版が書いたキーが、今の版で読める値に�
     CHECK(st.ui["cols"]["plan"] == true);
     CHECK(st.attachments.at("6")[0].name == "draft.docx");
   }
-  {  // 0.10.x: weeklyAuto が増える。CSV に Created / Updated が増える
+  {  // 0.9.1: weeklyAuto が増える。CSV に Created / Updated が増える
     Opened o(kSamples[4]);
     const ProjectSettings& st = o.entry().rec.settings;
     CHECK(st.links.size() == 1);
