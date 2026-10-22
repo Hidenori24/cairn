@@ -526,7 +526,11 @@ void dlgWeekly(Frame& f) {
   ImGui::TextUnformatted("担当者名・件名が出力に入ります。チャットや共有フォルダに置く前に、内容を確かめてください。");
   ImGui::PopStyleColor();
   ImGui::PopTextWrapPos();
-  ImGui::TextDisabled("コピー・保存すると、そのときの課題の状況を覚えておき、次回の「先週から変わったこと」に使います。");
+  ImGui::PushTextWrapPos(0);
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+  ImGui::TextUnformatted("「先週から変わったこと」は、プロジェクトを開いたときに自動で覚える週の頭の状況と比べます（週報を保存していなくても出ます）。コピー・保存すると、そのときの課題の状況も覚えます（自動のものは置き換えません）。");
+  ImGui::PopStyleColor();
+  ImGui::PopTextWrapPos();
 
   const bool ok = any && u.wkError.empty();
   const int b = buttons(f, {"Markdown をコピー", "閉じる", "HTML を保存…", "Markdown を保存…"}, false, ok);

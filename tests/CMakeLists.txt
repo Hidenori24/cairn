@@ -32,6 +32,7 @@ add_executable(roadmap_unit_tests
   unit/test_gantt_geom.cpp
   unit/test_report.cpp
   unit/test_weekly.cpp
+  unit/test_weekly_auto.cpp
   unit/test_baseline.cpp
   unit/test_history.cpp
   unit/test_links.cpp
