@@ -142,9 +142,9 @@ LinkClass finish(LinkKind kind, std::string target) {
   return c;
 }
 
-// 「サーバー/共有名/…」（先頭の区切りは取ってある）。comps = 区切りで分けた部品
+// 「サーバー\共有名\…」（先頭の「\\」は取ってある。区切りは \ か /）。生のパスはリテラルとして検査する（% はそのままの文字）
 LinkClass classifyUncParts(std::string target, std::string_view parts) {
-  if (const char* why = badPathReason(pctDecode(parts))) return rejected(why);
+  if (const char* why = badPathReason(parts)) return rejected(why);
   const std::vector<std::string_view> comps = splitPath(parts);
   if (comps.size() < 2) return unknown("共有名がありません（\\\\サーバー\\共有名\\… の形で入れてください）");
   const bool folder = endsWithSep(parts) || comps.size() == 2;  // 共有のルートはフォルダ
@@ -160,33 +160,76 @@ LinkClass classifyUnc(const std::string& t) {
 }
 
 LinkClass classifyDrive(const std::string& t) {
-  // t は「C:\」か「C:/」で始まる
-  if (const char* why = badPathReason(pctDecode(std::string_view(t).substr(2)))) return rejected(why);
+  // t は「C:\」か「C:/」で始まる。生のパスはリテラルとして検査する（% はそのままの文字）
+  if (const char* why = badPathReason(std::string_view(t).substr(2))) return rejected(why);
   return finish(endsWithSep(t) ? LinkKind::Folder : LinkKind::File, t);
 }
 
-LinkClass classifyFileUrl(const std::string& t) {
+// file:// の URL を、開ける形のパス（C:\dir\file か \\server\share\file。区切りは \）にする。判定・警告・親フォルダ・表示名がすべてこれを使う。
+// 手順: ①# 以降（断片）を先に分ける（断片の中の / は区切りではない） ②ホストとパスに分ける ③%XX を戻す（戻した % はそのままの文字）
+// ④戻したあとの / と \ を区切りとして成分に分ける。クエリ（?）は受けない（%3F も、戻すと ? になるので断る）
+struct FileUrl {
+  bool ok = false;
+  LinkClass bad;       // ok でないとき（Unknown か Rejected と理由）
+  std::string native;  // ok のとき
+};
+FileUrl parseFileUrl(const std::string& t) {
   // t は小文字の「file:」で始まる
-  if (t.compare(5, 2, "//") != 0) return unknown("file:// の形で入れてください");
-  if (t.find('\\') != std::string::npos) return unknown("file:// の中は / で区切ってください");
-  const std::string rest = t.substr(7);  // 「ホスト/パス」
+  FileUrl r;
+  if (t.compare(5, 2, "//") != 0) {
+    r.bad = unknown("file:// の形で入れてください");
+    return r;
+  }
+  if (t.find('\\') != std::string::npos) {
+    r.bad = unknown("file:// の中は / で区切ってください");
+    return r;
+  }
+  std::string rest = t.substr(7);  // 「ホスト/パス#断片」
+  if (const std::size_t h = rest.find('#'); h != std::string::npos) {
+    if (rest.find_first_of("\"<>", h) != std::string::npos) {
+      r.bad = rejected("URL に使えない文字（\" < >）が入っています");
+      return r;
+    }
+    rest.resize(h);
+  }
   const std::size_t slash = rest.find('/');
-  std::string host = slash == std::string::npos ? rest : rest.substr(0, slash);
-  const std::string path = slash == std::string::npos ? std::string() : rest.substr(slash);  // 空か、「/」で始まる
+  std::string host = pctDecode(slash == std::string::npos ? rest : rest.substr(0, slash));
+  const std::string path = slash == std::string::npos ? std::string() : pctDecode(rest.substr(slash));  // 空か、「/」で始まる
   if (text::iequals(host, "localhost")) host.clear();
+  std::string native;
   if (host.empty()) {
     // file:///C:/… ・ file:////server/share/…
-    if (path.size() >= 4 && isAsciiAlpha(path[1]) && path[2] == ':' && path[3] == '/') {
-      if (const char* why = badPathReason(pctDecode(std::string_view(path).substr(3)))) return rejected(why);
-      return finish(path.back() == '/' ? LinkKind::Folder : LinkKind::File, t);
+    const bool sepAt3 = path.size() >= 4 && (path[3] == '/' || path[3] == '\\');
+    if (path.size() >= 4 && path[0] == '/' && isAsciiAlpha(path[1]) && path[2] == ':' && sepAt3) {
+      native = path.substr(1);
+    } else if (path.size() >= 2 && path[0] == '/' && (path[1] == '/' || path[1] == '\\')) {
+      native = "\\\\" + path.substr(2);
+    } else {
+      r.bad = unknown("file:// の後に、ドライブ（C:）か共有名のある場所を入れてください");
+      return r;
     }
-    if (path.size() >= 2 && path[0] == '/' && path[1] == '/') return classifyUncParts(t, std::string_view(path).substr(2));
-    return unknown("file:// の後に、ドライブ（C:）か共有名のある場所を入れてください");
+  } else {
+    // file://server/share/…
+    if (path.empty()) {
+      r.bad = unknown("共有名がありません（file://サーバー/共有名/… の形で入れてください）");
+      return r;
+    }
+    native = "\\\\" + host + path;
   }
-  // file://server/share/…
-  if (const char* why = badPathReason(pctDecode(host))) return rejected(why);
-  if (path.empty()) return unknown("共有名がありません（file://サーバー/共有名/… の形で入れてください）");
-  return classifyUncParts(t, host + path);
+  std::replace(native.begin(), native.end(), '/', '\\');
+  r.ok = true;
+  r.native = std::move(native);
+  return r;
+}
+
+LinkClass classifyFileUrl(const std::string& t) {
+  const FileUrl u = parseFileUrl(t);
+  if (!u.ok) return u.bad;
+  LinkClass c = u.native.compare(0, 2, "\\\\") == 0 ? classifyUnc(u.native) : classifyDrive(u.native);
+  if (!c.ok()) return c;
+  if (t.size() > kMaxLinkPathBytes) return rejected("場所が長すぎます（パスは 1,024 バイトまで）");
+  c.target = t;  // 保存するのは入力のままの URL（種類は、戻した（デコードした）パスで決めた）
+  return c;
 }
 
 LinkClass classifyWeb(const std::string& t, const std::string& scheme) {
@@ -227,6 +270,13 @@ WebParts webPartsOf(const std::string& t) {
   return w;
 }
 
+// 正規化済みの File・Folder の場所を、開ける形のパスにする（file:// は parseFileUrl。そのほかはそのまま）
+std::string nativePathOf(const std::string& normalized) {
+  if (normalized.compare(0, 5, "file:") != 0) return normalized;
+  const FileUrl u = parseFileUrl(normalized);
+  return u.ok ? u.native : normalized;
+}
+
 // 末尾の区切りを除いた、最後の部品
 std::string lastComponent(std::string_view s) {
   while (endsWithSep(s)) s.remove_suffix(1);
@@ -237,7 +287,7 @@ std::string lastComponent(std::string_view s) {
 // 重複の判定に使う鍵（正規化済みの場所から作る。I/O も再判定もしない）。Web は完全一致、ファイル・フォルダは大文字小文字と区切りを無視
 std::string linkKey(const std::string& normalized) {
   if (normalized.compare(0, 7, "http://") == 0 || normalized.compare(0, 8, "https://") == 0) return "w" + normalized;
-  std::string k = text::asciiLower(normalized);
+  std::string k = text::toLower(normalized);  // アクセント付きの文字・全角英字も（Windows のパスは大文字小文字を区別しない）
   std::replace(k.begin(), k.end(), '/', '\\');
   return "f" + k;
 }
@@ -314,9 +364,7 @@ std::string defaultTitle(std::string_view target) {
     }
     case LinkKind::File:
     case LinkKind::Folder: {
-      std::string p = c.target;
-      if (p.compare(0, 5, "file:") == 0) p = pctDecode(p.substr(5));
-      name = lastComponent(p);
+      name = lastComponent(nativePathOf(c.target));
       break;
     }
     default: break;
@@ -327,26 +375,20 @@ std::string defaultTitle(std::string_view target) {
 bool isRiskyTarget(std::string_view target) {
   const LinkClass c = classifyLink(target);
   if (c.kind != LinkKind::File) return false;
-  const bool url = c.target.compare(0, 5, "file:") == 0;
-  const std::string path = url ? pctDecode(c.target.substr(5)) : c.target;
-  // URL の # 以降は断片だが、シェルの解釈に依存させず、切った名前と切らない名前の両方を見る（疑わしければ警告）
-  std::vector<std::string> candidates{path};
-  if (url)
-    if (const auto h = path.find('#'); h != std::string::npos) candidates.push_back(path.substr(0, h));
-  for (const std::string& p : candidates) {
-    std::string name = lastComponent(p);
-    while (!name.empty() && (name.back() == ' ' || name.back() == '.')) name.pop_back();  // Windows は末尾の空白と「.」を無視する
-    if (isRiskyFile(name)) return true;
-  }
-  return false;
+  // file:// は、判定と同じ解析（断片を分け、%XX を戻し、区切りで成分に分ける）で得たパスの名前を見る
+  std::string name = lastComponent(nativePathOf(c.target));
+  while (!name.empty() && (name.back() == ' ' || name.back() == '.')) name.pop_back();  // Windows は末尾の空白と「.」を無視する
+  return isRiskyFile(name);
 }
 
 std::string linkFolderOf(std::string_view target) {
   const LinkClass c = classifyLink(target);
   if (c.kind != LinkKind::File) return {};
-  const std::size_t k = c.target.find_last_of("\\/");
+  // 返すのは開ける形のパス（file:// も C:\… か \\server\… に直す。断片や %XX の区切りで、実行ファイルを指す URL にならない）
+  const std::string native = nativePathOf(c.target);
+  const std::size_t k = native.find_last_of("\\/");
   if (k == std::string::npos) return {};
-  const LinkClass parent = classifyLink(std::string_view(c.target).substr(0, k + 1));
+  const LinkClass parent = classifyLink(std::string_view(native).substr(0, k + 1));
   return parent.kind == LinkKind::Folder ? parent.target : std::string();
 }
 

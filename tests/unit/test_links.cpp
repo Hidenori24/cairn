@@ -222,7 +222,7 @@ TEST_CASE("isRiskyTarget: すり抜けを許さない（%XX・末尾の空白と
   CHECK(isRiskyTarget("C:\\evil.exe ."));
   CHECK(isRiskyTarget("file:///C:/evil.exe%20"));
   CHECK(isRiskyTarget("file:///C:/evil.exe#.txt"));
-  CHECK(isRiskyTarget("file:///C:/readme.txt#.exe"));  // 疑わしければ警告する（見落とさない側に倒す）
+  CHECK_FALSE(isRiskyTarget("file:///C:/readme.txt#.exe"));  // # 以降は断片（ファイル名ではない）
   CHECK_FALSE(isRiskyTarget("file:///C:/readme.txt#top"));
 }
 
@@ -232,13 +232,61 @@ TEST_CASE("linkFolderOf: ファイルの場所の親フォルダ") {
   CHECK(linkFolderOf("D:/data/a.txt") == "D:/data/");
   CHECK(linkFolderOf("\\\\server\\share\\docs\\a.pdf") == "\\\\server\\share\\docs\\");
   CHECK(linkFolderOf("\\\\server\\share\\a.pdf") == "\\\\server\\share\\");
-  CHECK(linkFolderOf("file:///C:/work/a.txt") == "file:///C:/work/");
-  CHECK(linkFolderOf("file://server/share/a.txt") == "file://server/share/");
+  CHECK(linkFolderOf("file:///C:/work/a.txt") == "C:\\work\\");  // file:// は開ける形（ふつうのパス）に直して返す
+  CHECK(linkFolderOf("file://server/share/a.txt") == "\\\\server\\share\\");
   CHECK(linkFolderOf("C:\\Users\\a\\") == "");  // フォルダに親は出さない（フォルダ自体を開く）
   CHECK(linkFolderOf("https://example.com/a/b") == "");
   CHECK(linkFolderOf("javascript:alert(1)") == "");
   for (const char* s : {"C:\\Users\\a\\spec.xlsx", "\\\\server\\share\\docs\\a.pdf", "file:///C:/work/a.txt"})
     CHECK(classifyLink(linkFolderOf(s)).kind == LinkKind::Folder);
+}
+
+TEST_CASE("file:// の解析は、判定・警告・親フォルダ・表示名で同じ（# の断片と %XX の区切りで迷わせない）") {
+  // 断片（#…）の中のスラッシュはディレクトリの区切りではない。実行ファイルをフォルダと見せかけられない
+  CHECK(K("file:///C:/tools/run.exe#docs/").kind == LinkKind::File);
+  CHECK(K("file:///C:/tools/run.exe#docs/page").kind == LinkKind::File);
+  CHECK(isRiskyTarget("file:///C:/tools/run.exe#docs/"));
+  CHECK(isRiskyTarget("file:///C:/tools/run.exe#docs/page"));
+  CHECK(isRiskyTarget("file://server/share/run.exe#a/b"));
+  CHECK(linkFolderOf("file:///C:/tools/run.exe#docs/page") == "C:\\tools\\");  // 実行ファイルを指す URL を返さない
+  CHECK(linkFolderOf("file://server/share/dir/run.exe#a/b/") == "\\\\server\\share\\dir\\");
+  CHECK(defaultTitle("file:///C:/tools/run.exe#docs/page") == "run.exe");
+  CHECK(K("file:///C:/tools/#frag/x").kind == LinkKind::Folder);
+  CHECK(K("file:///C:/x?y=1").kind == LinkKind::Rejected);  // クエリは受けない（%3F ならファイル名に使えない文字として断る）
+  // %2F・%5C は区切りとして数える（デコードしてから成分に分ける）
+  CHECK(K("file://server/share%2Frun.exe").kind == LinkKind::File);
+  CHECK(isRiskyTarget("file://server/share%2Frun.exe"));
+  CHECK(isRiskyTarget("file:///C:/tools%2Frun.exe"));
+  CHECK(isRiskyTarget("file:///C:/tools%5Crun.exe"));
+  CHECK(linkFolderOf("file://server/share%2Frun.exe") == "\\\\server\\share\\");
+  CHECK(defaultTitle("file://server/share%2Frun.exe") == "run.exe");
+  CHECK(K("file://server/share%2F").kind == LinkKind::Folder);
+  CHECK(K("file://server%2Fshare/a.txt").kind == LinkKind::File);
+  CHECK(K("file:///C:/report%3F.txt").kind == LinkKind::Rejected);
+  // 「場所を開く」が返す場所は、どれも Folder と判定でき、警告の対象ではない
+  for (const char* s : {"file:///C:/tools/run.exe#docs/page", "file://server/share%2Frun.exe", "file:///C:/a%2Fb/c.txt"}) {
+    CAPTURE(s);
+    const std::string dir = linkFolderOf(s);
+    CHECK(K(dir).kind == LinkKind::Folder);
+    CHECK_FALSE(isRiskyTarget(dir));
+  }
+}
+
+TEST_CASE("生の Windows パス（ドライブ・UNC）の % はそのままのファイル名。デコードしない") {
+  CHECK(K("C:\\archive\\report%3F.txt").kind == LinkKind::File);
+  CHECK(K("C:\\archive\\report%3F.txt").target == "C:\\archive\\report%3F.txt");
+  CHECK(K("\\\\server\\share\\report%3F.txt").kind == LinkKind::File);
+  CHECK(K("\\\\server\\share\\100%25\\").kind == LinkKind::Folder);
+  CHECK(K("C:\\a\\x%2Fy.txt").kind == LinkKind::File);
+  CHECK(K("C:\\a\\x%3Ay.txt").kind == LinkKind::File);   // %3A もそのまま
+  CHECK(K("C:\\a\\x:y.txt").kind == LinkKind::Rejected);   // 本物の「:」は断る
+  CHECK(K("C:\\a\\x?y.txt").kind == LinkKind::Rejected);
+  CHECK(defaultTitle("C:\\archive\\report%3F.txt") == "report%3F.txt");
+  CHECK(defaultTitle("\\\\server\\share\\a%20b.txt") == "a%20b.txt");
+  // 名前の %2E は「.」ではない（拡張子にならない）
+  CHECK_FALSE(isRiskyTarget("C:\\a\\evil%2Eexe"));
+  CHECK(isRiskyTarget("C:\\a\\evil.exe"));
+  CHECK(linkFolderOf("C:\\archive\\report%3F.txt") == "C:\\archive\\");
 }
 
 TEST_CASE("sameLinkTarget: ファイルとフォルダは大文字小文字と区切りを無視、Web は完全一致") {
@@ -247,6 +295,10 @@ TEST_CASE("sameLinkTarget: ファイルとフォルダは大文字小文字と�
   CHECK_FALSE(sameLinkTarget("C:\\work\\a.txt", "C:\\work\\b.txt"));
   CHECK(sameLinkTarget("https://example.com/A", "https://example.com/A"));
   CHECK_FALSE(sameLinkTarget("https://example.com/A", "https://example.com/a"));  // URL のパスは大文字小文字を区別する
+  // アクセント付きの文字・全角英字の大文字小文字も無視する（ファイル・フォルダ）
+  CHECK(sameLinkTarget("C:\\\xC3\x89t\xC3\xA9.txt", "c:/\xC3\xA9t\xC3\xA9.TXT"));  // C:\Été.txt と c:/été.txt
+  CHECK(sameLinkTarget("\\\\server\\share\\\xC3\x80\\", "\\\\SERVER\\share\\\xC3\xA0\\"));
+  CHECK_FALSE(sameLinkTarget("https://example.com/\xC3\x89", "https://example.com/\xC3\xA9"));  // Web は今のまま
   CHECK_FALSE(sameLinkTarget("https://example.com/a", "C:\\a"));
 }
 
@@ -321,6 +373,24 @@ TEST_CASE("linkAdd: 設定ファイルに保存して読み直せない Issue Id
   }
   CHECK(m.empty());
   CHECK(linkAdd(m, clk, std::string(64, '1'), "", "https://example.com/").ok());
+}
+
+TEST_CASE("重複の判定: アクセント付きの文字の大文字小文字違いも重複（追加・編集・移動・コピー・読み込み）") {
+  const std::string upper = "C:\\Dir\\\xC3\x89t\xC3\xA9.txt", lower = "c:/dir/\xC3\xA9t\xC3\xA9.TXT";
+  LinkMap m;
+  REQUIRE(linkAdd(m, clk, "1", "", upper).ok());
+  CHECK_FALSE(linkAdd(m, clk, "1", "", lower).ok());
+  REQUIRE(linkAdd(m, clk, "1", "", "C:\\other.txt").ok());
+  CHECK_FALSE(linkEdit(m, "1", 1, "", lower).ok());
+  REQUIRE(linkAdd(m, clk, "2", "", lower).ok());
+  CHECK_FALSE(linkMove(m, "1", 0, "2").ok());
+  CHECK_FALSE(linkCopy(m, clk, "1", 0, "2").ok());
+  using J = nlohmann::ordered_json;
+  J j = J::object();
+  j["1"] = J::array();
+  j["1"].push_back(J{{"title", "a"}, {"target", upper}, {"at", 1}});
+  j["1"].push_back(J{{"title", "b"}, {"target", lower}, {"at", 2}});
+  CHECK(linksFromJson(j).at("1").size() == 1);
 }
 
 TEST_CASE("linkEdit: 表示名と場所を直す（追加した時刻は変えない）。重複・開けない場所は断る") {

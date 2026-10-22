@@ -585,7 +585,10 @@ void drawAttachTab(Frame& f, int i) {
   ImGui::SeparatorText("添付ファイル");
   drawAttachSection(f, i);
   ImGui::Spacing();
+  // 同じ子ウィンドウの中なので、添付の行（PushID(k) の ##row など）と ID が重ならないよう、別のスコープに入れる
+  ImGui::PushID("links");
   drawLinksSection(f, i);
+  ImGui::PopID();
 }
 
 }  // namespace roadmap::ui

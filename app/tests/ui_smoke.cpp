@@ -2669,6 +2669,43 @@ int main() {
     check(!h.u.attachDrag.active, "Esc で取り消す");
     io.AddMouseButtonEvent(0, false);  // つかんだままのボタンを離す
     h.frame(3);
+    // 添付とリンクが同じ添字にあっても、リンクの行の押下・ドラッグ・右クリックが添付に影響しない（行・ボタンの ID が別）
+    {
+      h.fs.put("ext/同じ添字.txt", "x");
+      h.c.attachFiles(A, {"ext/同じ添字.txt"});
+      h.c.select(A);
+      h.u.detailTab = 3;
+      h.frame(6);
+      check(h.u.attachRows.size() == 1 && h.u.linkRows.size() == 1, "添付 1 件とリンク 1 件（同じ添字 0）");
+      const std::size_t attBefore = h.c.attachmentCount(A);
+      const std::size_t openedBefore = h.p.openedLinks.size(), filesBefore = h.p.opened.size();
+      // リンクの行を押して動かす → リンクのドラッグ（添付のドラッグにならない）
+      dragTo(rowAt(0), targetMid(B), false, false);
+      check(h.u.attachDrag.active && h.u.attachDrag.link, "リンクの行をつかむと、リンクのドラッグになる");
+      h.key(ImGuiKey_Escape);
+      io.AddMouseButtonEvent(0, false);
+      h.frame(3);
+      check(!h.u.attachDrag.active && h.c.attachmentCount(A) == attBefore && h.c.linkCountOf(A) == 1, "取り消したら何も動かない");
+      // 押して離す → リンクが開く（添付は開かない）
+      lclick(rowAt(0));
+      check(h.p.openedLinks.size() == openedBefore + 1 && h.p.opened.size() == filesBefore && h.u.dlg == ui::Dlg::None, "リンクの行のクリックは、リンクだけを開く");
+      // 右クリック → リンクのメニュー（添付のドラッグは始まらない）
+      rightClick(rowAt(0));
+      check(h.u.linkCtxItems.size() == 7 && !h.u.attachDrag.active, "リンクの行の右クリックはリンクのメニューを開く");
+      lclick(ImVec2(700, 880));  // メニューの外をクリックして閉じる
+      h.frame(3);
+      // 添付の行をつかむと、添付のドラッグ
+      {
+        const auto& r = h.u.attachRows[0];
+        dragTo(ImVec2(r.first.x + 100, (r.first.y + r.second.y) / 2), targetMid(B), false, false);
+        check(h.u.attachDrag.active && !h.u.attachDrag.link, "添付の行をつかむと、添付のドラッグになる");
+        h.key(ImGuiKey_Escape);
+        io.AddMouseButtonEvent(0, false);
+        h.frame(3);
+      }
+      check(h.c.removeAttachment(A, 0), "確認用の添付を外す");
+      h.frame(3);
+    }
     // 別の課題を選ぶと、書きかけの入力は捨てる（書きかけの場所を別の課題に付けてしまわない）
     h.u.linkTargetBuf = "https://draft.example/";
     h.u.linkError = "x";
