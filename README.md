@@ -118,4 +118,6 @@ rmcli validate input.csv                                                        
 
 ## ライセンス
 
+このソフトウェアは [MIT ライセンス](LICENSE) で公開しています。使用・改変・再配布は自由です（著作権表示とライセンス文を残してください）。
+
 依存ライブラリのライセンスは [THIRD_PARTY.md](THIRD_PARTY.md) を参照してください。
