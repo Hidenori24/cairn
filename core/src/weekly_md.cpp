@@ -126,7 +126,7 @@ void renderSummary(Md& m, const WeeklyReport& r) {
            std::to_string(s.msLate) + "）");
   if (s.doneNoDate > 0)
     m.line("- 注意: 完了日のない完了済みの作業が " + std::to_string(s.doneNoDate) + " 件あります（期間の集計には入りません）");
-  if (s.hasPrev) m.line("- 先週との比較: " + fmtLong(s.prevBase) + " に書き出したときの状態と比べています");
+  if (s.hasPrev) m.line("- 先週との比較: " + snapshotBasisText(s.prevAuto, s.prevBase) + "と比べています");
 }
 
 void renderDone(Md& m, const WeeklyReport& r) {
@@ -216,7 +216,7 @@ void renderAssignees(Md& m, const WeeklyReport& r) {
 void renderChanges(Md& m, const WeeklyReport& r) {
   const WeeklyChanges& c = r.changes;
   m.heading(2, "先週から変わったこと");
-  m.line(fmtLong(c.since) + " に書き出したときの状態との比較です。");
+  m.line(changesLeadText(c));
   if (c.truncated) m.line("（比べた相手は課題が多かったため、一部の課題だけです）");
   m.blank();
   m.line("### 完了の見込み日が動いた課題（" + std::to_string(c.finishMovedTotal) + " 件）");

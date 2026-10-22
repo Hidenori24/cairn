@@ -7,7 +7,9 @@
 
 #include "roadmap/issue_name.hpp"
 #include "roadmap/stamps.hpp"
+#include "roadmap/stats.hpp"
 #include "roadmap/text.hpp"
+#include "roadmap/weekly.hpp"
 
 namespace roadmap {
 
@@ -249,6 +251,29 @@ Result<HistoryResult> Session::recordHistory(HistoryMode mode) {
   if (!st.ok()) return Error{st.error()};
   persist();
   return have ? HistoryResult::Replaced : HistoryResult::Recorded;
+}
+
+Result<WeeklyAutoResult> Session::recordWeeklyAuto(WeeklyAutoMode mode) {
+  if (!comp_) return Error{"日程を計算できていないため、週の頭のスナップショットを取れません"};
+  WeeklyAuto& a = P_.settings.weeklyAuto;
+  const Day today = todayDay();
+  const bool have = weeklyAutoHasWeek(a, today);
+  if (mode == WeeklyAutoMode::IfMissing && have) return WeeklyAutoResult::AlreadyHave;  // 開くたびに設定ファイルを書き換えない
+  const Day base = baseDay();
+  const ProjectStats stats = computeStats(comp_->T, comp_->issues, comp_->R, base);
+  WeeklySnapshot snap = makeWeeklySnapshot(comp_->T, comp_->issues, comp_->R, stats, base);
+  if (mode == WeeklyAutoMode::IfMissing && snap.tasks == 0 && snap.items.empty()) return WeeklyAutoResult::Skipped;  // 作業のないプロジェクトには足さない
+  snap.base = today;  // 週の判定は IClock の今日（履歴と同じ）。取った日として残す
+  if (have) {
+    const WeeklySnapshot* cur = weeklyAutoOfWeek(a, today);
+    if (cur) snap.extra = cur->extra;  // 新しい版が足した未知のキーは、取り直しても残す
+    WeeklyAuto probe;
+    weeklyAutoPut(probe, snap);  // 保存と同じ下ごしらえをして比べる
+    if (cur && probe.snaps.size() == 1 && *cur == probe.snaps[0]) return WeeklyAutoResult::Unchanged;  // 変わらなければ保存を予約しない
+  }
+  weeklyAutoPut(a, std::move(snap));
+  persist();
+  return have ? WeeklyAutoResult::Replaced : WeeklyAutoResult::Recorded;
 }
 
 Result<std::string> Session::addBaseline(const std::string& name) {

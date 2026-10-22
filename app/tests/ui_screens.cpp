@@ -1376,6 +1376,32 @@ int main(int argc, char** argv) {
     ws->setBaseDate("2026-12-30");
     WeeklyOptions ye;
     dumpWeekly("weekly_hierarchy_yearend", ye);
+    {
+      // 週報を一度も保存していないプロジェクト（Issue #70）: 開いたとき自動で取った今週の頭と、いまを比べる
+      c.createProject(app::SampleKind::Hierarchy, "階層デモ（週報は未保存）", "DEV");
+      Session* as = c.session();
+      std::vector<std::string> pick;
+      for (int id : as->tree()->leafOrder) {
+        const std::size_t k = static_cast<std::size_t>(id);
+        if (as->tree()->kind[k] == Kind::Ms || as->rows()->at(k).done) continue;
+        pick.push_back(as->tree()->ids[k]);
+        if (pick.size() >= 2) break;
+      }
+      for (const std::string& id : pick) {
+        as->setStatus(id, "Done");
+        as->setField(id, [&](Issue& is) { is.resolved = parseIso("2026-10-21"); });
+      }
+      c.afterEdit();
+      u.dlg = ui::Dlg::Weekly;
+      u.dlgOpening = true;
+      frames(2);  // 開いたときに項目が既定に戻るので、そのあとで変える
+      WeeklySections secs;  // 「先週から変わったこと」だけ（プレビューの先頭に出して見えるようにする）
+      secs.summary = secs.done = secs.progress = secs.next = secs.risks = secs.milestones = secs.assignees = secs.notes = false;
+      u.wk.sections = secs;
+      shot("63c_weekly_dialog_auto_only");
+      u.dlg = ui::Dlg::None;
+      frames(2);
+    }
     // 組込みの雛形
     c.createProject(app::SampleKind::EmbeddedSw, "組込みソフトウェア開発", "DEV");
     WeeklyOptions emb;
