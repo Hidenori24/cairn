@@ -134,7 +134,8 @@ Result<TodayReport> computeToday(const Tree& T, const std::vector<Issue>& issues
     }
 
     // ---- 進行中の帯 ----
-    if (T.cat[u] == Cat::Prog && !isMs) {
+    // 期間が今週にかかるものだけ（週の外のものは「今日」の進行中で見る。週の外の帯が件数と表示枠を食わないように）
+    if (T.cat[u] == Cat::Prog && !isMs && r.asapStart <= rep.weekStart + 6 && r.asapFinish >= rep.weekStart) {
       const auto colOf = [&](Day d) { return d < rep.weekStart ? 0 : (d > rep.weekStart + 4 ? kTodayWeekDays - 1 : static_cast<int>(d - rep.weekStart)); };
       BandEntry b;
       b.e = e;

@@ -4574,6 +4574,10 @@ int main() {
     check(tv.colRects.size() == 5, "5 つの列");
     for (const auto& cr : tv.colRects) check(cr.second.x <= 1440.f, "列が幅に収まる");
     {
+      std::set<std::string> uniq(h.u.order.begin(), h.u.order.end());
+      check(uniq.size() == h.u.order.size(), "矢印キーの順に同じ課題が 2 回入らない（帯とカードの両方に出る課題）");
+    }
+    {
       const auto* r = rowOf("11");  // 木曜の列のカード
       check(r != nullptr && r->sec == "week", "木曜の列にカードが出る");
       if (r) {
@@ -4607,6 +4611,20 @@ int main() {
       check(false, "今週の外の遅れの案内が出ない");
     }
     clearToasts();
+    // F2（名前の編集）: この表示に入力欄がないので、リストへ移して編集できるようにする（編集の状態だけが残ってキーを塞がない）
+    {
+      h.c.select("10");
+      h.frame(2);
+      h.key(ImGuiKey_F2);
+      h.frame(3);
+      check(h.c.view() == app::View::List && h.u.editField == ui::EditField::Name && h.u.editId == "10", "F2 でリストへ移って名前の編集に入る");
+      h.key(ImGuiKey_Escape);
+      h.frame(2);
+      check(h.u.editField == ui::EditField::None, "Esc で編集が終わる");
+      h.c.clearSelection();
+      h.c.setView(app::View::Today);
+      h.frame(3);
+    }
     // 基準日が今日と違うときは画面の上に案内し、ボタンで今日に合わせられる
     s->setBaseDate("2026-10-12");
     h.c.afterEdit();

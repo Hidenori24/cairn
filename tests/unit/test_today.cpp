@@ -451,6 +451,21 @@ TEST_CASE("today: 進行中の帯 — 週をはみ出す印") {
   CHECK(r.bands[0].first <= r.bands[1].first);  // 開始の早い順
 }
 
+TEST_CASE("today: 進行中の帯は期間が今週にかかるものだけ") {
+  // 今日 10/21（水）。週は 10/19〜10/23。基準日が古い（10/16）ので、進行中の見込みが過去になる課題がある
+  const Proj a = make({Rw("past").prog().from("2026-10-05").days(3).dl("2026-12-31"),      // 見込みは 10/16 まで: 今週より前
+                       Rw("overlap").prog().from("2026-10-16").days(5).dl("2026-12-31")},  // 10/16〜10/22: 週にかかる
+                      "2026-10-21", "2026-10-16", "", true);
+  const TodayReport ra = a.ok();
+  REQUIRE(ra.bands.size() == 1);
+  CHECK(ra.bands[0].id == "overlap");
+  CHECK(ra.bands[0].cutLeft);
+  CHECK(has(ra.inProgress, "past"));  // 「今日」の進行中には残る
+  // 基準日が先（10/26）: 進行中の見込みは 10/26 以降になり、今週の外
+  const Proj b = make({Rw("next").prog().from("2026-10-26").days(3).dl("2026-12-31")}, "2026-10-21", "2026-10-26", "", true);
+  CHECK(b.ok().bands.empty());
+}
+
 TEST_CASE("today: 今日が日曜なら、その週は前の月曜から") {
   const Proj p = make({Rw("fri").dueOn("2026-10-23").days(1)}, "2026-10-25", "2026-10-19");
   const TodayReport r = p.ok();

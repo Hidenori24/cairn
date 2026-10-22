@@ -4,6 +4,7 @@
 // 描画中に課題の数や状況を変えない（変更は deferAfterFrame で描画のあとに行う）。
 #include <algorithm>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "roadmap/text.hpp"
@@ -672,7 +673,10 @@ void drawWeekBody(const Env& e, const TodayReport& rep, ImVec2 size, bool noMine
       tv.bandsBtn = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
     }
   }
-  for (const TodayBand& b : rep.bands) u.order.push_back(b.id);
+  // 矢印キーの順: 出している帯 → 列。同じ課題（帯とカードの両方に出る）は 1 回だけ入れる
+  std::unordered_set<std::string> inOrder;
+  for (std::size_t k = 0; k < shownBands; ++k)
+    if (inOrder.insert(rep.bands[k].id).second) u.order.push_back(rep.bands[k].id);
 
   // 日ごとの列
   tv.colRects.clear();
@@ -682,7 +686,8 @@ void drawWeekBody(const Env& e, const TodayReport& rep, ImVec2 size, bool noMine
     const ImVec2 a(x0, origin.y + yCols), z(x0 + colW, origin.y + yCols + colHead + colBody);
     tv.colRects.emplace_back(a, z);
     tv.colCounts[static_cast<std::size_t>(k)] = static_cast<int>(d.ids.size());
-    for (const std::string& id : d.ids) u.order.push_back(id);
+    for (const std::string& id : d.ids)
+      if (inOrder.insert(id).second) u.order.push_back(id);
     if (!visible(yCols, yCols + colHead + colBody)) continue;
     dl->AddRectFilled(a, z, d.holiday ? withAlpha(u.t->holbg, 0.9f) : u.t->surface2, u.m.s(8));
     dl->AddRect(a, z, d.isToday ? u.t->accent : u.t->line, u.m.s(8), 0, d.isToday ? 2.f : 1.f);
@@ -725,6 +730,19 @@ void drawTodayView(Frame& f, ImVec2 size) {
   tv.bandsAll = bandsAll;
   if (!s || !s->tree() || !s->rows()) {
     ImGui::TextDisabled("%s", S::kEmptyProject);
+    return;
+  }
+  // 名前の編集（F2・Enter・右クリックの「名前を変更」）は、この表示に入力欄がないので、編集できるリストへ移す
+  // （入力欄が出ないまま編集の状態だけが残り、キー操作を塞がないように）
+  if (u.editField != EditField::None && !u.editId.empty()) {
+    const std::string id = u.editId;
+    const Tree& T0 = *s->tree();
+    for (int a = T0.parentOf[static_cast<std::size_t>(T0.find(id) < 0 ? 0 : T0.find(id))], guard = 0; T0.find(id) >= 0 && a >= 0 && guard < T0.n;
+         a = T0.parentOf[static_cast<std::size_t>(a)], ++guard)
+      if (s->isCollapsed(T0.ids[static_cast<std::size_t>(a)])) s->setCollapsed(T0.ids[static_cast<std::size_t>(a)], false);
+    c.afterEdit();
+    c.setView(app::View::List);
+    u.revealId = id;
     return;
   }
   const Tree& T = *s->tree();
