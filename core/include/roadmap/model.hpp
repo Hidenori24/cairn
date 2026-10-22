@@ -13,6 +13,7 @@
 
 #include "roadmap/calendar.hpp"
 #include "roadmap/baseline.hpp"
+#include "roadmap/links.hpp"
 #include "roadmap/weekly_state.hpp"
 
 namespace roadmap {
@@ -130,6 +131,7 @@ struct ProjectSettings {
   std::string scenario = kStdScenario;
   ResourceLimit resource;
   AttachmentMap attachments;      // 添付のメタ情報（空なら settings.json に書かない）
+  LinkMap links;                  // 関連リンク（URL・社内のファイル・フォルダ。空なら settings.json に書かない。共有・バックアップには入れない。Issue #60）
   BaselineSet baselines;          // ベースライン（計画の日程の保存。空なら settings.json に書かない。共有・バックアップには入れない。Issue #53）
   WeeklyMemo weekly;              // 週次レポートの所感とスナップショット（空なら settings.json に書かない。Issue #43）
   Json ui = Json::object();     // 表示状態。未知のキーも保持
@@ -164,6 +166,7 @@ int prioRank(std::string_view prio);  // 0〜4、不明は 2
 
 // 新規課題の id（数字だけの id の最大値 + 1）
 // reserved: 添付が残っている課題の id（課題を削除しても添付は残るので、その id を新しい課題に使い回さない）
-std::string nextIssueId(const std::vector<Issue>& issues, const AttachmentMap& reserved = {});
+// reservedLinks: 関連リンクが残っている課題の id（同じ理由。新しい課題が前の課題のリンクを引き継がないように）
+std::string nextIssueId(const std::vector<Issue>& issues, const AttachmentMap& reserved = {}, const LinkMap& reservedLinks = {});
 
 }  // namespace roadmap

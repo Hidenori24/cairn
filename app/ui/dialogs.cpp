@@ -6,6 +6,7 @@
 #include <imgui.h>
 #include <imgui_stdlib.h>
 
+#include "roadmap/links.hpp"
 #include "roadmap/issue_name.hpp"
 #include "roadmap/project_io.hpp"
 #include "roadmap/text.hpp"
@@ -34,7 +35,8 @@ const char* titleOf(Dlg d) {
     case Dlg::AppSettings: return "アプリの設定";
     case Dlg::ConfirmIssueDelete: return "課題を削除";
     case Dlg::PasteChildren: return "貼り付けた内容を子課題として追加";
-    case Dlg::AttachOpenWarn: return "実行できるファイルです";
+    case Dlg::AttachOpenWarn:
+    case Dlg::LinkOpenWarn: return "実行できるファイルです";
     case Dlg::AttachPreview: return "画像のプレビュー";
     case Dlg::ExportHtml: return "HTML に書き出す";
     case Dlg::Weekly: return "週次レポート";
@@ -50,6 +52,7 @@ float widthOf(const UiState& u, Dlg d) {
     case Dlg::ConfirmDelete:
     case Dlg::ConfirmIssueDelete:
     case Dlg::AttachOpenWarn:
+    case Dlg::LinkOpenWarn:
     case Dlg::Conflict:
     case Dlg::ConfirmBaselineDelete:
     case Dlg::ConfirmQuit: return u.m.s(460);
@@ -1059,6 +1062,26 @@ void dlgAttachOpenWarn(Frame& f) {
   }
 }
 
+// 関連リンクが実行ファイルなどを指しているとき、開く前の確認（添付と同じ警告。確認したら開く）。場所はログに出さない
+void dlgLinkOpenWarn(Frame& f) {
+  UiState& u = f.u;
+  if (u.linkWarnTarget.empty()) return close(f);
+  ImGui::PushTextWrapPos(0);
+  ImGui::Text("「%s」を開こうとしています。", defaultTitle(u.linkWarnTarget).c_str());
+  ImGui::TextColored(v4(u.t->tight), "実行ファイルやスクリプトは、開くとこのパソコンで実行されることがあります。");
+  ImGui::TextDisabled("送り主や入手元が確かなときだけ開いてください。");
+  ImGui::PopTextWrapPos();
+  const int b = buttons(f, {"それでも開く", "やめる"}, true);
+  if (b == 0) {
+    openLinkNow(f, u.linkWarnTarget);
+    u.linkWarnTarget.clear();
+    close(f);
+  } else if (b == 1) {
+    u.linkWarnTarget.clear();
+    close(f);
+  }
+}
+
 void dlgAttachPreview(Frame& f) {
   UiState& u = f.u;
   app::AppController& c = f.c;
@@ -1469,7 +1492,7 @@ void drawDialogs(Frame& f) {
   }
   // Esc と外側クリックで閉じる（確認ダイアログは外側クリックでは閉じない）
   const bool confirm = u.dlg == Dlg::ConfirmDelete || u.dlg == Dlg::ConfirmQuit || u.dlg == Dlg::Conflict ||
-                       u.dlg == Dlg::ConfirmIssueDelete || u.dlg == Dlg::AttachOpenWarn || u.dlg == Dlg::ConfirmBaselineDelete || (u.dlg == Dlg::AppSettings && !u.pendingDir.empty());
+                       u.dlg == Dlg::ConfirmIssueDelete || u.dlg == Dlg::AttachOpenWarn || u.dlg == Dlg::LinkOpenWarn || u.dlg == Dlg::ConfirmBaselineDelete || (u.dlg == Dlg::AppSettings && !u.pendingDir.empty());
   const bool outside = ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                        !ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup |
                                                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
@@ -1498,6 +1521,7 @@ void drawDialogs(Frame& f) {
     case Dlg::ConfirmIssueDelete: dlgConfirmIssueDelete(f); break;
     case Dlg::PasteChildren: dlgPasteChildren(f); break;
     case Dlg::AttachOpenWarn: dlgAttachOpenWarn(f); break;
+    case Dlg::LinkOpenWarn: dlgLinkOpenWarn(f); break;
     case Dlg::AttachPreview: dlgAttachPreview(f); break;
     case Dlg::ExportHtml: dlgExportHtml(f); break;
     case Dlg::Weekly: dlgWeekly(f); break;

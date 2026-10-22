@@ -161,6 +161,10 @@ class Session {
   const AttachmentMap& attachments() const { return P_.settings.attachments; }
   AttachmentMap& attachments() { return P_.settings.attachments; }
   void touchAttachments() { persist(); }  // attachments() を書き換えたら呼ぶ（保存の予約）
+  // 関連リンクのメタ情報（links.hpp。取り消しの対象外で、保存はする。Issue #60）
+  const LinkMap& links() const { return P_.settings.links; }
+  LinkMap& links() { return P_.settings.links; }
+  void touchLinks() { persist(); }  // links() を書き換えたら呼ぶ（保存の予約）
   // 週次レポートの所感とスナップショット（取り消しの対象外で、保存はする。Issue #43）
   const WeeklyMemo& weekly() const { return P_.settings.weekly; }
   void setWeeklyNotes(const std::string& notes);  // 変わったときだけ保存を予約する。長すぎる・壊れた文字は直す

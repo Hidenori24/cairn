@@ -73,6 +73,17 @@ struct NullPlatform : ui::IPlatform {
   std::optional<std::string> clipboardImage() override { return clipImage; }
   std::vector<std::string> opened;  // openFile で開いたパス
   void openFile(const std::string& path) override { opened.push_back(path); }
+  // 関連リンクを開く代わり（渡された場所を記録する。linkOpenWhy が空でなければ、その理由で失敗する）
+  std::vector<std::string> openedLinks;
+  std::string linkOpenWhy;
+  bool openLink(const std::string& target, std::string* error) override {
+    if (!linkOpenWhy.empty()) {
+      if (error) *error = linkOpenWhy;
+      return false;
+    }
+    openedLinks.push_back(target);
+    return true;
+  }
   std::map<std::string, std::string> texts;  // ドロップされた CSV の中身（パス → 本文）
   std::optional<std::string> readTextFile(const std::string& path, std::string* error) override {
     const auto it = texts.find(path);
@@ -2360,6 +2371,441 @@ int main() {
     h.u.detailOpen = false;
     h.frame(2);
   }
+  // 関連リンク（Issue #60）: 添付タブの「リンク」の節で追加（Web・ファイル・フォルダ・断る）・貼り付けて追加・クリックで開く・
+  // 右クリックのメニュー・編集・削除・並べ替え・ドラッグ・バッジとツールチップ（一覧・ガントの表・ボード）
+  {
+    h.c.createProject(app::SampleKind::Hierarchy, "リンクの確認", "LNK");
+    h.c.setView(app::View::List);
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    h.frame(3);
+    check(h.u.dropTargets.size() >= 2, "リンクの確認: 行がある");
+    const std::string A = h.u.dropTargets[0].id, B = h.u.dropTargets[1].id;
+    ImGuiIO& io = ImGui::GetIO();
+    const auto center = [](const std::pair<ImVec2, ImVec2>& r) { return ImVec2((r.first.x + r.second.x) / 2, (r.first.y + r.second.y) / 2); };
+    // クリック。押した・離したが別のフレームに分かれて処理されるので、離すところまで進める
+    const auto lclick = [&](ImVec2 p) {
+      io.AddMousePosEvent(p.x, p.y);
+      h.frame();
+      io.AddMouseButtonEvent(0, true);
+      h.frame();
+      io.AddMouseButtonEvent(0, false);
+      h.frame(2);
+    };
+    const auto lastToast = [&]() { return h.c.toasts().empty() ? std::string() : h.c.toasts().back().text; };
+    h.c.select(A);
+    h.u.detailOpen = true;
+    h.u.detailTab = 3;
+    h.frame(4);
+    check(h.u.linkTargetBox.second.x > h.u.linkTargetBox.first.x && h.u.linkAddBtn.second.x > h.u.linkAddBtn.first.x,
+          "添付タブにリンクの節（入力欄と追加ボタン）が出る");
+    check(h.u.linkRowsIssue == A && h.u.linkRows.empty(), "リンクがなければ行は 0");
+    // 場所の入力欄に打って「リンクを追加」を押す（表示名の入力欄も使う）
+    const auto addUi = [&](const std::string& target, const std::string& title) {
+      lclick(center(h.u.linkTargetBox));
+      check(io.WantTextInput, "場所の入力欄に入れる");
+      io.AddInputCharactersUTF8(target.c_str());
+      h.frame(2);
+      if (!title.empty()) {
+        lclick(center(h.u.linkTitleBox));
+        io.AddInputCharactersUTF8(title.c_str());
+        h.frame(2);
+      }
+      lclick(center(h.u.linkAddBtn));
+      h.frame(3);
+    };
+    addUi("https://example.com/wiki/spec", "");
+    check(h.c.linkCountOf(A) == 1 && h.c.linksOf(A)[0].target == "https://example.com/wiki/spec", "Web のリンクを追加できる");
+    check(h.c.linksOf(A)[0].title == "example.com/wiki/spec", "表示名を省略すると URL の末尾から付く");
+    check(h.u.linkTargetBuf.empty() && h.u.linkTitleBuf.empty() && h.u.linkError.empty(), "追加したら入力欄は空になる");
+    check(h.u.linkRows.size() == 1, "追加した行が一覧に出る");
+    addUi("\\\\server\\share\\docs\\spec.xlsx", "設計書");
+    check(h.c.linkCountOf(A) == 2 && h.c.linksOf(A)[1].title == "設計書", "UNC のファイルを表示名つきで追加できる");
+    addUi("\"S:\\案件\\共有\\\"", "");
+    check(h.c.linkCountOf(A) == 3 && h.c.linksOf(A)[2].target == "S:\\案件\\共有\\" && h.c.linksOf(A)[2].title == "共有",
+          "引用符つきのフォルダ（エクスプローラーの「パスのコピー」）を追加できる");
+    // 断る: 許可リストにないスキーム（理由を出す。入力は残す。理由に入力の中身を入れない）
+    addUi("javascript:alert(1)", "");
+    check(h.c.linkCountOf(A) == 3, "javascript: は追加しない");
+    check(!h.u.linkError.empty() && h.u.linkError.find("alert") == std::string::npos, "理由が入力欄の下に出る（中身は入れない）");
+    check(h.u.linkTargetBuf == "javascript:alert(1)", "断ったときは入力を残す（直せる）");
+    lclick(center(h.u.linkTargetBox));
+    io.AddInputCharactersUTF8("x");
+    h.frame(2);
+    check(h.u.linkError.empty(), "入力し直すと理由は消える");
+    lclick(center(h.u.linkTitleBox));  // 場所の入力欄を抜ける（入力中は外から値を入れても上書きされる）
+    h.u.linkTargetBuf = "https://example.com/wiki/spec";  // 重複
+    h.frame(2);
+    lclick(center(h.u.linkAddBtn));
+    h.frame(3);
+    check(h.c.linkCountOf(A) == 3 && h.u.linkError.find("すでに") != std::string::npos, "同じ場所は重複して追加しない（理由つき）");
+    h.u.linkTargetBuf.clear();
+    h.u.linkError.clear();
+    // Enter でも追加できる
+    lclick(center(h.u.linkTargetBox));
+    io.AddInputCharactersUTF8("http://intra.example/enter");
+    h.frame(2);
+    h.key(ImGuiKey_Enter);
+    h.frame(2);
+    check(h.c.linkCountOf(A) == 4, "入力欄で Enter を押しても追加できる");
+    // 入力欄の中での Ctrl+V は、子課題の貼り付けを始めない（入力欄に貼り付くだけ）
+    h.p.clip = "子A\n子B\n";
+    lclick(center(h.u.linkTargetBox));
+    h.key(ImGuiKey_V, true);
+    check(h.u.dlg != ui::Dlg::PasteChildren, "リンクの入力欄で Ctrl+V しても、子課題の貼り付けのダイアログは開かない");
+    h.u.linkTargetBuf.clear();
+    h.p.clip = std::nullopt;
+    // 4 件から 3 件にして（行を画面内に収める）、クリックで開く
+    check(h.c.removeLink(A, 3) && h.c.linkCountOf(A) == 3, "リンクを外せる");
+    h.frame(3);
+    check(h.u.linkRows.size() == 3, "行が 3 つ");
+    const auto rowAt = [&](std::size_t k) {
+      const auto& r = h.u.linkRows[k];
+      return ImVec2(r.first.x + 150, (r.first.y + r.second.y) / 2);
+    };
+    const std::size_t filesOpened0 = h.p.opened.size();
+    lclick(rowAt(0));
+    check(h.p.openedLinks.size() == 1 && h.p.openedLinks[0] == "https://example.com/wiki/spec", "行をクリックすると、場所をプラットフォームへ渡して開く");
+    lclick(rowAt(1));
+    check(h.p.openedLinks.size() == 2 && h.p.openedLinks[1] == "\\\\server\\share\\docs\\spec.xlsx", "UNC のファイルも開く（存在確認はしない）");
+    check(h.p.opened.size() == filesOpened0, "リンクを開いても、添付の openFile は使わない");
+    // 開けなかったら理由を通知する（場所は通知に入れない）
+    h.p.linkOpenWhy = "見つかりません";
+    lclick(rowAt(2));
+    check(h.p.openedLinks.size() == 2 && lastToast().find("開けませんでした（見つかりません") != std::string::npos, "開けないときは理由を通知する");
+    check(lastToast().find("共有") == std::string::npos, "通知に場所を入れない");
+    h.p.linkOpenWhy.clear();
+    // 許可リストにないリンクが（設定の書き換えなどで）あっても開かない
+    {
+      Link bad;
+      bad.title = "壊れた";
+      bad.target = "javascript:alert(1)";
+      h.c.session()->links()[A].push_back(bad);
+      h.c.session()->touchLinks();
+      h.frame(3);
+      check(h.u.linkRows.size() == 4, "壊れたリンクの行");
+      lclick(rowAt(3));
+      check(h.p.openedLinks.size() == 2 && lastToast().find("開けません") != std::string::npos, "許可リストにない場所は開かず、理由を通知する");
+      check(lastToast().find("alert") == std::string::npos, "理由に中身を入れない");
+      h.c.session()->links()[A].pop_back();
+      h.c.session()->touchLinks();
+      h.frame(3);
+    }
+    // 実行ファイルは添付と同じ警告（確認したら開く）
+    {
+      std::string why;
+      check(h.c.addLink(A, "", "C:\\tools\\run.exe", &why), "実行ファイルのリンクを追加できる");
+      h.frame(3);
+      check(h.u.linkRows.size() == 4, "行が 4 つ");
+      lclick(rowAt(3));
+      check(h.u.dlg == ui::Dlg::LinkOpenWarn && h.p.openedLinks.size() == 2, "実行ファイルは開く前に警告する");
+      h.frame(3);
+      h.key(ImGuiKey_Escape);
+      check(h.u.dlg == ui::Dlg::None && h.p.openedLinks.size() == 2, "警告をやめると開かない");
+      h.c.select(A);
+      h.frame(2);
+      lclick(rowAt(3));
+      h.frame(3);
+      ImGuiWindow* w = ImGui::FindWindowByName("###dlg");
+      check(h.u.dlg == ui::Dlg::LinkOpenWarn && w, "もう一度、警告が出る");
+      if (w)
+        for (float dy = 8; dy < 50 && h.u.dlg == ui::Dlg::LinkOpenWarn; dy += 4) lclick(ImVec2(w->Pos.x + w->Size.x - 45, w->Pos.y + w->Size.y - dy));
+      h.frame(2);
+      check(h.u.dlg == ui::Dlg::None && h.p.openedLinks.size() == 3 && h.p.openedLinks[2] == "C:\\tools\\run.exe", "「それでも開く」で開く");
+      check(h.c.removeLink(A, 3), "実行ファイルのリンクを外す");
+      h.frame(3);
+    }
+    // 右クリックのメニュー
+    const auto rightClick = [&](ImVec2 p) {
+      io.AddMousePosEvent(p.x, p.y);
+      h.frame();
+      io.AddMouseButtonEvent(1, true);
+      h.frame();
+      io.AddMouseButtonEvent(1, false);
+      h.frame(2);
+    };
+    const auto menuItem = [&](const std::string& label) {
+      for (const auto& it : h.u.linkCtxItems)
+        if (it.label == label) return it;
+      return ui::UiState::MenuItemGeom{label, ImVec2(-1, -1), ImVec2(-1, -1), false};
+    };
+    const auto pressItem = [&](const std::string& label) {
+      const auto it = menuItem(label);
+      check(it.a.x >= 0, ("メニューの項目: " + label).c_str());
+      lclick(ImVec2((it.a.x + it.b.x) / 2, (it.a.y + it.b.y) / 2));
+      h.frame(2);
+    };
+    rightClick(rowAt(1));
+    check(h.u.linkCtxItems.size() == 7, "右クリックでメニューが開く（7 項目）");
+    check(menuItem("場所（フォルダ）を開く").enabled, "ファイルのリンクでは「場所（フォルダ）を開く」が使える");
+    check(menuItem("上へ").enabled && menuItem("下へ").enabled, "真ん中の行は上へも下へも動かせる");
+    pressItem("場所（フォルダ）を開く");
+    check(h.p.openedLinks.size() == 4 && h.p.openedLinks[3] == "\\\\server\\share\\docs\\", "親のフォルダを開く");
+    rightClick(rowAt(0));
+    check(!menuItem("場所（フォルダ）を開く").enabled && !menuItem("上へ").enabled, "Web のリンクでは親のフォルダはなく、先頭は上へ動かせない");
+    pressItem("コピー");
+    check(!h.p.clipSet.empty() && h.p.clipSet.back() == "https://example.com/wiki/spec", "「コピー」で場所をクリップボードへ");
+    check(lastToast().find("example.com") == std::string::npos, "コピーの通知に場所を入れない");
+    rightClick(rowAt(0));
+    pressItem("開く");
+    check(h.p.openedLinks.size() == 5 && h.p.openedLinks[4] == "https://example.com/wiki/spec", "メニューの「開く」");
+    // 並べ替え（メニューの上へ・下へ）
+    rightClick(rowAt(0));
+    pressItem("下へ");
+    check(h.c.linksOf(A)[0].title == "設計書" && h.c.linksOf(A)[1].target == "https://example.com/wiki/spec", "「下へ」で 1 つ下げる");
+    rightClick(rowAt(1));
+    pressItem("上へ");
+    check(h.c.linksOf(A)[0].target == "https://example.com/wiki/spec", "「上へ」で元に戻る");
+    // 編集: 入力欄に入れて、保存・やめる
+    rightClick(rowAt(1));
+    pressItem("編集");
+    h.frame(2);
+    check(h.u.linkEditing && h.u.linkTargetBuf == "\\\\server\\share\\docs\\spec.xlsx" && h.u.linkTitleBuf == "設計書", "編集で入力欄に入る");
+    h.u.linkTitleBuf = "設計書 v2";
+    h.frame(2);
+    lclick(center(h.u.linkAddBtn));  // 「保存」
+    h.frame(3);
+    check(!h.u.linkEditing && h.c.linksOf(A)[1].title == "設計書 v2" && h.c.linkCountOf(A) == 3, "保存で表示名が直る（件数は変わらない）");
+    check(h.c.linksOf(A)[1].target == "\\\\server\\share\\docs\\spec.xlsx", "場所は変わらない");
+    rightClick(rowAt(1));
+    pressItem("編集");
+    h.frame(2);
+    lclick(center(h.u.linkTitleBox));  // 編集を始めると場所の欄にフォーカスが入っている。抜けてから値を入れる
+    h.u.linkTargetBuf = "javascript:1";
+    h.frame(2);
+    lclick(center(h.u.linkAddBtn));
+    h.frame(3);
+    check(h.u.linkEditing && !h.u.linkError.empty() && h.c.linksOf(A)[1].target == "\\\\server\\share\\docs\\spec.xlsx", "開けない場所には直せない（理由が出て、もとのまま）");
+    lclick(center(h.u.linkCancelBtn));
+    h.frame(3);
+    check(!h.u.linkEditing && h.u.linkTargetBuf.empty() && h.u.linkError.empty(), "「やめる」で編集をやめる");
+    // 削除
+    rightClick(rowAt(2));
+    pressItem("削除");
+    check(h.c.linkCountOf(A) == 2 && h.c.linksOf(A)[1].title == "設計書 v2", "メニューの「削除」");
+    h.frame(2);
+    // 行のごみ箱
+    h.c.addLink(A, "", "https://example.com/trash");
+    h.frame(3);
+    check(h.u.linkRows.size() == 3, "ごみ箱のテスト用の行");
+    if (h.u.linkRows.size() == 3) {
+      const auto& r = h.u.linkRows[2];
+      lclick(ImVec2(r.second.x - 18, (r.first.y + r.second.y) / 2));
+      h.frame(2);
+      check(h.c.linkCountOf(A) == 2, "行のごみ箱でリンクを外せる");
+    }
+    // 貼り付けて追加（複数行。断った行は件数と理由だけを通知する）
+    h.p.clip = "https://p.example/one\n\nC:\\paste\\two.txt\r\njavascript:alert(1)\n";
+    h.frame(3);
+    lclick(center(h.u.linkPasteBtn));
+    h.frame(3);
+    check(h.c.linkCountOf(A) == 4, "貼り付けて追加: 読める 2 行が追加される");
+    check(lastToast().find("2 件のリンクを追加") != std::string::npos && lastToast().find("1 行は追加できません") != std::string::npos,
+          "追加した件数と断った行数を通知する");
+    check(lastToast().find("p.example") == std::string::npos && lastToast().find("alert") == std::string::npos, "通知に行の中身を入れない");
+    h.p.clip = std::nullopt;
+    lclick(center(h.u.linkPasteBtn));
+    h.frame(3);
+    check(h.c.linkCountOf(A) == 4 && lastToast().find("テキストがありません") != std::string::npos, "クリップボードが空なら何も追加せず知らせる");
+    // 設定ファイルに書かれる（CSV は変わらない）
+    h.clk.advanceMs(2000);
+    h.frame(3);
+    {
+      std::string settings, csv;
+      for (const auto& pi : h.c.projects())
+        if (pi.name == "リンクの確認") {
+          settings = h.fs.content("data/リンクの確認/project.settings.json");
+          csv = h.fs.content("data/リンクの確認/project.csv");
+        }
+      check(settings.find("\"links\"") != std::string::npos && settings.find("https://example.com/wiki/spec") != std::string::npos,
+            "project.settings.json の links に保存される");
+      check(csv.find("example.com") == std::string::npos && csv.find("links") == std::string::npos, "CSV には入らない");
+    }
+    // 他の課題へ: ドラッグで移動（Ctrl でコピー）・同じ一覧の中で並べ替え
+    h.c.removeLink(A, 3);
+    h.c.removeLink(A, 2);
+    h.frame(4);
+    check(h.u.linkRows.size() == 2, "ドラッグのテスト用に 2 行");
+    const auto targetMid = [&](const std::string& id) {
+      for (const auto& t : h.u.dropTargets)
+        if (t.id == id) return ImVec2((t.a.x + t.b.x) / 2, (t.a.y + t.b.y) / 2);
+      return ImVec2(-1, -1);
+    };
+    const auto dragTo = [&](ImVec2 from, ImVec2 to, bool ctrl, bool release = true) {
+      io.AddMousePosEvent(from.x, from.y);
+      h.frame();
+      io.AddMouseButtonEvent(0, true);
+      h.frame();
+      io.AddMousePosEvent(from.x + 12, from.y + 2);
+      h.frame();
+      io.AddMousePosEvent(to.x, to.y);
+      h.frame(2);
+      if (ctrl) io.AddKeyEvent(ImGuiMod_Ctrl, true);
+      h.frame();
+      if (release) {
+        io.AddMouseButtonEvent(0, false);
+        h.frame(2);
+        io.AddKeyEvent(ImGuiMod_Ctrl, false);
+        h.frame();
+      }
+    };
+    const std::size_t opened0 = h.p.openedLinks.size();
+    dragTo(rowAt(0), ImVec2(h.u.linkRows[1].first.x + 100, h.u.linkRows[1].second.y - 2), false);
+    check(h.c.linksOf(A)[1].target == "https://example.com/wiki/spec" && h.c.linkCountOf(A) == 2, "同じ一覧の中でつかんで動かすと並べ替える");
+    check(h.p.openedLinks.size() == opened0, "つかんで動かしたときは開かない");
+    h.frame(3);
+    dragTo(rowAt(0), targetMid(B), true);
+    check(h.c.linkCountOf(A) == 2 && h.c.linkCountOf(B) == 1, "Ctrl を押して別の課題の行へ離すとコピー（元は残る）");
+    h.frame(3);
+    dragTo(rowAt(1), targetMid(B), false);
+    check(h.c.linkCountOf(A) == 1 && h.c.linkCountOf(B) == 2, "別の課題の行へ離すと移動");
+    h.frame(3);
+    dragTo(rowAt(0), ImVec2(3, 3), false);
+    check(h.c.linkCountOf(A) == 1 && h.u.dlg == ui::Dlg::None, "ドロップ先がない場所では何もしない");
+    h.frame(3);
+    dragTo(rowAt(0), targetMid(B), false, false);
+    check(h.u.attachDrag.active && h.u.attachDrag.link, "つかんで動かすとドラッグが始まる（リンク）");
+    h.key(ImGuiKey_Escape);
+    check(!h.u.attachDrag.active, "Esc で取り消す");
+    io.AddMouseButtonEvent(0, false);  // つかんだままのボタンを離す
+    h.frame(3);
+    // 添付とリンクが同じ添字にあっても、リンクの行の押下・ドラッグ・右クリックが添付に影響しない（行・ボタンの ID が別）
+    {
+      h.fs.put("ext/同じ添字.txt", "x");
+      h.c.attachFiles(A, {"ext/同じ添字.txt"});
+      h.c.select(A);
+      h.u.detailTab = 3;
+      h.frame(6);
+      check(h.u.attachRows.size() == 1 && h.u.linkRows.size() == 1, "添付 1 件とリンク 1 件（同じ添字 0）");
+      const std::size_t attBefore = h.c.attachmentCount(A);
+      const std::size_t openedBefore = h.p.openedLinks.size(), filesBefore = h.p.opened.size();
+      // リンクの行を押して動かす → リンクのドラッグ（添付のドラッグにならない）
+      dragTo(rowAt(0), targetMid(B), false, false);
+      check(h.u.attachDrag.active && h.u.attachDrag.link, "リンクの行をつかむと、リンクのドラッグになる");
+      h.key(ImGuiKey_Escape);
+      io.AddMouseButtonEvent(0, false);
+      h.frame(3);
+      check(!h.u.attachDrag.active && h.c.attachmentCount(A) == attBefore && h.c.linkCountOf(A) == 1, "取り消したら何も動かない");
+      // 押して離す → リンクが開く（添付は開かない）
+      lclick(rowAt(0));
+      check(h.p.openedLinks.size() == openedBefore + 1 && h.p.opened.size() == filesBefore && h.u.dlg == ui::Dlg::None, "リンクの行のクリックは、リンクだけを開く");
+      // 右クリック → リンクのメニュー（添付のドラッグは始まらない）
+      rightClick(rowAt(0));
+      check(h.u.linkCtxItems.size() == 7 && !h.u.attachDrag.active, "リンクの行の右クリックはリンクのメニューを開く");
+      lclick(ImVec2(700, 880));  // メニューの外をクリックして閉じる
+      h.frame(3);
+      // 添付の行をつかむと、添付のドラッグ
+      {
+        const auto& r = h.u.attachRows[0];
+        dragTo(ImVec2(r.first.x + 100, (r.first.y + r.second.y) / 2), targetMid(B), false, false);
+        check(h.u.attachDrag.active && !h.u.attachDrag.link, "添付の行をつかむと、添付のドラッグになる");
+        h.key(ImGuiKey_Escape);
+        io.AddMouseButtonEvent(0, false);
+        h.frame(3);
+      }
+      check(h.c.removeAttachment(A, 0), "確認用の添付を外す");
+      h.frame(3);
+    }
+    // 別の課題を選ぶと、書きかけの入力は捨てる（書きかけの場所を別の課題に付けてしまわない）
+    h.u.linkTargetBuf = "https://draft.example/";
+    h.u.linkError = "x";
+    h.c.select(B);
+    h.u.detailTab = 3;  // 課題を切り替えると、詳細パネルは先頭のタブに戻る
+    h.frame(3);
+    check(h.u.linkTargetBuf.empty() && h.u.linkError.empty() && h.u.linkRowsIssue == B, "別の課題を選ぶと、書きかけの入力を捨てる");
+    // バッジとツールチップ（一覧・ガントの左の表・ボード）。ボードは末端の課題だけがカードになるので、末端の課題 L を使う
+    h.u.detailOpen = false;
+    const std::string L = "7";
+    for (int k = 0; k < 10; ++k) h.c.addLink(L, "リンク" + std::to_string(k), "https://tip.example/p" + std::to_string(k));
+    check(h.c.linkCountOf(L) == 10, "ツールチップの確認用に 10 件にする");
+    const auto badgeOf = [&](const std::string& id) {
+      for (const auto& b : h.u.linkBadges)
+        if (b.id == id) return b;
+      return ui::UiState::DropTarget{ImVec2(-1, -1), ImVec2(-1, -1), ""};
+    };
+    const auto tooltipOn = [&] {
+      ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+      return tip && tip->Active;
+    };
+    for (auto v : {app::View::List, app::View::Gantt, app::View::Board}) {
+      h.c.setView(v);
+      io.AddMousePosEvent(700, 880);
+      for (int k = 0; k < 8; ++k) {
+        io.AddMouseWheelEvent(0, 10);
+        h.frame(2);
+      }
+      h.frame(20);
+      const auto bb = badgeOf(L);
+      const std::string vn = v == app::View::List ? "一覧" : (v == app::View::Gantt ? "ガント" : "ボード");
+      check(bb.a.x >= 0, (vn + ": リンクのバッジが出る").c_str());
+      if (bb.a.x < 0) continue;
+      h.u.linkTipLines.clear();
+      io.AddMousePosEvent((bb.a.x + bb.b.x) / 2, (bb.a.y + bb.b.y) / 2);
+      h.frame(30);
+      check(tooltipOn(), (vn + ": バッジに載せるとツールチップが出る").c_str());
+      check(h.u.linkTipLines.size() == 8 && h.u.linkTipLines.front() == "リンク 10 件（クリックで一覧）" && h.u.linkTipLines[1] == "リンク0" &&
+                h.u.linkTipLines[6] == "リンク5" && h.u.linkTipLines.back() == "ほか 4 件",
+            (vn + ": 先頭の 6 件と「ほか 4 件」").c_str());
+      io.AddMousePosEvent(700, 880);
+      h.frame(5);
+      check(!tooltipOn(), (vn + ": 外すと消える").c_str());
+    }
+    // バッジのクリックで、詳細パネルの添付タブが開く
+    h.c.setView(app::View::List);
+    h.u.detailOpen = false;
+    h.c.clearSelection();
+    io.AddMousePosEvent(700, 880);
+    h.frame(20);
+    {
+      const auto bb = badgeOf(L);
+      check(bb.a.x >= 0, "一覧に戻ってバッジが出る");
+      lclick(ImVec2((bb.a.x + bb.b.x) / 2, (bb.a.y + bb.b.y) / 2));
+      h.frame(3);
+      check(h.u.detailOpen && h.u.linkRowsIssue == L, "バッジをクリックすると、その課題の添付タブ（リンクの節）が開く");
+    }
+    h.frame(3);
+    // ダーク・コンパクト・高 DPI でも描ける。たくさんある課題・長い場所・日本語のパス
+    {
+      for (int k = 0; k < 45; ++k) h.c.addLink(L, "", "S:\\案件\\" + std::string(300, 'a') + std::to_string(k) + "\\仕様書.xlsx");
+      check(h.c.linkCountOf(L) == 50, "1 課題 50 件まで");
+      std::string why;
+      check(!h.c.addLink(L, "", "https://over.example/", &why) && why.find("50") != std::string::npos, "51 件目は理由つきで断る");
+      h.u.t = &ui::darkTokens();
+      ui::applyStyle(*h.u.t, h.u.m);
+      h.frame(5);
+      h.u.m.compact = true;
+      h.u.m.scale = 1.5f;
+      ui::applyStyle(*h.u.t, h.u.m);
+      h.frame(5);
+      h.u.t = &ui::lightTokens();
+      h.u.m.compact = false;
+      h.u.m.scale = 1.0f;
+      ui::applyStyle(*h.u.t, h.u.m);
+      h.frame(5);
+    }
+    h.u.detailOpen = false;
+    h.frame(2);
+    h.c.deleteCurrentProject();
+    h.frame(2);
+    // 平置きのプロジェクト（添付は置けない）でも、リンクは付けられる（場所を指すだけでコピーしない）
+    h.fs.put("data/平置きリンク.csv", "Issue Id,Summary\n1,a\n");
+    h.c.syncFolder(true);
+    for (const auto& pi : h.c.projects())
+      if (pi.name == "平置きリンク") h.c.openProject(pi.id);
+    h.c.setView(app::View::List);
+    h.c.select("1");
+    h.u.detailOpen = true;
+    h.u.detailTab = 3;
+    h.frame(4);
+    check(!h.c.canAttach(), "平置きは添付できない");
+    check(h.c.addLink("1", "", "https://flat.example/a"), "平置きでもリンクは付けられる");
+    h.frame(3);
+    check(h.u.linkRows.size() == 1, "平置きでもリンクの行が出る");
+    h.u.detailOpen = false;
+    h.frame(2);
+    h.c.deleteCurrentProject();
+    h.frame(2);
+  }
   // 統計ビュー: 担当者別の負荷（週×担当のヒートマップ）と完了の推移
   {
     const std::string csvText =
@@ -3377,10 +3823,10 @@ int main() {
   {
     std::set<ImWchar> have(ui::uiGlyphs().begin(), ui::uiGlyphs().end());
     const char* files[] = {"app/ui/app_ui.cpp", "app/ui/view_list.cpp", "app/ui/view_gantt.cpp", "app/ui/view_board.cpp",
-                           "app/ui/view_goals.cpp", "app/ui/view_stats.cpp", "app/ui/panel_detail.cpp", "app/ui/panel_attach.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
+                           "app/ui/view_goals.cpp", "app/ui/view_stats.cpp", "app/ui/panel_detail.cpp", "app/ui/panel_attach.cpp", "app/ui/panel_links.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
                            "app/ui/widgets.cpp", "app/ui/strings.hpp", "app/controller/app_controller.cpp",
                            "core/src/report.cpp", "core/src/baseline.cpp", "core/src/weekly.cpp", "core/src/weekly_md.cpp", "core/src/weekly_html.cpp", "core/src/weekly_state.cpp", "core/src/report_gantt.cpp", "core/src/report_stats.cpp", "core/src/report_list.cpp", "core/src/gantt_geom.cpp",
-                           "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp", "core/src/attachments.cpp", "core/src/load.cpp"};
+                           "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp", "core/src/attachments.cpp", "core/src/links.cpp", "core/src/load.cpp"};
     for (const char* rel : files) {
       std::ifstream in(std::string(ROADMAP_SOURCE_DIR) + "/" + rel, std::ios::binary);
       std::stringstream ss;

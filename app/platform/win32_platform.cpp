@@ -14,6 +14,7 @@
 #include "roadmap/attachments.hpp"
 #include "roadmap/encoding.hpp"
 #include "roadmap/filestore.hpp"
+#include "roadmap/links.hpp"
 #include "roadmap/store.hpp"
 
 namespace roadmap::win {
@@ -366,6 +367,34 @@ void Win32Platform::releaseTexture(ImTextureID tex) {
 // 関連付けられたアプリで開く。実行ファイルかどうかの確認は UI が先に済ませている
 void Win32Platform::openFile(const std::string& path) {
   ShellExecuteW(hwnd_, L"open", widen(path).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+// 関連リンクを開く（Web は既定のブラウザ、ファイルは関連付けられたアプリ、フォルダはエクスプローラー）。
+// UI が先に検査・警告しているが、ここでも許可リスト（classifyLink）に通ったものだけを渡す。場所はログに出さない。
+// 存在確認はしない（ネットワークドライブで固まらないため）。開けなければ理由を返す
+bool Win32Platform::openLink(const std::string& target, std::string* error) {
+  const LinkClass c = classifyLink(target);
+  if (!c.ok()) {
+    if (error) *error = c.reason;
+    return false;
+  }
+  const HINSTANCE r = ShellExecuteW(hwnd_, L"open", widen(c.target).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+  const INT_PTR code = reinterpret_cast<INT_PTR>(r);
+  if (code > 32) return true;
+  if (error) {
+    switch (code) {
+      case ERROR_FILE_NOT_FOUND:
+      case ERROR_PATH_NOT_FOUND:
+        *error = "見つかりません（移動・削除されたか、共有につながっていない可能性があります）";
+        break;
+      case SE_ERR_ACCESSDENIED: *error = "アクセスが許可されていません"; break;
+      case SE_ERR_NOASSOC:
+      case SE_ERR_ASSOCINCOMPLETE: *error = "開くアプリが関連付けられていません"; break;
+      case SE_ERR_SHARE: *error = "ほかのアプリが使用中のため開けません"; break;
+      default: *error = "開けませんでした（コード " + std::to_string(code) + "）"; break;
+    }
+  }
+  return false;
 }
 
 std::optional<std::string> Win32Platform::readTextFile(const std::string& path, std::string* error) {

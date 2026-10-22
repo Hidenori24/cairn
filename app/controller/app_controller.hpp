@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "roadmap/attachments.hpp"
+#include "roadmap/links.hpp"
 #include "roadmap/commands.hpp"
 #include "roadmap/report.hpp"
 #include "roadmap/store.hpp"
@@ -197,6 +198,23 @@ class AppController {
   Result<std::string> attachmentBytes(const std::string& issueId, std::size_t index) const;
   // プロジェクトのフォルダ（平置き・まだ書いていないときは空）
   std::string currentProjectDir() const;
+
+  // ---- 関連リンク（SPEC 8.10。Issue #60。取り消しの対象外。settings.json の "links" に保存する）----
+  // 場所を指すだけで何もコピーしないので、添付と違い平置きのプロジェクトにも付けられる。
+  // URL・パス・表示名は機微なので、通知にもログにも入れない（件数と理由だけを出す）
+  const std::vector<Link>& linksOf(const std::string& issueId) const;
+  std::size_t linkCountOf(const std::string& issueId) const;
+  // 追加する。断られたら false で、理由を reason に入れる（通知は出さない。入力欄の下に出すため）。課題が実在すること
+  bool addLink(const std::string& issueId, const std::string& title, const std::string& target, std::string* reason = nullptr);
+  // 貼り付けたテキストの各行を 1 行 1 リンクとして追加する。結果は通知にも出す（追加した件数・断った件数と最初の理由）
+  LinkPasteOutcome addLinksFromText(const std::string& issueId, const std::string& text);
+  bool editLink(const std::string& issueId, std::size_t index, const std::string& title, const std::string& target,
+                std::string* reason = nullptr);
+  bool removeLink(const std::string& issueId, std::size_t index);
+  bool reorderLink(const std::string& issueId, std::size_t from, std::size_t to);
+  // 別の課題へ移す・コピーする（ドラッグ）。先の課題が実在すること。断られたら false（通知を出す。元のまま）
+  bool moveLink(const std::string& fromIssue, std::size_t index, const std::string& toIssue);
+  bool copyLink(const std::string& fromIssue, std::size_t index, const std::string& toIssue);
 
   // ---- テンプレート ----
   std::vector<Template> templates() const;

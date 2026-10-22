@@ -4,6 +4,7 @@
 #include <imgui.h>
 
 #include "roadmap/attachments.hpp"
+#include "roadmap/links.hpp"
 #include "roadmap/sha256.hpp"
 #include "roadmap/text.hpp"
 #include "ui/icons.hpp"
@@ -108,7 +109,8 @@ void processAttachDrag(Frame& f) {
   // 続けられないとき（プロジェクトを切り替えた・ダイアログやコマンドパレット・ポップアップが開いた・つかんだ添付がなくなった）は、
   // 離した位置を調べる前に取り消す（モーダルの裏で移動・コピーしない）
   const bool modal = u.dlg != Dlg::None || u.paletteOpen || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
-  if (!c.session() || modal || c.currentId() != d.project || d.index >= c.attachmentsOf(d.issueId).size()) {
+  const std::size_t grabbedCount = d.link ? c.linksOf(d.issueId).size() : c.attachmentsOf(d.issueId).size();
+  if (!c.session() || modal || c.currentId() != d.project || d.index >= grabbedCount) {
     u.attachDrag = {};
     u.attachDragCancelled = true;
     return;
@@ -127,12 +129,20 @@ void processAttachDrag(Frame& f) {
   const ImVec2 pos = io.MousePos;
   const UiState::DropTarget* t = targetAt(f, pos);
   if (!t) return;
-  if (t->id == d.issueId) {  // 同じ課題 = 添付の一覧の上なら並べ替え
-    const int slot = attachReorderSlot(u, d.issueId, pos);
+  if (t->id == d.issueId) {  // 同じ課題 = 添付（リンク）の一覧の上なら並べ替え
+    const int slot = d.link ? linkReorderSlot(u, d.issueId, pos) : attachReorderSlot(u, d.issueId, pos);
     if (slot < 0) return;
     const std::size_t at = static_cast<std::size_t>(slot);
     const std::size_t to = at > d.index ? at - 1 : at;
-    if (to != d.index) c.reorderAttachment(d.issueId, d.index, to);
+    if (to != d.index) {
+      if (d.link) c.reorderLink(d.issueId, d.index, to);
+      else c.reorderAttachment(d.issueId, d.index, to);
+    }
+    return;
+  }
+  if (d.link) {
+    if (io.KeyCtrl) c.copyLink(d.issueId, d.index, t->id);
+    else c.moveLink(d.issueId, d.index, t->id);
     return;
   }
   if (io.KeyCtrl) c.copyAttachment(d.issueId, d.index, t->id);
@@ -146,8 +156,21 @@ void drawAttachDrag(Frame& f) {
   Session* s = c.session();
   const UiState::AttachDrag d = u.attachDrag;
   if (!s || c.currentId() != d.project) return;
-  const auto& list = c.attachmentsOf(d.issueId);
-  if (d.index >= list.size()) return;
+  // つかんでいるもの（添付かリンク）の名前・アイコン。描画中に一覧が変わらないよう、写しを持つ
+  std::string heldName, heldIcon;
+  const Attachment* att = nullptr;
+  if (d.link) {
+    const auto& links = c.linksOf(d.issueId);
+    if (d.index >= links.size()) return;
+    heldName = links[d.index].title;
+    heldIcon = linkIconName(classifyLink(links[d.index].target).kind, isRiskyTarget(links[d.index].target));
+  } else {
+    const auto& list = c.attachmentsOf(d.issueId);
+    if (d.index >= list.size()) return;
+    att = &list[d.index];
+    heldName = att->name;
+    heldIcon = isRiskyFile(att->name) ? "warn" : (isImageFile(att->name) ? "image" : "file");
+  }
   const ImGuiIO& io = ImGui::GetIO();
   const ImVec2 pos = io.MousePos;
   if (pos.x < -1e6f) return;  // マウスがウィンドウの外
@@ -162,24 +185,25 @@ void drawAttachDrag(Frame& f) {
     dl->AddRect(t->a, t->b, u.t->accent, 0, 0, u.m.s(2));
     note = std::string(copy ? "コピー: " : "移動: ") + ellipsize(to->summary, u.m.s(190));
   } else if (t) {
-    const int slot = attachReorderSlot(u, d.issueId, pos);
+    const int slot = d.link ? linkReorderSlot(u, d.issueId, pos) : attachReorderSlot(u, d.issueId, pos);
+    const auto& rows = d.link ? u.linkRows : u.attachRows;
+    const auto& clip = d.link ? u.linkRowsClip : u.attachRowsClip;
     if (slot >= 0) {
       const std::size_t at = static_cast<std::size_t>(slot);
       const std::size_t dest = at > d.index ? at - 1 : at;
-      if (dest != d.index && at < u.attachRows.size() + 1) {
-        float y = at == 0 ? u.attachRows.front().first.y : u.attachRows[at - 1].second.y;
-        y = std::clamp(y, u.attachRowsClip.first.y, u.attachRowsClip.second.y);  // 見える範囲の端まで
-        dl->AddLine(ImVec2(u.attachRows.front().first.x, y), ImVec2(u.attachRows.front().second.x, y), u.t->accent, u.m.s(3));
+      if (dest != d.index && at < rows.size() + 1) {
+        float y = at == 0 ? rows.front().first.y : rows[at - 1].second.y;
+        y = std::clamp(y, clip.first.y, clip.second.y);  // 見える範囲の端まで
+        dl->AddLine(ImVec2(rows.front().first.x, y), ImVec2(rows.front().second.x, y), u.t->accent, u.m.s(3));
         note = "ここへ並べ替え";
       }
     }
   }
   if (note.empty()) note = to || t ? "" : "課題の行・カードへドロップで移動（Ctrl でコピー）";
   // カーソルに付くもの: サムネイル（画像のとき）と名前
-  const Attachment& a = list[d.index];
   const float th = u.m.s(34);
-  const UiState::ImageTex* img = isImageFile(a.name) ? attachmentImage(f, d.issueId, d.index, kThumbPx) : nullptr;
-  const std::string name = ellipsize(a.name, u.m.s(190));
+  const UiState::ImageTex* img = att && isImageFile(att->name) ? attachmentImage(f, d.issueId, d.index, kThumbPx) : nullptr;
+  const std::string name = ellipsize(heldName, u.m.s(190));
   const float tw = std::max({ImGui::CalcTextSize(name.c_str()).x, ImGui::CalcTextSize(note.c_str()).x, u.m.s(60)});
   const float w = th + u.m.s(8) + tw + u.m.s(14);
   const float h = th + u.m.s(10);
@@ -196,8 +220,7 @@ void drawAttachDrag(Frame& f) {
     const ImVec2 q0(b0.x + (th - sz.x) / 2, b0.y + (th - sz.y) / 2);
     dl->AddImage(img->tex, q0, ImVec2(q0.x + sz.x, q0.y + sz.y));
   } else {
-    drawIcon(dl, isRiskyFile(a.name) ? "warn" : (isImageFile(a.name) ? "image" : "file"), ImVec2(b0.x + (th - u.m.s(18)) / 2, b0.y + (th - u.m.s(18)) / 2),
-             u.m.s(18), u.t->muted);
+    drawIcon(dl, heldIcon.c_str(), ImVec2(b0.x + (th - u.m.s(18)) / 2, b0.y + (th - u.m.s(18)) / 2), u.m.s(18), u.t->muted);
   }
   const float tx = b1.x + u.m.s(8);
   const float lh = ImGui::GetTextLineHeight();
@@ -385,7 +408,9 @@ void drawJiraAttachments(Frame& f, const Issue& o) {
 }
 }  // namespace
 
-void drawAttachTab(Frame& f, int i) {
+namespace {
+// 添付ファイルの節（添付タブの下半分）
+void drawAttachSection(Frame& f, int i) {
   app::AppController& c = f.c;
   UiState& u = f.u;
   Session* s = c.session();
@@ -552,6 +577,18 @@ void drawAttachTab(Frame& f, int i) {
   if (open != static_cast<std::size_t>(-1)) openAttachment(f, id, open);
   if (del != static_cast<std::size_t>(-1)) deferAfterFrame(f, [&f, id, del] { f.c.removeAttachment(id, del); });
   drawJiraAttachments(f, o);
+}
+}  // namespace
+
+// 「添付」タブ: 上に添付ファイルの節（本体をコピーして持つ）、下に関連リンクの節（場所を指すだけ。Issue #60）
+void drawAttachTab(Frame& f, int i) {
+  ImGui::SeparatorText("添付ファイル");
+  drawAttachSection(f, i);
+  ImGui::Spacing();
+  // 同じ子ウィンドウの中なので、添付の行（PushID(k) の ##row など）と ID が重ならないよう、別のスコープに入れる
+  ImGui::PushID("links");
+  drawLinksSection(f, i);
+  ImGui::PopID();
 }
 
 }  // namespace roadmap::ui

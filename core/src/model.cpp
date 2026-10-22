@@ -115,7 +115,7 @@ int prioRank(std::string_view prio) {
   return 2;
 }
 
-std::string nextIssueId(const std::vector<Issue>& issues, const AttachmentMap& reserved) {
+std::string nextIssueId(const std::vector<Issue>& issues, const AttachmentMap& reserved, const LinkMap& reservedLinks) {
   double m = 0;
   const auto upto = [&m](const std::string& id) {
     if (!text::isAsciiDigits(id)) return;
@@ -125,6 +125,9 @@ std::string nextIssueId(const std::vector<Issue>& issues, const AttachmentMap& r
   for (const auto& o : issues) upto(o.id);
   // 削除した課題の添付が残っているとき（Undo で戻せる）、その id は再利用しない
   for (const auto& [id, list] : reserved)
+    if (!list.empty()) upto(id);
+  // 削除した課題のリンクも同じ（新しい課題が、前の課題のリンクを引き継がないように）
+  for (const auto& [id, list] : reservedLinks)
     if (!list.empty()) upto(id);
   return text::jsNumber(m + 1);
 }
