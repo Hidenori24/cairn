@@ -31,6 +31,7 @@ add_library(roadmap_core STATIC
   src/jira_check.cpp
   src/stats.cpp
   src/load.cpp
+  src/trends.cpp
   src/theme_colors.cpp
   src/gantt_geom.cpp
   src/report.cpp
