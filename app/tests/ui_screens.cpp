@@ -1006,30 +1006,35 @@ int main(int argc, char** argv) {
         ImGui::GetIO().AddMouseWheelEvent(0, -1);
         frames(2);
       }
-      ImGui::GetIO().AddMousePosEvent(5, 5);  // ツールチップが出ない位置へ
+    };
+    // ポインタを統計の外へ出してから撮る（ツールチップが写り込まない）。スクロールはポインタが統計の上にあるときだけ効く
+    const auto awayShot = [&](const std::string& name) {
+      ImGui::GetIO().AddMousePosEvent(5, 5);
       frames(2);
+      shot(name);
+    };
+    const auto overStats = [&] {
+      ImGui::GetIO().AddMousePosEvent(700, 450);
+      frames(2);  // ホバー先の更新（次のフレームでホイールが統計に届く）
     };
     const auto trendShots = [&](const std::string& name) {
       scrollTo([&] { return u.statsTrend.drawn && u.statsTrend.whoA.y < 150; });
-      ImGui::GetIO().AddMousePosEvent(5, 5);  // ツールチップが出ない位置へ
-      frames(2);
-      shot(name + "_burn");
+      awayShot(name + "_burn");
       // 週の上にマウスを載せたときのツールチップ
       if (u.statsTrend.weekCols.size() > 5) {
         const auto& col = u.statsTrend.weekCols[u.statsTrend.weekCols.size() - 3];
         ImGui::GetIO().AddMousePosEvent((col.a.x + col.b.x) / 2, (col.a.y + col.b.y) / 2);
         frames(2);
         shot(name + "_tip");
-        ImGui::GetIO().AddMousePosEvent(5, 5);
-        frames(2);
       }
-      for (int k = 0; k < 14; ++k) {
+      overStats();
+      for (int k = 0; k < 6; ++k) {  // リードタイムの節が上に来るところまで（下まで行き過ぎない）
         ImGui::GetIO().AddMouseWheelEvent(0, -1);
         frames(2);
       }
-      shot(name + "_lead");
+      awayShot(name + "_lead");
       scrollTo([&] { return !u.statsTrend.agingRows.empty() && u.statsTrend.agingRows.back().b.y < 880; });
-      shot(name + "_aging");
+      awayShot(name + "_aging");
     };
     c.importText(trendCsv(true, 3), "推移（作成日・更新日あり）", app::ImportMode::New);
     u.t = &ui::lightTokens();
@@ -1058,15 +1063,15 @@ int main(int argc, char** argv) {
     }
     c.importText(trendCsv(true, 0), "推移（直近の完了なし）", app::ImportMode::New);
     scrollTo([&] { return u.statsTrend.drawn && u.statsTrend.whoA.y < 150; });
-    shot("62_trends_noforecast");
+    awayShot("62_trends_noforecast");
     // 担当者で絞った状態
     u.statsTrend.who = TrendFilter::Who::Name;
     u.statsTrend.name = "鈴木";
-    shot("63_trends_filtered");
+    awayShot("63_trends_filtered");
     // Created・Updated の列がない CSV
     c.importText(trendCsv(false, 3), "推移（日付の列なし）", app::ImportMode::New);
     scrollTo([&] { return u.statsTrend.drawn && u.statsTrend.whoA.y < 150; });
-    shot("64_trends_nocols");
+    awayShot("64_trends_nocols");
     c.deleteCurrentProject();
     c.deleteCurrentProject();
     c.deleteCurrentProject();

@@ -513,6 +513,23 @@ TEST_CASE("trends: 滞留日数の階級別の度数と、上位 10 件（同じ
   CHECK(a.top.back().days == 3);
 }
 
+TEST_CASE("trends: 作成日が基準日より先の未完了は、滞留にも数えない（件数は future に出す）") {
+  const Proj p = make({Rec("A", "To Do", "2026-11-02"),                          // 未来の作成日だけ
+                       Rec("B", "To Do", "2026-11-02").upd("2026-10-12"),        // 未来の作成日 + Updated: やはり除外
+                       Rec("C", "To Do", "2026-10-19"),                          // 基準日と同じ日は数える（0 日）
+                       Rec("D", "To Do").upd("2026-10-14")},                     // Created なし: Updated で数える
+                      "2026-10-19");
+  const TrendReport r = p.ok();
+  CHECK(r.burn.future == 2);
+  CHECK(r.aging.n == 2);
+  CHECK(r.aging.noDate == 0);
+  CHECK(r.aging.hist[0] == 1);  // C（0 日）
+  CHECK(r.aging.hist[1] == 1);  // D（3 日）
+  REQUIRE(r.aging.top.size() == 2);
+  CHECK(r.aging.top[0].id == "D");
+  CHECK(r.aging.top[1].id == "C");
+}
+
 TEST_CASE("trends: 滞留日数に休業日は数えない") {
   const Calendar hol = Calendar::fromText("2026-10-14 2026-10-15");
   const Proj p = make({Rec("A", "To Do", "2026-09-01").upd("2026-10-13")}, "2026-10-19", hol);  // 火 → 月: 水木休み、金・月 = 2

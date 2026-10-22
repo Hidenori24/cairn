@@ -308,6 +308,8 @@ struct UiState {
       ImVec2 a{0, 0}, b{0, 0};
     };
     std::vector<Col> weekCols;   // 週ごとの当たり（過去の週だけ）
+    Col lastCol;                 // 予測の週も含めた最後の列
+    float chartX1 = 0;           // 図の右端（画面の座標）。列がここに収まっていることを煙テストが確かめる
     struct AgingRow {
       std::string id;
       ImVec2 a{0, 0}, b{0, 0};

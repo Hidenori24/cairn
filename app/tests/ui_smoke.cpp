@@ -2621,6 +2621,51 @@ int main() {
     h.c.setView(app::View::Stats);
     h.frame(3);
     check(!st.drawn && st.weekCols.empty() && st.agingRows.empty(), "空のプロジェクトでは推移を描かない（落ちない）");
+    // 幅が狭い（ウィンドウが小さく、詳細パネルも開いている）とき: 履歴 27 週 + 予測 26 週の列が幅に収まり、最後の列もホバーできる
+    {
+      std::string wide = "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Created,Updated,Resolved,Duration (weeks)\n";
+      wide += "d1,Task,完了1,,田中,Done,Medium,2026-04-20,,2026-10-06,1\n";
+      wide += "d2,Task,完了2,,田中,Done,Medium,2026-04-20,,2026-10-13,1\n";
+      wide += "d3,Task,完了3,,田中,Done,Medium,2026-04-20,,2026-10-14,1\n";
+      for (int i = 0; i < 30; ++i)
+        wide += "o" + std::to_string(i) + ",Task,未完了" + std::to_string(i) + ",,鈴木,To Do,Medium," + fmtIso(*parseIso("2026-04-21") + i * 5) + ",,,1\n";
+      check(h.c.importText(wide, "狭い幅", app::ImportMode::New).ok, "狭い幅の確認用の取り込み");
+      h.c.setView(app::View::Stats);
+      h.clk.advanceMs(15000);
+      ImGuiIO& io2 = ImGui::GetIO();
+      io2.DisplaySize = ImVec2(900, 900);
+      h.u.detailOpen = true;
+      h.frame(4);
+      check(h.u.statsTrend.drawn && h.u.statsTrend.weeks == 27 && h.u.statsTrend.forecastOk, "27 週の履歴と予測が出る");
+      const auto lastVisible = [&] {
+        const auto& c = h.u.statsTrend.lastCol;
+        return c.a.y > 130 && c.b.y < 800;
+      };
+      io2.AddMousePosEvent(300, 450);
+      for (int k = 0; k < 20; ++k) {  // 前のプロジェクトのスクロール位置が残っているので、先頭へ戻してから下る
+        io2.AddMouseWheelEvent(0, 20);
+        h.frame(1);
+      }
+      for (int k = 0; k < 120 && !lastVisible(); ++k) {
+        io2.AddMouseWheelEvent(0, -1);
+        h.frame(2);
+      }
+      check(lastVisible(), "狭い幅でもグラフが見える位置までスクロールできる");
+      const auto& lc = h.u.statsTrend.lastCol;
+      check(lc.b.x <= h.u.statsTrend.chartX1 + 0.5f, "最後の列（予測の終点）が図の幅に収まる");
+      check(h.u.statsTrend.chartX1 < 700, "図は詳細パネルの左に収まる");
+      check(h.u.statsTrend.weekCols.size() == 27, "過去の週は 27 列");
+      io2.AddMousePosEvent((lc.a.x + lc.b.x) / 2, (lc.a.y + lc.b.y) / 2);
+      h.frame(3);
+      ImGuiWindow* tip2 = ImGui::FindWindowByName("##Tooltip_00");
+      check(tip2 && tip2->Active, "狭い幅でも最後の列（予測の週）にマウスを載せると値が出る");
+      io2.AddMousePosEvent(5, 5);
+      h.frame(2);
+      io2.DisplaySize = ImVec2(1440, 900);
+      h.u.detailOpen = false;
+      h.frame(3);
+    }
+    h.c.deleteCurrentProject();
     h.c.deleteCurrentProject();
     h.c.deleteCurrentProject();
     h.c.deleteCurrentProject();

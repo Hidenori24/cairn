@@ -172,6 +172,11 @@ Result<TrendReport> computeTrends(const Tree& T, const std::vector<Issue>& issue
 
     const bool done = R[i].done;
     const OptDay created = dateAt(s, createdCol);
+    // 作成日が基準日より先のものは、どの集計にも入れず件数だけ出す（Created のない課題の Updated・開始日のフォールバックは保つ）
+    if (created && *created > base) {
+      ++out.burn.future;
+      continue;
+    }
 
     // ---- 滞留日数: 未完了で、最後に動いた日（Updated → Start date → Created）から基準日まで ----
     if (!done) {
@@ -199,10 +204,6 @@ Result<TrendReport> computeTrends(const Tree& T, const std::vector<Issue>& issue
     if (!created) {
       ++out.burn.noCreated;
       if (done) ++out.lead.noDates;
-      continue;
-    }
-    if (*created > base) {
-      ++out.burn.future;
       continue;
     }
     if (!done) {

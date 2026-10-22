@@ -431,9 +431,10 @@ void drawBurn(Frame& f, const TrendReport& tr, float W) {
   const int nPast = static_cast<int>(b.weeks.size());
   const int nFut = b.forecast.ok ? std::min(b.forecast.weeksAhead, kFutureWeeks) : 0;
   const int cols = nPast + nFut;
-  const float bw = std::clamp(W / static_cast<float>(cols), u.m.s(12), u.m.s(44));
+  // 列は W に収まるまで縮める（履歴 27 列 + 予測 26 列でも幅を超えない。最小幅は置かない）。狭いほど日付の見出しを間引く
+  const float bw = std::min(W / static_cast<float>(cols), u.m.s(44));
   const float barsH = u.m.s(90), lineH = u.m.s(110), axisH = u.m.s(20);
-  const int every = bw < u.m.s(26) ? (bw < u.m.s(16) ? 4 : 2) : 1;
+  const int every = std::max(1, static_cast<int>(std::ceil(u.m.s(34) / bw)));
   const bool labels = bw >= u.m.s(28);
   const Day lastStart = b.weeks.back().start;
   const auto weekStartOf = [&](int k) { return lastStart + (k - (nPast - 1)) * 7; };
@@ -447,6 +448,7 @@ void drawBurn(Frame& f, const TrendReport& tr, float W) {
   ImGui::Dummy(ImVec2(W, lineH + axisH));
 
   const auto colX = [&](int k) { return p1.x + bw * static_cast<float>(k); };
+  st.chartX1 = p1.x + W;
   const auto xLabels = [&](const ImVec2& p, float chartH) {
     for (int k = 0; k < cols; ++k) {
       const bool now = k == b.nowIndex;
@@ -540,6 +542,7 @@ void drawBurn(Frame& f, const TrendReport& tr, float W) {
   for (int k = 0; k < cols; ++k) {
     const ImVec2 a(colX(k), p1.y), c(colX(k) + bw, p2.y + lineH + axisH);
     if (k < nPast) st.weekCols.push_back({a, ImVec2(c.x, p1.y + barsH)});
+    if (k == cols - 1) st.lastCol = {a, ImVec2(c.x, p1.y + barsH)};  // 予測の週も含めた最後の列
     if (!ImGui::IsMouseHoveringRect(a, c) || !ImGui::IsWindowHovered()) continue;
     if (k < nPast) {
       const TrendWeek& w = b.weeks[static_cast<std::size_t>(k)];
