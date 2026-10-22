@@ -1710,6 +1710,105 @@ int main(int argc, char** argv) {
     ui::applyStyle(*u.t, u.m);
     c.setRemoteStatus(nullptr);
   }
+  // 「今日」ビュー（Issue #72）: 今日・今週のライト／ダーク、全員、詳細パネル、空、多数、幅が狭い画面
+  {
+    std::string csvText =
+        "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Start date,Deadline,Outward issue link (Blocks),Duration (weeks)\n"
+        "1,Epic,認証基盤,,,To Do,High,,2026-12-18,,\n"
+        "2,Task,ログイン画面の実装,1,田中,In Progress,High,2026-10-14,2026-10-23,,0.6\n"
+        "3,Task,パスワード再設定の設計,1,田中,To Do,Medium,,2026-10-16,,0.4\n"
+        "4,Task,セッション管理のレビュー,1,田中,To Do,Medium,,2026-10-19,5,0.2\n"
+        "5,Task,監査ログの出力,1,田中,To Do,Medium,,2026-11-13,,0.6\n"
+        "6,Task,アカウントロックの仕様確認,1,田中,To Do,High,,2026-11-06,,0.4\n"
+        "7,Task,結合テストの準備,1,佐藤,To Do,Medium,,2026-10-21,,0.4\n"
+        "8,Milestone,認証 β 版リリース,1,田中,To Do,High,,2026-10-19,,0\n"
+        "9,Epic,性能改善,,,To Do,Medium,,2026-12-18,,\n"
+        "10,Task,DB インデックスの見直し,9,田中,In Progress,Medium,2026-10-12,2026-10-30,,1.5\n"
+        "11,Task,キャッシュ戦略の調査,9,田中,To Do,Low,,2026-10-22,,0.4\n"
+        "12,Sub-task,スロークエリの洗い出し,9,田中,To Do,Medium,,2026-10-23,,0.4\n"
+        "13,Task,負荷試験の計画,9,佐藤,To Do,Medium,,2026-10-27,,0.4\n"
+        "14,Task,期限なしの調査メモ,,田中,To Do,Low,,,,0.2\n"
+        "15,Task,リリース手順書,1,田中,To Do,Medium,,2026-10-20,,0.6\n"
+        "16,Task,障害対応の引き継ぎ資料の作成と関係者への共有（長い件名の確認用です。右の部品に重ならないこと）,1,田中,To Do,High,,2026-10-22,,0.6\n";
+    c.importText(csvText, "今日のデモ", app::ImportMode::New);
+    c.prefs().me = "田中";
+    c.session()->setBaseDate("2026-10-19");
+    c.afterEdit();
+    c.addLink("2", "設計書", "https://example.com/wiki/login");
+    c.setUi("todayWho", "me");
+    const auto tshot = [&](const std::string& name) {  // 取り込みなどの通知を消してから撮る
+      for (const auto& t : std::vector<app::Toast>(c.toasts())) c.dismissToast(t.id);
+      shot(name);
+    };
+    for (const bool dark : {false, true}) {
+      u.t = dark ? &ui::darkTokens() : &ui::lightTokens();
+      ui::applyStyle(*u.t, u.m);
+      const std::string tag = dark ? "dark" : "light";
+      c.setView(app::View::Today);
+      c.setUi("todayTab", "today");
+      c.setUi("todayWho", "me");
+      tshot("90_today_" + tag);
+      c.setUi("todayTab", "week");
+      tshot("91_today_week_" + tag);
+      c.setUi("todayWho", "all");
+      tshot("92_today_week_all_" + tag);
+      c.setUi("todayTab", "today");
+      u.detailOpen = true;
+      c.select("3");
+      tshot("93_today_all_detail_" + tag);
+      u.detailOpen = false;
+      c.clearSelection();
+    }
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    // 基準日が今日と違う案内・コンパクト・高 DPI
+    c.setUi("todayWho", "me");
+    c.session()->setBaseDate("2026-10-12");
+    c.afterEdit();
+    u.m.compact = true;
+    tshot("94_today_base_compact");
+    c.setUi("todayTab", "week");
+    tshot("95_today_week_base_compact");
+    u.m.compact = false;
+    u.m.scale = 1.5f;
+    ui::applyStyle(*u.t, u.m);
+    tshot("96_today_week_hidpi");
+    u.m.scale = 1.0f;
+    ui::applyStyle(*u.t, u.m);
+    c.session()->setBaseDate("2026-10-19");
+    c.afterEdit();
+    // 幅の狭い画面（960 + 詳細パネル）
+    io.DisplaySize = ImVec2(960, 600);
+    c.setUi("todayTab", "today");
+    u.detailOpen = true;
+    c.select("2");
+    tshot("97_today_narrow_detail");
+    c.setUi("todayTab", "week");
+    tshot("98_today_week_narrow_detail");
+    u.detailOpen = false;
+    c.clearSelection();
+    io.DisplaySize = ImVec2(1440, 900);
+    // 担当者名が合わない（「自分」の課題がない）・空
+    c.prefs().me = "いない人";
+    c.setUi("todayTab", "today");
+    tshot("99_today_nomine");
+    c.prefs().me = "田中";
+    c.createProject(app::SampleKind::Empty, "空のプロジェクト", "");
+    c.setView(app::View::Today);
+    c.setUi("todayWho", "all");
+    tshot("99_today_empty");
+    // 多数（5,000 件）
+    {
+      auto g = generateProject({5000, 7});
+      c.importText(exportAppCsv(g.issues, g.meta), "大きい", app::ImportMode::New);
+      c.setView(app::View::Today);
+      c.setUi("todayTab", "today");
+      c.setUi("todayWho", "all");
+      tshot("99_today_many");
+      c.setUi("todayTab", "week");
+      tshot("99_today_many_week");
+    }
+  }
   // 編集中のロック（Issue #62）: 他の人が編集中のプロジェクトを読み取り専用で開いた画面（帯・古いロック・引き継ぎの確認・アプリの設定）
   {
     MemLockStore ls{fs};

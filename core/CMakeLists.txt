@@ -33,6 +33,7 @@ add_library(roadmap_core STATIC
   src/stats.cpp
   src/load.cpp
   src/trends.cpp
+  src/today.cpp
   src/stamps.cpp
   src/theme_colors.cpp
   src/gantt_geom.cpp

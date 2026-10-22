@@ -524,6 +524,14 @@ void drawListView(Frame& f, ImVec2 size) {
   // 見える範囲の行だけを描く（仮想化）
   const float top = headH + noteH;
   const float viewH = ImGui::GetWindowHeight();
+  if (!u.revealId.empty()) {  // 「今日」ビューの行のダブルクリック: その課題の行が見える位置までスクロールする
+    for (std::size_t k = 0; k < rows.size(); ++k)
+      if (T.ids[rows[k].id] == u.revealId) {
+        ImGui::SetScrollY(std::max(0.f, top + h * static_cast<float>(k) - viewH / 3));
+        break;
+      }
+    u.revealId.clear();
+  }
   const int first = std::max(0, static_cast<int>((scrollY - top) / h) - 1);
   const int last = std::min(static_cast<int>(rows.size()), static_cast<int>((scrollY + viewH - top) / h) + 2);
   {
