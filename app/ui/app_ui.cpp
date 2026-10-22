@@ -695,6 +695,9 @@ void drawTopBar(Frame& f) {
     if (ImGui::MenuItem("HTML に書き出す…", nullptr, false, s != nullptr && s->tree() != nullptr)) openDialog(f, Dlg::ExportHtml);
     if (ImGui::MenuItem("週次レポート…", nullptr, false, s != nullptr && s->tree() != nullptr)) openDialog(f, Dlg::Weekly);
     ImGui::Separator();
+    if (ImGui::MenuItem("ベースラインを保存…", nullptr, false, s != nullptr && s->tree() != nullptr)) openDialog(f, Dlg::BaselineSave);
+    if (ImGui::MenuItem("ベースラインの管理…", nullptr, false, s != nullptr)) openDialog(f, Dlg::BaselineManage);
+    ImGui::Separator();
     ImGui::TextDisabled("テーマ");
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"auto", "自動"}, {"light", "ライト"}, {"dark", "ダーク"}})
       if (ImGui::MenuItem(l, nullptr, c.prefs().theme == k)) c.setTheme(k);
@@ -818,6 +821,17 @@ void drawToolBar(Frame& f) {
         if (k == cur) pv = l;
       if (combo("##level", u.m.s(110), pv.c_str(), items, cur)) c.setUi("level", cur);
     }
+  }
+  if ((v == View::Gantt || v == View::List || v == View::Stats) && !s->baselines().list.empty()) {
+    // 表示するベースライン（計画との差の基準）。ガント・リスト・統計と、HTML・週次レポートに効く
+    ImGui::SameLine();
+    std::vector<std::pair<std::string, std::string>> items = {{"", "計画: 表示しない"}};
+    for (const Baseline& b : s->baselines().list) items.emplace_back(b.id, "計画: " + b.name);
+    std::string cur = s->baselines().shown, pv = "計画: 表示しない";
+    for (const auto& [k, l] : items)
+      if (k == cur) pv = l;
+    if (combo("##baseline", u.m.s(170), pv.c_str(), items, cur)) c.showBaseline(cur);
+    tip("計画（ベースライン）と比べて、ずれた分を出します");
   }
   if (v == View::Gantt || v == View::List) {
     ImGui::SameLine();

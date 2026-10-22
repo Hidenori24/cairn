@@ -1272,6 +1272,110 @@ int main(int argc, char** argv) {
     c.createProject(app::SampleKind::Empty, "空", "");
     dumpWeekly("weekly_empty", WeeklyOptions{});
   }
+  // ベースライン比較（Issue #53）: ガント・リスト・統計（ライト・ダーク）と、保存・管理のダイアログ、HTML・週次の出力
+  {
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    c.createProject(app::SampleKind::Hierarchy, "階層デモ（セキュアブート）", "DEV");
+    c.setView(app::View::Gantt);
+    c.clearSelection();
+    c.setUi("zoom", "week");
+    c.setUi("colorBy", "root");
+    Session* bs = c.session();
+    bs->setBaseDate("2026-10-19");
+    c.afterEdit();
+    // 計画を保存してから、いくつかの課題を延ばし・縮め・消し・足す
+    (void)c.saveBaseline("キックオフ");
+    std::vector<std::string> leaves;
+    for (int id : bs->tree()->leafOrder) {
+      const std::size_t k = static_cast<std::size_t>(id);
+      if (bs->tree()->kind[k] == Kind::Ms || bs->rows()->at(k).done) continue;
+      leaves.push_back(bs->tree()->ids[k]);
+    }
+    for (std::size_t q = 0; q < leaves.size(); ++q) {
+      const std::string id = leaves[q];
+      if (q % 5 == 0) bs->setField(id, [](Issue& is) { is.durW = (is.durW ? *is.durW : 1.0) + 2.0; });        // 遅れ
+      else if (q % 5 == 2) bs->setField(id, [](Issue& is) { is.durW = std::max(0.2, (is.durW ? *is.durW : 1.0) - 0.4); });  // 早まり
+    }
+    if (leaves.size() > 3) bs->deleteIssues({leaves[3]});  // 最後の課題を消すと、次に足す課題が同じ Issue Id になるので別の課題を消す
+    bs->addIssue("", "", "追加した課題");
+    c.afterEdit();
+    c.setUiSub("cols", "plan", true);
+    c.select(leaves.empty() ? std::string() : leaves[0]);
+    // 通知が重なって見づらいので、画面の確認の前に片づける
+    const auto clearToasts = [&] {
+      for (const auto& t : std::vector<app::Toast>(c.toasts())) c.dismissToast(t.id);
+    };
+    // 統計は「計画との差」の節が見える位置までスクロールする
+    const auto scrollStatsToPlan = [&] {
+      ImGuiIO& sio = ImGui::GetIO();
+      sio.AddMousePosEvent(700, 450);
+      const auto visible = [&] {
+        return !u.statsPlan.lateRows.empty() && u.statsPlan.lateRows[0].a.y > 200 && u.statsPlan.lateRows[0].b.y < 700;
+      };
+      for (int k = 0; k < 200 && !visible(); ++k) {
+        const bool up = u.statsPlan.lateRows.empty() || u.statsPlan.lateRows[0].a.y <= 200;
+        sio.AddMouseWheelEvent(0, up ? 2.f : -2.f);
+        frames(2);
+      }
+    };
+    clearToasts();
+    shot("64_baseline_gantt");
+    c.setView(app::View::List);
+    shot("64c_baseline_list");
+    c.setView(app::View::Stats);
+    frames(3);
+    scrollStatsToPlan();
+    shot("64e_baseline_stats");
+    c.setView(app::View::Gantt);
+    u.dlg = ui::Dlg::BaselineSave;
+    u.dlgOpening = true;
+    shot("64g_baseline_save_dialog");
+    u.dlg = ui::Dlg::None;
+    (void)c.saveBaseline("v1.0 合意");
+    clearToasts();
+    u.dlg = ui::Dlg::BaselineManage;
+    u.dlgOpening = true;
+    shot("64h_baseline_manage_dialog");
+    u.dlg = ui::Dlg::None;
+    c.showBaseline(bs->baselines().list[0].id);
+    // ダーク
+    u.t = &ui::darkTokens();
+    ui::applyStyle(*u.t, u.m);
+    shot("64b_baseline_gantt_dark");
+    c.setView(app::View::List);
+    shot("64d_baseline_list_dark");
+    c.setView(app::View::Stats);
+    frames(3);
+    scrollStatsToPlan();
+    shot("64f_baseline_stats_dark");
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    // 書き出し（ブラウザで開いて確かめる）
+    {
+      ExportOptions eo;
+      const auto html = c.buildReport(eo);
+      if (html.ok()) {
+        std::ofstream o(out + "/html_baseline.html", std::ios::binary);
+        o << html.value();
+      }
+      eo.dark = true;
+      const auto dark = c.buildReport(eo);
+      if (dark.ok()) {
+        std::ofstream o(out + "/html_baseline_dark.html", std::ios::binary);
+        o << dark.value();
+      }
+      WeeklyOptions wo;
+      wo.sections.baseline = true;
+      for (const bool html2 : {false, true}) {
+        const auto text = c.renderWeekly(wo, html2);
+        if (text.ok()) {
+          std::ofstream o(out + (html2 ? "/weekly_baseline.html" : "/weekly_baseline.md"), std::ios::binary);
+          o << text.value();
+        }
+      }
+    }
+  }
   ImGui::DestroyContext();
   return 0;
 }

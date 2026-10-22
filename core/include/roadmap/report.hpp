@@ -44,6 +44,7 @@ struct ExportOptions {
   std::string colorBy = "root";      // root / float / asg
   ReportScope scope = ReportScope::All;
   bool showDeps = true;              // ガントに依存の矢印を出す
+  bool baseline = true;              // 表示するベースラインがあれば、ガントに計画のバーを、統計に「計画との差」の節を出す
   std::size_t maxGanttRows = kReportMaxGanttRows;  // テストで小さくできる
 };
 

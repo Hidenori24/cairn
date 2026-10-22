@@ -3023,6 +3023,273 @@ int main() {
     h.c.deleteCurrentProject();
     h.frame(2);
   }
+  // ベースライン比較（Issue #53）: 保存ダイアログ → 一覧 → ガントの計画のバー → リストの列と絞り込み → 統計の節 → 削除 → HTML・週次
+  {
+    h.c.createProject(app::SampleKind::Hierarchy, "計画/テスト", "BL");
+    h.c.setView(app::View::Gantt);
+    h.c.clearSelection();
+    h.c.clearFilter();
+    h.frame(3);
+    Session* s = h.c.session();
+    check(s && s->baselines().list.empty(), "はじめはベースラインがない");
+    check(s->baselineCompare() == nullptr, "ベースラインがなければ比較もない");
+    h.frame(2);
+    check(h.u.planGeom.empty(), "ベースラインがなければ計画のバーは出ない");
+    // 「…」のメニュー相当のコマンドパレットから保存ダイアログを開く
+    const auto openByPalette = [&](const char* query) {
+      h.u.paletteOpen = true;
+      h.u.paletteFocus = true;
+      h.u.paletteQuery = query;
+      h.frame(3);
+      h.key(ImGuiKey_Enter);
+      h.frame(3);
+    };
+    openByPalette("ベースラインを保存");
+    check(h.u.dlg == ui::Dlg::BaselineSave, "コマンドパレットの「ベースラインを保存…」でダイアログが開く");
+    check(h.u.dName == "2026-10-19 の計画", "名前は日付入りの既定値");
+    {
+      // 入力欄がアクティブなので、外から書き換えずに打つ（Ctrl+A で全部選んで置き換える）
+      ImGuiIO& io = ImGui::GetIO();
+      io.AddKeyEvent(ImGuiMod_Ctrl, true);
+      io.AddKeyEvent(ImGuiKey_A, true);
+      h.frame();
+      io.AddKeyEvent(ImGuiKey_A, false);
+      io.AddKeyEvent(ImGuiMod_Ctrl, false);
+      io.AddInputCharactersUTF8("キックオフ");
+      h.frame(2);
+    }
+    h.key(ImGuiKey_Enter);
+    h.frame(3);
+    check(h.u.dlg == ui::Dlg::None, "Enter で保存してダイアログが閉じる");
+    check(s->baselines().list.size() == 1 && s->baselines().list[0].name == "キックオフ", "保存したベースラインが一覧にある");
+    check(s->shownBaseline() != nullptr, "保存したベースラインをそのまま表示する");
+    // 管理ダイアログ（一覧）
+    openByPalette("ベースラインの管理");
+    check(h.u.dlg == ui::Dlg::BaselineManage, "コマンドパレットの「ベースラインの管理…」でダイアログが開く");
+    h.frame(3);
+    {
+      const ImGuiWindow* w = ImGui::FindWindowByName("###dlg");
+      check(w != nullptr && w->Active, "管理ダイアログを描いた");
+    }
+    h.key(ImGuiKey_Escape);
+    h.frame(2);
+    check(h.u.dlg == ui::Dlg::None, "Esc で閉じる");
+
+    // ガント: 計画のバーが出る（描いた矩形の数・位置）。変えていないので全部ぴったり
+    h.frame(3);
+    check(!h.u.planGeom.empty(), "ガントに計画のバーが出る");
+    check(h.u.planGeom.size() == h.u.barGeom.size(), "見えている行の数だけ計画のバーがある");
+    {
+      bool below = true, aligned = true, noLabel = true;
+      for (const auto& pg : h.u.planGeom) {
+        const auto it = std::find_if(h.u.barGeom.begin(), h.u.barGeom.end(), [&](const ui::UiState::BarGeom& b) { return b.id == pg.id; });
+        if (it == h.u.barGeom.end()) {
+          below = false;
+          continue;
+        }
+        below = below && pg.y0 > it->cy && pg.y1 > pg.y0;
+        aligned = aligned && (std::abs(pg.xl - it->xl) < 1.5f || pg.milestone);
+        noLabel = noLabel && pg.label.empty();
+      }
+      check(below, "計画のバーは現在のバーの下にある");
+      check(aligned, "日程を変えていなければ計画のバーは現在のバーと同じ位置から始まる");
+      check(noLabel, "ぴったりなら差の文字は出ない");
+    }
+    // 末端の未完了の課題を延ばす（遅れ）
+    std::string slip;
+    {
+      const Tree& T = *s->tree();
+      for (int id : T.leafOrder)
+        if (T.kind[static_cast<std::size_t>(id)] == Kind::Task && T.cat[static_cast<std::size_t>(id)] == Cat::Todo) {
+          slip = T.ids[static_cast<std::size_t>(id)];
+          break;
+        }
+    }
+    check(!slip.empty(), "延ばせる課題がある");
+    check(s->setField(slip, [](Issue& o) { o.durW = (o.durW ? *o.durW : 1.0) + 2.0; }), "課題を延ばす");
+    h.c.afterEdit();
+    h.frame(3);
+    {
+      const BaselineCompare* cmp = s->baselineCompare();
+      check(cmp != nullptr && cmp->sum.late >= 1, "延ばした課題は遅れになる");
+      const auto pg = std::find_if(h.u.planGeom.begin(), h.u.planGeom.end(), [&](const ui::UiState::PlanGeom& g) { return g.id == slip; });
+      const auto bar = std::find_if(h.u.barGeom.begin(), h.u.barGeom.end(), [&](const ui::UiState::BarGeom& b) { return b.id == slip; });
+      check(pg != h.u.planGeom.end() && bar != h.u.barGeom.end(), "延ばした課題の計画のバーと現在のバーを描いた");
+      if (pg != h.u.planGeom.end() && bar != h.u.barGeom.end()) {
+        check(pg->xr < bar->xr - 1.f, "計画のバーの右端は、延びた現在のバーの右端より手前");
+        check(pg->label.rfind("! +", 0) == 0, "遅れは「! +N日」で表す（色だけに頼らない）");
+      }
+    }
+    // ダークでも描ける
+    h.u.t = &ui::darkTokens();
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(3);
+    check(!h.u.planGeom.empty(), "ダークでも計画のバーが出る");
+    h.u.t = &ui::lightTokens();
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(2);
+
+    // リスト: 列「計画との差」を足し、漏斗で絞り込み・並べ替え
+    h.c.setUiSub("cols", "plan", true);
+    h.c.setView(app::View::List);
+    h.frame(3);
+    const std::size_t allLeaves = h.c.visibleLeaves().size();
+    h.u.openColFilter = "plan";
+    h.frame(3);
+    check(h.u.openColFilter.empty(), "列「計画との差」の漏斗が開く（要求を受け取った）");
+    h.key(ImGuiKey_Escape);
+    h.c.columnFilter().toggle("plan", kBaselineValueOnPlan);
+    h.c.columnFilter().toggle("plan", kBaselineValueEarly);
+    h.frame(3);
+    {
+      const auto only = h.c.visibleLeaves();
+      check(!only.empty() && only.size() < allLeaves, "遅れだけに絞り込める");
+      bool allLate = true;
+      for (int id : only) {
+        const BaselineCompare* cmp = s->baselineCompare();
+        allLate = allLate && cmp && cmp->entries[static_cast<std::size_t>(id)].state == BaselineState::Late;
+      }
+      check(allLate, "絞り込んだ行は遅れだけ");
+    }
+    h.u.sortKey = "plan";
+    h.u.sortDir = -1;
+    h.frame(3);
+    h.u.sortDir = 1;
+    h.frame(2);
+    h.u.sortDir = 0;
+    h.u.sortKey.clear();
+    h.c.clearFilter();
+    h.frame(2);
+    check(h.c.visibleLeaves().size() == allLeaves, "絞り込みを解除すると元に戻る");
+    // ガントの左の表にも出せる
+    h.c.setView(app::View::Gantt);
+    h.frame(3);
+
+    // 統計: 「計画との差」の節。遅れの大きい順の行を押すと課題を選んで詳細を開く
+    h.c.setView(app::View::Stats);
+    h.frame(4);
+    check(h.u.statsPlan.drawn && h.u.statsPlan.tiles == 5, "統計に「計画との差」の節が出る");
+    check(!h.u.statsPlan.lateRows.empty(), "遅れの大きい順の行が出る");
+    if (!h.u.statsPlan.lateRows.empty()) {
+      // 見える位置までスクロールする（前のテストのスクロールが残っている）
+      ImGuiIO& io = ImGui::GetIO();
+      io.AddMousePosEvent(700, 450);
+      const auto visible = [&] {
+        return !h.u.statsPlan.lateRows.empty() && h.u.statsPlan.lateRows[0].a.y > 130 && h.u.statsPlan.lateRows[0].b.y < 860;
+      };
+      for (int k = 0; k < 200 && !visible(); ++k) {
+        const bool up = h.u.statsPlan.lateRows.empty() || h.u.statsPlan.lateRows[0].a.y <= 130;
+        io.AddMouseWheelEvent(0, up ? 3.f : -3.f);
+        h.frame(2);
+      }
+      check(visible(), "遅れの大きい順の一覧が見える位置までスクロールできる");
+      if (visible()) {
+        const std::string rid = h.u.statsPlan.lateRows[0].id;
+        check(s->issue(rid) != nullptr, "行は実在の課題");
+        const auto& row = h.u.statsPlan.lateRows[0];
+        const ImVec2 mid((row.a.x + row.b.x) / 2, (row.a.y + row.b.y) / 2);
+        h.u.detailOpen = false;
+        h.c.clearSelection();
+        io.AddMousePosEvent(mid.x, mid.y);
+        h.frame(3);
+        ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+        check(tip && tip->Active, "行にマウスを載せると説明が出る");
+        h.click(mid.x, mid.y);
+        h.frame(2);
+        check(h.u.detailOpen && h.c.selection().size() == 1 && h.c.selection()[0] == rid, "行を押すと課題を選んで詳細を開く");
+        h.u.detailOpen = false;
+        h.c.clearSelection();
+        h.frame(2);
+      }
+    }
+
+    // HTML 書き出し・週次レポート
+    {
+      ExportOptions eo;
+      eo.list = false;
+      const auto html = h.c.buildReport(eo);
+      check(html.ok() && html.value().find("class=\"plan\"") != std::string::npos && html.value().find("計画との差") != std::string::npos,
+            "HTML にガントの計画のバーと統計の節が入る");
+      WeeklyOptions wo;
+      wo.sections.baseline = true;
+      const auto md = h.c.renderWeekly(wo, false);
+      check(md.ok() && md.value().find("## ベースラインとの差") != std::string::npos && md.value().find("キックオフ") != std::string::npos,
+            "週次レポートに「ベースラインとの差」が入る");
+      WeeklyOptions off;
+      check(h.c.renderWeekly(off, false).value().find("ベースラインとの差") == std::string::npos, "週次レポートの既定はオフ");
+    }
+    // 週次レポートのダイアログ: 項目のオン・オフに載る
+    h.c.setView(app::View::Gantt);
+    openByPalette("週次");
+    check(h.u.dlg == ui::Dlg::Weekly, "週次レポートが開く");
+    check(!h.u.wk.sections.baseline && h.u.wkPreview.find("ベースラインとの差") == std::string::npos, "ダイアログの既定ではオフ");
+    h.u.wk.sections.baseline = true;
+    h.frame(3);
+    check(h.u.wkPreview.find("## ベースラインとの差") != std::string::npos, "項目をオンにするとプレビューに出る");
+    h.u.dlg = ui::Dlg::None;
+    h.frame(2);
+    // HTML 書き出しのダイアログ
+    openByPalette("HTML に書き出す");
+    check(h.u.dlg == ui::Dlg::ExportHtml && h.u.rep.baseline, "HTML 書き出しは既定でベースラインを入れる");
+    h.frame(2);
+    h.u.dlg = ui::Dlg::None;
+    h.frame(2);
+
+    // 名前の変更・5 つの上限・削除
+    const std::string firstId = s->baselines().list[0].id;
+    h.u.dlg = ui::Dlg::BaselineManage;
+    h.u.dlgOpening = true;
+    h.u.blRenameId = firstId;
+    h.u.blRenameFocus = true;
+    h.u.dText = "v1.0 合意";
+    h.frame(3);
+    check(h.u.dlg == ui::Dlg::BaselineManage, "名前の変更中も管理ダイアログは開いている");
+    h.u.dlg = ui::Dlg::None;
+    h.u.blRenameId.clear();
+    h.frame(2);
+    check(h.c.renameBaseline(firstId, "v1.0 合意") && s->baselines().list[0].name == "v1.0 合意", "名前を変えられる");
+    for (int i = 0; i < 4; ++i) check(h.c.saveBaseline("追加" + std::to_string(i)).ok(), "5 つまで保存できる");
+    check(!h.c.saveBaseline("6 つ目").ok(), "6 つ目は断る");
+    check(h.c.toasts().back().text.find("5 つまで") != std::string::npos, "断る理由を通知に出す");
+    openByPalette("ベースラインを保存");
+    h.frame(3);
+    check(h.u.dlg == ui::Dlg::BaselineSave, "5 つあっても保存ダイアログは開く（理由を出して保存はできない）");
+    h.key(ImGuiKey_Enter);
+    h.frame(2);
+    check(s->baselines().list.size() == kBaselineMax, "いっぱいのとき Enter では保存されない");
+    h.u.dlg = ui::Dlg::None;
+    h.frame(2);
+    // 表示するベースラインの切り替え
+    h.c.setView(app::View::List);
+    h.frame(3);
+    h.c.showBaseline(s->baselines().list[1].id);
+    h.frame(3);
+    check(s->shownBaseline() && s->shownBaseline()->name == "追加0", "表示するベースラインを切り替えられる");
+    h.c.showBaseline("");
+    h.frame(3);
+    check(s->baselineCompare() == nullptr, "表示しなければ比較は出ない");
+    // 削除の確認 → 削除
+    h.u.blDeleteId = firstId;
+    h.u.dlg = ui::Dlg::ConfirmBaselineDelete;
+    h.u.dlgOpening = true;
+    h.frame(3);
+    check(h.u.dlg == ui::Dlg::ConfirmBaselineDelete, "削除の確認が開く");
+    h.u.dlg = ui::Dlg::None;
+    h.frame(2);
+    check(h.c.deleteBaseline(firstId) && s->baselines().list.size() == kBaselineMax - 1, "削除できる");
+    h.c.showBaseline(s->baselines().list[0].id);
+    h.c.setView(app::View::Gantt);
+    h.frame(3);
+    while (!s->baselines().list.empty()) h.c.deleteBaseline(s->baselines().list[0].id);
+    h.frame(3);
+    check(h.u.planGeom.empty(), "全部削除すると計画のバーも出ない");
+    h.c.setView(app::View::Stats);
+    h.frame(3);
+    check(!h.u.statsPlan.drawn, "統計の節も出ない");
+    h.c.setUiSub("cols", "plan", false);
+    h.c.deleteCurrentProject();
+    h.frame(2);
+  }
   // 空のプロジェクト
   h.c.createProject(app::SampleKind::Empty, "空", "");
   h.frame(3);
@@ -3034,7 +3301,7 @@ int main() {
     const char* files[] = {"app/ui/app_ui.cpp", "app/ui/view_list.cpp", "app/ui/view_gantt.cpp", "app/ui/view_board.cpp",
                            "app/ui/view_goals.cpp", "app/ui/view_stats.cpp", "app/ui/panel_detail.cpp", "app/ui/panel_attach.cpp", "app/ui/palette.cpp", "app/ui/dialogs.cpp",
                            "app/ui/widgets.cpp", "app/ui/strings.hpp", "app/controller/app_controller.cpp",
-                           "core/src/report.cpp", "core/src/weekly.cpp", "core/src/weekly_md.cpp", "core/src/weekly_html.cpp", "core/src/weekly_state.cpp", "core/src/report_gantt.cpp", "core/src/report_stats.cpp", "core/src/report_list.cpp", "core/src/gantt_geom.cpp",
+                           "core/src/report.cpp", "core/src/baseline.cpp", "core/src/weekly.cpp", "core/src/weekly_md.cpp", "core/src/weekly_html.cpp", "core/src/weekly_state.cpp", "core/src/report_gantt.cpp", "core/src/report_stats.cpp", "core/src/report_list.cpp", "core/src/gantt_geom.cpp",
                            "core/src/commands.cpp", "core/src/outline.cpp", "core/src/csv.cpp", "core/src/engine.cpp", "core/src/store.cpp", "core/src/attachments.cpp", "core/src/load.cpp"};
     for (const char* rel : files) {
       std::ifstream in(std::string(ROADMAP_SOURCE_DIR) + "/" + rel, std::ios::binary);

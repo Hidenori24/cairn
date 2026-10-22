@@ -687,6 +687,7 @@ Result<std::string> AppController::buildReport(const ExportOptions& opt) const {
   const Session* s = session_.get();
   if (!s || !s->tree() || !s->rows()) return Error{"プロジェクトが開かれていません"};
   ExportInput in(*s->tree(), s->viewIssues(), *s->rows(), s->calendar());
+  in.baseline = s->baselineCompare();
   in.base = s->baseDay();
   in.meta = &s->meta();
   in.projectName = s->settings().name;
@@ -745,6 +746,7 @@ Result<WeeklyReport> AppController::buildWeekly(const WeeklyOptions& opt) const 
   in.base = base;
   in.projectName = s->settings().name;
   in.prev = weeklyPreviousSnapshot(s->weekly(), base);
+  in.baseline = s->baselineCompare();
   return buildWeeklyReport(in, opt);
 }
 
@@ -799,6 +801,48 @@ Status AppController::exportWeekly(const std::string& path, const WeeklyOptions&
 void AppController::releaseFrame() {
   retiredSessions_.clear();
   if (session_) session_->releaseFrame();
+}
+
+// ---------------------------------------------------------------- ベースライン
+std::string AppController::defaultBaselineName() const { return clock_.todayIso() + " の計画"; }
+
+Result<std::string> AppController::saveBaseline(const std::string& name) {
+  if (!session_) return Error{"プロジェクトが開かれていません"};
+  auto r = session_->addBaseline(name);
+  if (!r.ok()) {
+    toast("ベースラインを保存できません: " + r.error());
+    return r;
+  }
+  afterEdit();
+  const Baseline* b = baselineFind(session_->baselines(), r.value());
+  toast("ベースライン「" + (b ? b->name : name) + "」を保存しました。ガント・リスト・統計に計画との差を出します");
+  return r;
+}
+
+bool AppController::renameBaseline(const std::string& id, const std::string& name) {
+  if (!session_) return false;
+  const Status st = session_->renameBaseline(id, name);
+  if (!st.ok()) {
+    toast("名前を変えられません: " + st.error());
+    return false;
+  }
+  afterEdit();
+  return true;
+}
+
+bool AppController::deleteBaseline(const std::string& id) {
+  if (!session_) return false;
+  const Baseline* b = baselineFind(session_->baselines(), id);
+  const std::string name = b ? b->name : std::string();
+  if (!session_->removeBaseline(id)) return false;
+  afterEdit();
+  toast("ベースライン「" + name + "」を削除しました");
+  return true;
+}
+
+void AppController::showBaseline(const std::string& id) {
+  if (!session_) return;
+  if (session_->showBaseline(id)) afterEdit();
 }
 
 // ---------------------------------------------------------------- 表示状態

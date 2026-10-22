@@ -99,6 +99,16 @@ class AppController {
   // 組み立てて path に書く。成功したら recordWeekly と「フォルダを開く」つきの通知、失敗したら理由を通知する（例外は出さない）
   Status exportWeekly(const std::string& path, const WeeklyOptions& opt, bool html);
 
+  // ---- ベースライン（計画の日程の保存。Issue #53。取り消しの対象外で、project.settings.json に保存する）----
+  // 保存するときの名前の初期値 "2026-10-19 の計画"
+  std::string defaultBaselineName() const;
+  // いまの日程を保存してそのまま表示する。5 つを超えるときは断り、理由を通知して Error を返す
+  Result<std::string> saveBaseline(const std::string& name);
+  bool renameBaseline(const std::string& id, const std::string& name);
+  bool deleteBaseline(const std::string& id);
+  // 表示するベースライン（空 = 表示しない）
+  void showBaseline(const std::string& id);
+
   // ---- 表示状態（settings.ui。取り消しの対象外）----
   View view() const;
   void setView(View v);

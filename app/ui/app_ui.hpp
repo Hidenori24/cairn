@@ -74,7 +74,7 @@ class IPlatform {
 enum class Dlg {
   None, NewProject, EditProject, ConfirmDelete, Import, Export, Folder, Settings, Workload, Warnings, Shortcuts,
   TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete, PasteChildren, AttachOpenWarn, AttachPreview,
-  ExportHtml, Weekly
+  ExportHtml, Weekly, BaselineSave, BaselineManage, ConfirmBaselineDelete
 };
 
 enum class EditField { None, Name, Assignee, Dur, Pred };
@@ -276,6 +276,23 @@ struct UiState {
   };
   std::vector<ArrowGeom> arrowGeom;
   std::string arrowHoverFrom, arrowHoverTo;
+  // ベースライン（Issue #53）: 管理ダイアログで名前を変えている行の id、削除の確認中の id
+  std::string blRenameId, blDeleteId;
+  bool blRenameFocus = false;
+  // 前のフレームのガントの計画のバー（画面の座標。見えている行だけ）。煙テストが描画の有無と位置を知るために使う
+  struct PlanGeom {
+    std::string id;
+    float xl = 0, xr = 0, y0 = 0, y1 = 0;  // 計画のバー（マイルストーンは菱形を囲む四角）
+    bool milestone = false;
+    std::string label;                      // 差の文字（"! +3日" など。出さないときは空）
+  };
+  std::vector<PlanGeom> planGeom;
+  // 前のフレームの統計ビューの「計画との差」の節（煙テストが描画の有無と当たり位置を知るために使う）
+  struct StatsPlan {
+    bool drawn = false;
+    int tiles = 0;                          // 件数のタイルの数
+    std::vector<DropTarget> lateRows;       // 遅れの大きい順の行（id = 課題の Issue Id）
+  } statsPlan;
   // 前のフレームのガントのバーの位置（画面の座標。見えている行だけ）。煙テストが当たり位置を知るために使う
   struct BarGeom {
     std::string id;

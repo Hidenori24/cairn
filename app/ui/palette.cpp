@@ -109,6 +109,8 @@ std::vector<Cmd> buildCommands(Frame& f) {
   });
   if (s && s->tree()) add("プロジェクト", "HTML に書き出す…", nullptr, [&f] { openDialog(f, Dlg::ExportHtml); });
   if (s && s->tree()) add("プロジェクト", "週次レポート…", nullptr, [&f] { openDialog(f, Dlg::Weekly); });
+  if (s && s->tree()) add("計画", "ベースラインを保存…", nullptr, [&f] { openDialog(f, Dlg::BaselineSave); });
+  if (s) add("計画", "ベースラインの管理…", nullptr, [&f] { openDialog(f, Dlg::BaselineManage); });
   add("プロジェクト", "全プロジェクトをバックアップ", nullptr, [&f] {
     f.u.exportKind = "backup";
     openDialog(f, Dlg::Export);

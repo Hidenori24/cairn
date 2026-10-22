@@ -16,9 +16,10 @@ namespace roadmap::ui {
 namespace {
 
 struct ColW {
-  float name = 300, asg = 84, status = 92, dur = 52, flt = 62, pred = 120;
+  float name = 300, asg = 84, status = 92, dur = 52, flt = 62, pred = 120, plan = 96;
   bool showAsg = true, showStatus = true, showDur = true, showFloat = true;
   bool showPred = false;  // 先行の列（既定はオフ）
+  bool showPlan = false;  // 計画との差の列（既定はオフ。表示するベースラインがあるときだけ出る）
 };
 
 ColW readCols(const app::AppController& c) {
@@ -36,18 +37,21 @@ ColW readCols(const app::AppController& c) {
     g("dur", w.dur);
     g("float", w.flt);
     g("pred", w.pred);
+    g("plan", w.plan);
   }
   w.showAsg = c.uiBool("cols", "asg", true);
   w.showStatus = c.uiBool("cols", "status", true);
   w.showDur = c.uiBool("cols", "dur", true);
   w.showFloat = c.uiBool("cols", "float", true);
   w.showPred = c.uiBool("cols", "pred", false);
+  w.showPlan = c.uiBool("cols", "plan", false);
   w.name = std::max(160.f, w.name);
   w.asg = std::max(48.f, w.asg);
   w.status = std::max(64.f, w.status);
   w.dur = std::max(40.f, w.dur);
   w.flt = std::max(48.f, w.flt);
   w.pred = std::max(64.f, w.pred);
+  w.plan = std::max(64.f, w.plan);
   return w;
 }
 
@@ -156,6 +160,8 @@ std::vector<std::string> tipLines(const Session& s, int id) {
   if (T.ownDl[id]) L.push_back("期限 " + fmtLong(*T.ownDl[id]));
   if (!o.assignee.empty()) L.push_back("担当 " + o.assignee);
   if (r.waited) L.push_back("担当者の別作業待ち");
+  if (const BaselineCompare* bc = s.baselineCompare(); bc && static_cast<std::size_t>(id) < bc->entries.size())
+    for (const std::string& l : planTipLines(*bc, bc->entries[static_cast<std::size_t>(id)])) L.push_back(l);
   return L;
 }
 
@@ -208,7 +214,9 @@ void drawGanttView(Frame& f, ImVec2 size) {
     else if (u.colDrag.col == "dur") cw.dur = nw;
     else if (u.colDrag.col == "float") cw.flt = nw;
     else if (u.colDrag.col == "pred") cw.pred = nw;
+    else if (u.colDrag.col == "plan") cw.plan = nw;
   }
+  const BaselineCompare* planCmp = s->baselineCompare();  // 表示するベースラインとの比較（なければ nullptr）
   std::vector<ColDef> cols = {{Col::Grip, u.m.s(18)}, {Col::Name, u.m.s(cw.name)}};
   std::vector<std::pair<std::string, float>> resizable = {{"name", cw.name}};
   if (cw.showPred) cols.push_back({Col::Pred, u.m.s(cw.pred)}), resizable.emplace_back("pred", cw.pred);
@@ -216,6 +224,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
   if (cw.showStatus) cols.push_back({Col::Status, u.m.s(cw.status)}), resizable.emplace_back("status", cw.status);
   if (cw.showDur) cols.push_back({Col::Dur, u.m.s(cw.dur)}), resizable.emplace_back("dur", cw.dur);
   if (cw.showFloat) cols.push_back({Col::Float, u.m.s(cw.flt)}), resizable.emplace_back("float", cw.flt);
+  if (cw.showPlan && planCmp) cols.push_back({Col::Plan, u.m.s(cw.plan)}), resizable.emplace_back("plan", cw.plan);
   float leftW = 0;
   for (const auto& cd : cols) leftW += cd.w;
 
@@ -496,6 +505,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
     }
   };
   std::string hoverTipId;
+  u.planGeom.clear();
   // バーのドラッグ中のプレビュー
   const bool dragging = u.barDrag.active && !u.barDrag.id.empty();
   const int dragIdx = dragging ? T.find(u.barDrag.id) : -1;
@@ -615,6 +625,37 @@ void drawGanttView(Frame& f, ImVec2 size) {
         u.barDrag.origStart = r.asapStart;
         u.barDrag.origFinish = r.asapFinish;
       }
+    }
+    // 計画のバー（ベースライン。Issue #53）: 現在のバーの下に薄く出し、ずれた分を「+3日」「-2日」で書く。
+    // 遅れは色だけに頼らず「+」と「!」でも区別する。位置は core/gantt_geom（書き出しと共有）
+    if (planCmp && static_cast<std::size_t>(id) < planCmp->entries.size()) {
+      const BaselineEntry& pe = planCmp->entries[static_cast<std::size_t>(id)];
+      const bool isMs = !vr.isPar && T.kind[id] == Kind::Ms;
+      const GanttPlanShape ps = ganttPlanShape(ax, shape, pe, isMs, u.m.scale, RH);
+      const ImU32 planCol = withAlpha(u.t->muted, 0.55f);
+      UiState::PlanGeom pg;
+      pg.id = T.ids[id];
+      pg.y0 = y + ps.y0;
+      pg.y1 = y + ps.y1;
+      if (ps.kind == GanttPlanShape::Kind::Bar) {
+        dl->AddRectFilled(ImVec2(ps.x0, pg.y0), ImVec2(ps.x1, pg.y1), planCol, u.m.s(1.5f));
+        pg.xl = ps.x0;
+        pg.xr = ps.x1;
+      } else if (ps.kind == GanttPlanShape::Kind::Milestone) {
+        diamond(dl, ImVec2(ps.msX, (pg.y0 + pg.y1) / 2), u.m.s(3.4f), planCol, 0);
+        pg.milestone = true;
+        pg.xl = ps.msX - u.m.s(3.4f);
+        pg.xr = ps.msX + u.m.s(3.4f);
+      }
+      if (baselineShowLabel(pe)) {
+        const std::string mark = baselineDiffMark(pe);
+        pg.label = (mark.empty() ? std::string() : mark + " ") + baselineDiffText(pe);
+        const ImU32 lc = pe.state == BaselineState::Late ? u.t->late : pe.state == BaselineState::Early ? u.t->ok : u.t->muted;
+        if (pe.state != BaselineState::OnPlan) ImGui::PushFont(u.fontBold);
+        dl->AddText(ImVec2(ps.labelX, cy - ImGui::GetTextLineHeight() / 2), lc, pg.label.c_str());
+        if (pe.state != BaselineState::OnPlan) ImGui::PopFont();
+      }
+      if (ps.kind != GanttPlanShape::Kind::None || !pg.label.empty()) u.planGeom.push_back(std::move(pg));
     }
     // 期限の菱形（白抜き・黒い縁）
     if (shape.hasDeadline) {
