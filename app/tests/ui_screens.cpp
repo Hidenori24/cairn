@@ -206,7 +206,18 @@ int main(int argc, char** argv) {
     }
   };
   // 環境変数 ROADMAP_SHOT_ONLY があれば、その文字で始まる名前の画像だけを書く（ディスクと時間の節約。状態は同じだけ進める）
-  const char* const only = std::getenv("ROADMAP_SHOT_ONLY");
+  std::string onlyBuf;
+#ifdef _MSC_VER
+  {
+    char* v = nullptr;
+    std::size_t n = 0;
+    if (_dupenv_s(&v, &n, "ROADMAP_SHOT_ONLY") == 0 && v) onlyBuf = v;
+    std::free(v);
+  }
+#else
+  if (const char* v = std::getenv("ROADMAP_SHOT_ONLY")) onlyBuf = v;
+#endif
+  const char* const only = onlyBuf.empty() ? nullptr : onlyBuf.c_str();
   const auto shot = [&](const std::string& name) {
     frames(3);
     if (only && name.rfind(only, 0) != 0) return;
