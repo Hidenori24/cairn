@@ -69,6 +69,13 @@ std::vector<Notice> Session::takeNotices() {
 }
 void Session::notify(std::string t, NoticeAction a) { notices_.push_back({std::move(t), a}); }
 
+bool Session::refuseReadOnly() {
+  if (!readOnly_) return false;
+  const char* const msg = "読み取り専用で開いているため、変更できません";
+  if (notices_.empty() || notices_.back().text != msg) notify(msg);  // 続けて断っても通知を重ねない
+  return true;
+}
+
 std::optional<std::string> Session::rebuild() {
   cal_ = Calendar::fromText(P_.settings.holidays);
   auto t = buildTree(P_.issues, P_.meta);
@@ -115,6 +122,7 @@ void Session::stampEdits(const Snapshot& before, const std::unordered_set<std::s
 }
 
 bool Session::mutate(const std::function<void(ProjectData&)>& fn, const std::function<void(Session&)>& post) {
+  if (refuseReadOnly()) return false;
   Snapshot snap = snapshot();
   const auto only = stampOnly_;  // この編集だけに効かせる
   stampOnly_.reset();
@@ -160,7 +168,7 @@ void Session::endBatch() {
 }
 
 bool Session::undo() {
-  if (undo_.empty()) return false;
+  if (undo_.empty() || refuseReadOnly()) return false;
   redo_.push_back(snapshot());
   restore(std::move(undo_.back()));
   undo_.pop_back();
@@ -171,7 +179,7 @@ bool Session::undo() {
 }
 
 bool Session::redo() {
-  if (redo_.empty()) return false;
+  if (redo_.empty() || refuseReadOnly()) return false;
   undo_.push_back(snapshot());
   restore(std::move(redo_.back()));
   redo_.pop_back();
@@ -221,6 +229,7 @@ bool Session::isCollapsed(const std::string& id) const {
 void Session::touchUi() { persist(); }
 
 void Session::setWeeklyNotes(const std::string& notes) {
+  if (readOnly_) return;  // 週報の下書きの所感は、読み取り専用のあいだは覚えない（通知は出さない。書き出し側が呼ぶため）
   const std::string clean = weeklySanitizeNotes(notes);
   if (clean == P_.settings.weekly.notes) return;
   P_.settings.weekly.notes = clean;
@@ -228,11 +237,13 @@ void Session::setWeeklyNotes(const std::string& notes) {
 }
 
 void Session::putWeeklySnapshot(WeeklySnapshot s) {
+  if (readOnly_) return;
   weeklyPutSnapshot(P_.settings.weekly, std::move(s));
   persist();
 }
 
 Result<HistoryResult> Session::recordHistory(HistoryMode mode) {
+  if (readOnly_) return Error{"読み取り専用で開いているため、記録できません"};
   if (!comp_) return Error{"日程を計算できていないため、履歴を記録できません"};
   History& h = P_.settings.history;
   const Day today = todayDay();
@@ -252,6 +263,7 @@ Result<HistoryResult> Session::recordHistory(HistoryMode mode) {
 }
 
 Result<std::string> Session::addBaseline(const std::string& name) {
+  if (readOnly_) return Error{"読み取り専用で開いているため、保存できません"};
   if (!comp_) return Error{"日程を計算できていないため、ベースラインを保存できません"};
   auto b = captureBaseline(comp_->issues, *comp_, name, nowDT());
   if (!b.ok()) return Error{b.error()};
@@ -264,6 +276,7 @@ Result<std::string> Session::addBaseline(const std::string& name) {
 }
 
 Status Session::renameBaseline(const std::string& id, const std::string& name) {
+  if (readOnly_) return Error{"読み取り専用で開いているため、変更できません"};
   const Status st = baselineRename(P_.settings.baselines, id, name);
   if (!st.ok()) return st;
   ++baselineRev_;
@@ -272,6 +285,7 @@ Status Session::renameBaseline(const std::string& id, const std::string& name) {
 }
 
 bool Session::removeBaseline(const std::string& id) {
+  if (readOnly_) return false;
   if (!baselineRemove(P_.settings.baselines, id)) return false;
   ++baselineRev_;
   persist();
@@ -968,26 +982,31 @@ int Session::addOutline(const std::string& parentId, const std::vector<OutlineIt
 
 // ---------------------------------------------------------------- 設定
 void Session::setBaseDate(const std::string& iso) {
+  if (refuseReadOnly()) return;
   P_.settings.baseDate = iso;
   rebuild();
   persist();
 }
 void Session::setHolidays(const std::string& t) {
+  if (refuseReadOnly()) return;
   P_.settings.holidays = t;
   rebuild();
   persist();
 }
 void Session::setResource(ResourceLimit r) {
+  if (refuseReadOnly()) return;
   P_.settings.resource = r;
   rebuild();
   persist();
 }
 void Session::setScenario(const std::string& name) {
+  if (refuseReadOnly()) return;
   P_.settings.scenario = name.empty() ? kStdScenario : name;
   rebuild();
   persist();
 }
 void Session::addScenario(const std::string& nameIn) {
+  if (refuseReadOnly()) return;
   const std::string name = text::trim(nameIn);
   if (name.empty() || name == kStdScenario) return;
   auto& sc = P_.meta.scenarios;
@@ -999,12 +1018,14 @@ void Session::addScenario(const std::string& nameIn) {
   notify("シナリオ「" + name + "」を追加しました。期間を変えると、このシナリオだけに保存されます");
 }
 void Session::setNameKey(const std::string& name, const std::string& key) {
+  if (refuseReadOnly()) return;
   if (!name.empty()) P_.settings.name = name;
   P_.settings.key = text::toUpper(key);
   persist();
 }
 
 void Session::replaceIssues(std::vector<Issue> issues, ProjectMeta meta, std::vector<std::string> warns) {
+  if (refuseReadOnly()) return;
   Snapshot snap = snapshot();
   P_.issues = std::move(issues);
   P_.meta = std::move(meta);

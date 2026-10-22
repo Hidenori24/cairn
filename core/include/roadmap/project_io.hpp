@@ -83,6 +83,7 @@ struct Prefs {
   bool confirmDelete = false;  // 課題を削除する前に確かめる
   bool autoBaseToday = false;  // プロジェクトを開いたら基準日を今日に合わせる（起動中、プロジェクトごとに1回）
   bool autoCompleteGitHub = false;  // GitHub のリンクがすべて閉じていたら、確認の直後に自動で完了にする（Issue #61。既定はオフ）
+  bool useLock = true;       // 開いているプロジェクトに編集中のロック（.roadmap.lock）を作り、他の人のロックを見る（Issue #62。既定はオン）
   // 新しい課題の名前（issue_name.hpp）。形式は keep / parentSeq / parentDefault / custom
   std::string newNameFormat = "keep";
   std::string newNameCustom = "{親}の子 {n}";  // 形式が custom のときの形

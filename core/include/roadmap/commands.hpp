@@ -83,6 +83,13 @@ class Session {
   int find(const std::string& id) const;  // 添字（なければ -1）
   const Issue* issue(const std::string& id) const;
 
+  // 読み取り専用（他の人が編集中のロックなど。Issue #62）。立っている間は、課題・設定の変更をすべて断る
+  // （mutate を通る操作・元に戻す/やり直す・置き換えの取り込み・基準日などの設定・履歴/ベースライン/週報の記録）。
+  // 断ったときは version() を進めず、通知を 1 つ出す。表示の状態（ui・折りたたみ・表示するベースライン）は触れる
+  // （メモリ上だけ。保存側が書かない）。添付・リンクのように map を直接書き換える操作は、呼び出し側（AppController）が断る
+  void setReadOnly(bool ro) { readOnly_ = ro; }
+  bool readOnly() const { return readOnly_; }
+
   // 変更のたびに増える（保存の予約・再描画の判断に使う）
   std::uint64_t version() const { return version_; }
   // 課題・メタ情報（CSV に入るもの）を変えた回数。設定だけの変更（表示状態・履歴・ベースラインなど）では進まない。
@@ -226,6 +233,8 @@ class Session {
   void stampEdits(const Snapshot& before, const std::unordered_set<std::string>* only);
   void restore(Snapshot s);
   void persist() { ++version_; }
+  // 読み取り専用なら通知を出して true（呼び出し側は何も変えずに戻る）
+  bool refuseReadOnly();
   Issue newIssue(const std::string& parentId, const std::string& name) const;
   // 引き継ぎを反映する。引き継いだ項目名（「担当者」など）と元（親 / 直前の兄弟）を返す
   std::vector<std::string> applyInherit(Issue& o, const std::string& parentId, const std::string& afterId,
@@ -255,6 +264,7 @@ class Session {
   std::uint64_t version_ = 0;
   std::uint64_t contentVersion_ = 0;
   int batchDepth_ = 0;
+  bool readOnly_ = false;
   std::optional<Snapshot> batchSnap_;
   std::optional<std::unordered_set<std::string>> stampOnly_;  // 次の mutate で Updated を入れる課題を限る（setDeadline）
 };
