@@ -53,6 +53,9 @@ struct LinkPreview {
 // 履歴の記録のしかた（Issue #64）
 enum class HistoryMode { IfMissing, Replace };
 enum class HistoryResult { Recorded, Replaced, Unchanged, AlreadyHave, Skipped };
+// 週の頭のスナップショットの取り方（Issue #70）。IfMissing = その週のものがなければ取る。Replace = 同じ週のものを取り直す
+enum class WeeklyAutoMode { IfMissing, Replace };
+enum class WeeklyAutoResult { Recorded, Replaced, Unchanged, AlreadyHave, Skipped };
 
 class Session {
  public:
@@ -194,6 +197,11 @@ class Session {
   // いまの週の点を記録する。IfMissing = その週の点がなければ追加（あれば何もせず、保存も予約しない。作業が 0 件なら Skipped）。
   // Replace = 同じ週は置き換える（内容が変わらなければ保存を予約しない）。日程を計算できていないときはエラー
   Result<HistoryResult> recordHistory(HistoryMode mode);
+  // 週の頭のスナップショット（自動。手動の weekly() とは別に持つ。取り消しの対象外で、保存はする。Issue #70）。取るのは AppController の 1 か所
+  const WeeklyAuto& weeklyAuto() const { return P_.settings.weeklyAuto; }
+  // いま（IClock の今日の週）のスナップショットを取る。IfMissing = その週のものがなければ追加（あれば何もせず、保存も予約しない。
+  // 作業が 0 件なら Skipped）。Replace = 取り直す（内容が変わらなければ保存を予約しない）。日程を計算できていないときはエラー
+  Result<WeeklyAutoResult> recordWeeklyAuto(WeeklyAutoMode mode);
   // ベースライン（計画の日程の保存。取り消しの対象外で、保存はする。Issue #53）
   const BaselineSet& baselines() const { return P_.settings.baselines; }
   const Baseline* shownBaseline() const { return baselineShown(P_.settings.baselines); }

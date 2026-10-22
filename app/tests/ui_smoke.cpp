@@ -4037,6 +4037,36 @@ int main() {
     check(h.u.wkPreview.find("## サマリー") != std::string::npos && h.u.wkPreview.find("## 今週の完了") != std::string::npos, "既定は今週・全項目");
     check(h.u.wkError.empty(), "エラーなし");
     check(h.u.wk.notes.empty() && h.c.weeklyNotes().empty(), "所感は空から始まる");
+    // 週の頭の自動スナップショット（Issue #70）: 週報を一度も保存していなくても「先週から変わったこと」が出る
+    check(h.c.session()->weekly().snaps.empty() && h.c.session()->weeklyAuto().snaps.size() == 1, "週報は未保存で、開いたとき週の頭が自動で入っている");
+    check(h.u.wkPreview.find("## 先週から変わったこと") != std::string::npos && h.u.wkPreview.find("に自動で記録した週の頭の状態との比較です。") != std::string::npos,
+          "週報を保存していなくても「先週から変わったこと」が出る（今週の頭と今）");
+    check(h.u.wkPreview.find("### 新しく完了した課題（0 件）") != std::string::npos, "開いた直後は何も変わっていない");
+    {
+      // 未完了の作業を 1 つ完了にする → 「新しく完了した課題」に出る
+      Session* ws = h.c.session();
+      std::string pick;
+      for (int id : ws->tree()->leafOrder) {
+        const std::size_t k = static_cast<std::size_t>(id);
+        if (ws->tree()->kind[k] == Kind::Ms || ws->rows()->at(k).done) continue;
+        pick = ws->tree()->ids[k];
+        break;
+      }
+      check(!pick.empty(), "未完了の作業がある");
+      if (!pick.empty()) {
+        ws->setStatus(pick, "Done");
+        ws->setField(pick, [&](Issue& is) { is.resolved = parseIso("2026-10-19"); });
+        h.c.afterEdit();
+        h.frame(2);
+        check(h.u.wkPreview.find("### 新しく完了した課題（1 件）") != std::string::npos, "今週の頭のあとに完了した課題が出る");
+        check(h.c.session()->weekly().snaps.empty(), "プレビューでは手動のスナップショットを覚えない");
+        ws->undo();
+        h.c.afterEdit();
+        h.frame(2);
+        check(h.u.wkPreview.find("### 新しく完了した課題（0 件）") != std::string::npos, "元に戻すと出なくなる");
+        check(h.c.session()->weeklyAuto().snaps.size() == 1, "元に戻しても自動のスナップショットは残る（取り消しの対象外）");
+      }
+    }
     // 期間の切り替え
     h.u.wkPeriod = 1;
     h.frame(2);

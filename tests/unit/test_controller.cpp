@@ -642,7 +642,9 @@ TEST_CASE("controller: 週次レポートの組み立て・保存・所感とス
   // 次の週になったら、前の週のスナップショットと比べる
   const auto same = e.c.buildWeekly(WeeklyOptions{});
   REQUIRE(same.ok());
-  CHECK_FALSE(same.value().changes.available);  // 同じ週のスナップショットは比べる相手にしない
+  // 同じ週に手動で書き出したスナップショットは比べる相手にしない。開いたとき取った今週の頭（自動）と比べる（Issue #70）
+  CHECK(same.value().changes.available);
+  CHECK(same.value().changes.sinceAuto);
   e.c.session()->setBaseDate("2026-10-26");
   const auto next = e.c.buildWeekly(WeeklyOptions{});
   REQUIRE(next.ok());
@@ -889,4 +891,185 @@ TEST_CASE("controller: 履歴の記録は設定だけを書く（課題を編集
   e.step(1000);
   CHECK(e.fs.content(csvPath) != original);
   CHECK(e.fs.content(csvPath).find("編集した") != std::string::npos);
+}
+
+// ---------------------------------------------------------------- 週の頭のスナップショット（自動。Issue #70）
+namespace {
+std::string settingsPathOf(MemFileStore& fs, const char* part) {
+  std::string path;
+  for (const std::string& p : fs.paths())
+    if (p.size() > 21 && p.compare(p.size() - 21, 21, "project.settings.json") == 0 && p.find(part) != std::string::npos) path = p;
+  return path;
+}
+}  // namespace
+
+TEST_CASE("controller: 週の頭のスナップショット — 開いたとき自動で取る（同じ週は書き換えない）。CSV は書き換えない") {
+  // 非正規の CSV（CRLF・件名が空の行・解決できない親の参照）。再エクスポートすると形が変わる・行が消える
+  const std::string original =
+      "Issue Id,Issue Type,Summary,Parent,Status,Duration (weeks)\r\n"
+      "1,Task,A,,To Do,1\r\n"
+      "2,Task,,,To Do,1\r\n"
+      "3,Task,C,99,In Progress,2\r\n";
+  Env e;
+  e.fs.put("data/古い/project.csv", original);
+  e.c.start();
+  REQUIRE(e.c.session());
+  e.step(1000);
+  const std::string csvPath = "data/古い/project.csv";
+  const std::string settingsPath = settingsPathOf(e.fs, "古い");
+  REQUIRE_FALSE(settingsPath.empty());
+  // 開いたとき、今週（2026-10-19 の週）の頭が 1 つ入っている。手動のものは入らない
+  REQUIRE(e.c.session()->weeklyAuto().snaps.size() == 1);
+  CHECK(e.c.session()->weeklyAuto().snaps[0].base == *parseIso("2026-10-19"));
+  CHECK(e.c.session()->weeklyAuto().snaps[0].items.size() == 2);  // 件名のない行は取り込み時に読み飛ばされる
+  CHECK(e.c.session()->weekly().snaps.empty());
+  // CSV はバイト列のまま。設定にだけ書かれる
+  CHECK(e.fs.content(csvPath) == original);
+  CHECK(e.fs.content(settingsPath).find("\"weeklyAuto\"") != std::string::npos);
+  CHECK(e.fs.content(settingsPath).find("\"weekly\"") == std::string::npos);
+  for (const std::string& p : e.fs.paths()) CHECK(p.find("_バックアップ") == std::string::npos);  // CSV を書かないので控えも作らない
+  CHECK_FALSE(e.c.hasUnsaved());
+
+  // 同じ週に開き直しても、設定ファイルは書き換えない（内容も書き込みの回数も同じ）
+  const std::string before = e.fs.content(settingsPath);
+  const int writes = e.fs.writeCount();
+  CHECK(e.c.openProject(e.c.currentId()));
+  e.step(1000);
+  CHECK(e.c.session()->weeklyAuto().snaps.size() == 1);
+  CHECK_FALSE(e.c.hasUnsaved());
+  CHECK(e.fs.writeCount() == writes);
+  CHECK(e.fs.content(settingsPath) == before);
+  CHECK(e.fs.content(csvPath) == original);
+
+  // 同じ週の別の日でも同じ
+  e.clk.set(LocalTime{2026, 10, 25, 23, 0, 0});
+  CHECK(e.c.openProject(e.c.currentId()));
+  e.step(1000);
+  CHECK(e.fs.writeCount() == writes);
+
+  // 週が変われば 1 つ足す（設定の 1 回だけ。CSV は書かない）
+  e.clk.set(LocalTime{2026, 10, 26, 9, 0, 0});
+  CHECK(e.c.openProject(e.c.currentId()));
+  e.step(1000);
+  REQUIRE(e.c.session()->weeklyAuto().snaps.size() == 2);
+  CHECK(e.c.session()->weeklyAuto().snaps[1].base == *parseIso("2026-10-26"));
+  CHECK(e.fs.writeCount() == writes + 1);
+  CHECK(e.fs.content(csvPath) == original);
+  CHECK(e.fs.content(settingsPath) != before);
+
+  // 書き出した設定から開き直しても残る（新しい起動）
+  AppController c2{e.fs, e.clk, "data", "roadmap_prefs.json"};
+  c2.start();
+  REQUIRE(c2.session());
+  CHECK(c2.session()->weeklyAuto().snaps.size() == 2);
+  c2.tick();
+  CHECK(e.fs.content(csvPath) == original);
+}
+
+TEST_CASE("controller: 週の頭のスナップショット — 作業のない新規プロジェクトには足さない") {
+  Env e;
+  e.c.start();
+  e.c.createProject(SampleKind::Empty, "空", "EMP");
+  REQUIRE(e.c.session());
+  CHECK(e.c.session()->weeklyAuto().empty());
+  e.step(500);
+  CHECK(e.fs.content(settingsPathOf(e.fs, "空")).find("weeklyAuto") == std::string::npos);
+  // 作業を足してから開き直す → 取る
+  e.c.session()->addIssue("", "", "A");
+  e.c.afterEdit();
+  e.step(500);
+  CHECK(e.c.openProject(e.c.currentId()));
+  CHECK(e.c.session()->weeklyAuto().snaps.size() == 1);
+}
+
+TEST_CASE("controller: 週報の保存は手動のスナップショットを残すだけで、自動のものを置き換えない") {
+  Env e;
+  e.c.start();
+  e.c.createProject(SampleKind::Hierarchy, "階層デモ", "DEV");
+  REQUIRE(e.c.session());
+  REQUIRE(e.c.session()->weeklyAuto().snaps.size() == 1);
+  const WeeklyAuto autoBefore = e.c.session()->weeklyAuto();
+  CHECK(e.c.session()->weekly().snaps.empty());
+  WeeklyOptions opt;
+  CHECK(e.fs.makeDirs("out").ok());
+  CHECK(e.c.exportWeekly("out/週報.md", opt, false).ok());
+  CHECK(e.c.session()->weekly().snaps.size() == 1);  // 手動
+  CHECK(e.c.session()->weeklyAuto() == autoBefore);  // 自動はそのまま
+  // 状況を変えてもう一度保存しても、自動は変わらない
+  Session* s = e.c.session();
+  const int ti = s->tree()->leafOrder.front();
+  const std::string target = s->tree()->ids[static_cast<std::size_t>(ti)];
+  REQUIRE(s->setField(target, [](Issue& o) { o.status = "Done"; o.resolved = parseIso("2026-10-19"); }));
+  e.c.afterEdit();
+  CHECK(e.c.exportWeekly("out/週報2.md", opt, false).ok());
+  CHECK(e.c.session()->weeklyAuto() == autoBefore);
+  e.step(500);
+  const std::string text = e.fs.content(settingsPathOf(e.fs, "階層デモ"));
+  CHECK(text.find("\"weeklyAuto\"") != std::string::npos);
+  CHECK(text.find("\"weekly\"") != std::string::npos);
+}
+
+TEST_CASE("controller: 週報を一度も保存していなくても「先週から変わったこと」が出る（今週の頭から今まで）") {
+  Env e;
+  e.c.start();
+  e.c.createProject(SampleKind::Hierarchy, "階層デモ", "DEV");
+  Session* s = e.c.session();
+  REQUIRE(s);
+  REQUIRE(s->weekly().snaps.empty());
+  REQUIRE(s->weeklyAuto().snaps.size() == 1);
+  // 開いた直後は何も変わっていない（元はある）
+  WeeklyOptions opt;
+  auto r0 = e.c.buildWeekly(opt);
+  REQUIRE(r0.ok());
+  CHECK(r0.value().changes.available);
+  CHECK(r0.value().changes.sinceAuto);
+  CHECK(r0.value().changes.since == *parseIso("2026-10-19"));
+  CHECK(r0.value().changes.newlyDone.total == 0);
+  // 課題を 1 つ完了にすると、「新しく完了した課題」に出る
+  std::string target;
+  for (int ti : s->tree()->leafOrder) {
+    const std::size_t k = static_cast<std::size_t>(ti);
+    if (s->tree()->kind[k] != Kind::Ms && s->viewIssues()[k].status != "Done") {
+      target = s->tree()->ids[k];
+      break;
+    }
+  }
+  REQUIRE_FALSE(target.empty());  // 未完了の作業を 1 つ選ぶ
+  REQUIRE(s->setField(target, [](Issue& o) { o.status = "Done"; o.resolved = parseIso("2026-10-19"); }));
+  e.c.afterEdit();
+  auto r1 = e.c.buildWeekly(opt);
+  REQUIRE(r1.ok());
+  CHECK(r1.value().changes.newlyDone.total == 1);
+  const auto md = e.c.renderWeekly(opt, false);
+  REQUIRE(md.ok());
+  CHECK(md.value().find("## 先週から変わったこと") != std::string::npos);
+  CHECK(md.value().find("自動で記録した") != std::string::npos);
+  // 先週の期間: 先週の頭がなく、今週の頭だけ → 元なし（従来どおり、出ない）
+  WeeklyOptions last;
+  last.period = WeeklyPeriod::LastWeek;
+  const auto rl = e.c.buildWeekly(last);
+  REQUIRE(rl.ok());
+  CHECK_FALSE(rl.value().changes.available);
+}
+
+TEST_CASE("controller: 基準日を今日に合わせたあとの日程で取る（開いた直後の古い基準日のままにしない）") {
+  Env e;
+  e.c.start();
+  const std::string a = e.c.createProject(SampleKind::Hierarchy, "A", "");
+  e.c.session()->setBaseDate("2026-08-03");  // 古い基準日
+  e.c.afterEdit();
+  const std::string b = e.c.createProject(SampleKind::Empty, "B", "");
+  REQUIRE(e.c.flushNow());
+  e.c.prefs().autoBaseToday = true;
+  // 週が変わった月曜に A を開く（A の今週の頭がまだない）
+  e.clk.set(LocalTime{2026, 10, 26, 9, 0, 0});
+  e.c.openProject(b);
+  e.c.openProject(a);
+  CHECK(e.c.session()->settings().baseDate == "2026-10-26");
+  REQUIRE(e.c.session()->weeklyAuto().snaps.size() >= 1);
+  CHECK(e.c.session()->weeklyAuto().snaps.back().base == *parseIso("2026-10-26"));
+  // いまの日程で取り直しても変わらない = 基準日を合わせたあとの日程で取れている
+  const auto again = e.c.session()->recordWeeklyAuto(WeeklyAutoMode::Replace);
+  REQUIRE(again.ok());
+  CHECK(again.value() == WeeklyAutoResult::Unchanged);
 }

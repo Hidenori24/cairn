@@ -80,7 +80,13 @@ struct WeeklyInput {
   const LoadReport& load;
   Day base = 0;
   std::string projectName;
-  const WeeklySnapshot* prev = nullptr;  // 先週のスナップショット（なければ「先週から変わったこと」は出ない）
+  // 比べる元。prev を直接渡したときはそれを使う（until = nullptr なら「いま」と比べる）。
+  // prev がなく memo・autos があるときは、weeklyChooseCompare が期間に合わせて選ぶ（Issue #70）。どれもなければ「先週から変わったこと」は出ない
+  const WeeklySnapshot* prev = nullptr;
+  bool prevAuto = false;                  // prev は自動（週の頭）のスナップショット
+  const WeeklySnapshot* until = nullptr;  // 比べる終わり（自動のスナップショット）。nullptr = いま
+  const WeeklyMemo* memo = nullptr;       // 手動（コピー・保存したとき）のスナップショット
+  const WeeklyAuto* autos = nullptr;      // 自動（週の頭）のスナップショット
   const BaselineCompare* baseline = nullptr;  // 表示するベースラインとの比較（なければ「ベースラインとの差」は出ない）
 };
 
@@ -139,8 +145,9 @@ struct WeeklySummary {
   int doneInPeriod = 0;    // 期間内に完了した作業の数
   int doneNoDate = 0;      // 完了だが完了日のない作業の数（期間の集計に入らない）
   // 先週のスナップショットとの比較
-  bool hasPrev = false;
+  bool hasPrev = false;   // 「いま」と比べたときだけ立つ（自動のスナップショット同士の比較ではサマリーに増減を出さない）
   Day prevBase = 0;
+  bool prevAuto = false;  // 比べた相手は自動（週の頭）のスナップショット
   double progressDelta = 0;  // 進みの増減（0〜1 の差）
   int lateDelta = 0, tightDelta = 0, doneDelta = 0;
   bool hasFinishShift = false;
@@ -157,6 +164,9 @@ struct WeeklyFinishMove {
 struct WeeklyChanges {
   bool available = false;
   Day since = 0;  // 比べた相手（スナップショット）の基準日
+  bool sinceAuto = false;   // 比べた相手は自動（週の頭）のスナップショット（Issue #70）
+  bool hasUntil = false;    // 比べた終わりもスナップショット（いまではない）。件名・担当・余裕はいまの値
+  Day until = 0;            // その基準日
   bool truncated = false;  // 比べた相手が一部の課題だけ
   std::vector<WeeklyFinishMove> finishMoved;  // 見込みの完了日が動いた（動きの大きい順）
   int finishMovedTotal = 0;
@@ -219,11 +229,31 @@ struct WeeklyReport {
   bool empty = false;     // 課題がない
 };
 
+// ---------------------------------------------------------------- 比べる元の選び方（Issue #70）
+struct WeeklyCompare {
+  const WeeklySnapshot* from = nullptr;  // 比べる元（nullptr = 元なし）
+  bool fromAuto = false;
+  const WeeklySnapshot* to = nullptr;    // 比べる終わり（nullptr = いま）
+  explicit operator bool() const { return from != nullptr; }
+};
+// 期間に合わせて比べる元を選ぶ。週は月曜始まりで、自動のスナップショットは取った日の週の「頭の状態」として扱う。
+//  - 今週: 今週の頭の自動と、いま。なければ、今週より前の手動・自動のうち新しいほう（同じ日なら自動）と、いま
+//  - 先週: 先週の頭の自動（なければそれより前で一番近い自動）と、今週の頭の自動（なければ、いま）。
+//          比べる元になる自動がなければ、従来どおり今週より前の手動と、いま
+//  - 任意の範囲: 範囲の始まり以前で一番新しい自動と、範囲の終わり以前で一番新しい自動（範囲が今週に届くなら、いま）。
+//          始まりの自動がなければ従来どおりの手動と、いま。終わりの自動が始まりと同じなら元なし
+// base は基準日（週報の期間と同じ）。どちらも空なら元なし
+WeeklyCompare weeklyChooseCompare(const WeeklyMemo& manual, const WeeklyAuto& autos, Day base, WeeklyPeriod period,
+                                  const WeeklyRange& range);
+
 // 週次レポートを組み立てる。tree・issues・rows の大きさが合わないとき・課題がないときは empty = true の空のレポート
 WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt);
 
 // いまの状態を簡易スナップショットにする（書き出したときに設定へ残す）
 WeeklySnapshot makeWeeklySnapshot(const WeeklyInput& in);
+// 同じ（負荷を使わない）。自動のスナップショットを取る側（Session）が WeeklyInput を作らずに済むように
+WeeklySnapshot makeWeeklySnapshot(const Tree& tree, const std::vector<Issue>& issues, const std::vector<ScheduleRow>& rows,
+                                  const ProjectStats& stats, Day base);
 
 // ---------------------------------------------------------------- レンダラ
 // Markdown の本文に入れる文字列のエスケープ（インライン用）。\ ` * _ ~ [ ] < > & | を \ で打ち消し、改行・制御文字は空白・除去、

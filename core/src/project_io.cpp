@@ -73,7 +73,7 @@ std::string newProjectId(const IClock& clock) {
 }
 
 namespace {
-const char* const kKnownSettingsKeys[] = {"app", "version", "id", "name", "key", "base", "hol", "scn", "scenarios", "res", "ui", "attachments", "weekly", "baselines", "history", "links"};
+const char* const kKnownSettingsKeys[] = {"app", "version", "id", "name", "key", "base", "hol", "scn", "scenarios", "res", "ui", "attachments", "weekly", "weeklyAuto", "baselines", "history", "links"};
 bool isKnownKey(const std::string& k) {
   for (const char* x : kKnownSettingsKeys)
     if (k == x) return true;
@@ -110,6 +110,7 @@ Json settingsToJson(const ProjectRecord& rec) {
   j["ui"] = s.ui;
   if (!s.attachments.empty()) j["attachments"] = attachmentsToJson(s.attachments);
   if (!s.weekly.empty()) j["weekly"] = weeklyToJson(s.weekly);
+  if (!s.weeklyAuto.empty()) j["weeklyAuto"] = weeklyAutoToJson(s.weeklyAuto);
   if (!s.baselines.empty()) j["baselines"] = baselinesToJson(s.baselines);
   if (!s.history.empty()) j["history"] = historyToJson(s.history);
   if (!s.links.empty()) j["links"] = linksToJson(s.links);
@@ -141,6 +142,7 @@ ProjectRecord recordFromSettingsJson(const Json& s, const std::string& csvText, 
   p.ui = withDefaultUi(s.is_object() && s.contains("ui") ? s["ui"] : Json());
   if (s.is_object() && s.contains("attachments")) p.attachments = attachmentsFromJson(s["attachments"]);
   if (s.is_object() && s.contains("weekly")) p.weekly = weeklyFromJson(s["weekly"]);
+  if (s.is_object() && s.contains("weeklyAuto")) p.weeklyAuto = weeklyAutoFromJson(s["weeklyAuto"]);
   if (s.is_object() && s.contains("baselines")) p.baselines = baselinesFromJson(s["baselines"]);
   if (s.is_object() && s.contains("history")) p.history = historyFromJson(s["history"]);
   if (s.is_object() && s.contains("links")) p.links = linksFromJson(s["links"]);

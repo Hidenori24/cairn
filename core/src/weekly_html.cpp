@@ -87,7 +87,7 @@ std::string summaryHtml(const WeeklyReport& r) {
   b += "</div>\n";
   if (s.doneNoDate > 0)
     b += "<p class=\"warn\">完了日のない完了済みの作業が " + std::to_string(s.doneNoDate) + " 件あります（期間の集計には入りません）。</p>\n";
-  if (s.hasPrev) b += "<p class=\"sub\">先週との比較: " + E(fmtLong(s.prevBase)) + " に書き出したときの状態と比べています。</p>\n";
+  if (s.hasPrev) b += "<p class=\"sub\">先週との比較: " + E(snapshotBasisText(s.prevAuto, s.prevBase)) + "と比べています。</p>\n";
   return section("サマリー", b);
 }
 
@@ -218,7 +218,7 @@ std::string assigneesHtml(const WeeklyReport& r) {
 
 std::string changesHtml(const WeeklyReport& r) {
   const WeeklyChanges& c = r.changes;
-  std::string b = "<p class=\"sub\">" + E(fmtLong(c.since)) + " に書き出したときの状態との比較です。";
+  std::string b = "<p class=\"sub\">" + E(changesLeadText(c));
   if (c.truncated) b += "（比べた相手は課題が多かったため、一部の課題だけです）";
   b += "</p>\n";
   b += "<h3>完了の見込み日が動いた課題（" + std::to_string(c.finishMovedTotal) + " 件）</h3>\n";
@@ -226,7 +226,7 @@ std::string changesHtml(const WeeklyReport& r) {
     b += noneP();
   } else {
     Tbl t;
-    t.head({{"課題", false}, {"担当", false}, {"先週の見込み", false}, {"今の見込み", false}, {"変化", false}});
+    t.head({{"課題", false}, {"担当", false}, {"先週の見込み", false}, {c.hasUntil ? "あとの見込み" : "今の見込み", false}, {"変化", false}});
     for (const WeeklyFinishMove& mv : c.finishMoved)
       t.row({{title(mv.did, mv.name), false, "nm"},
              {who(mv.assignee), false, ""},

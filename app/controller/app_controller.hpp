@@ -152,6 +152,15 @@ class AppController {
   };
   void recordHistory(HistoryTrigger why);
 
+  // ---- 週の頭のスナップショット（自動。「先週から変わったこと」の比べる元。Issue #70。取り消しの対象外で、"weeklyAuto" に保存する）----
+  // 取るきっかけ。Session::recordWeeklyAuto を呼ぶのはここ（recordWeeklyAuto）だけにまとめている。
+  // 週報のコピー・保存（recordWeekly）は手動のスナップショットを残すだけで、自動のものは置き換えない
+  enum class WeeklyAutoTrigger {
+    Open,   // プロジェクトを開いたとき: その週のものがなければ取る（あれば何もしない＝開くたびに設定ファイルを書き換えない）
+    Rebase  // 開いた直後に基準日を今日へ合わせたとき: 開いたときに取ったものを、合わせたあとの日程で取り直す
+  };
+  void recordWeeklyAuto(WeeklyAutoTrigger why);
+
   // ---- ベースライン（計画の日程の保存。Issue #53。取り消しの対象外で、project.settings.json に保存する）----
   // 保存するときの名前の初期値 "2026-10-19 の計画"
   std::string defaultBaselineName() const;
@@ -380,6 +389,7 @@ class AppController {
   const IClock& clock_;
   std::unique_ptr<Workspace> ws_;
   std::set<std::string> baseAdjusted_;  // この起動中に基準日を今日に合わせたプロジェクト
+  std::string weeklyAutoOpenedId_;      // 開いた直後に週の頭のスナップショットを取ったプロジェクト（基準日を合わせたら取り直す。Issue #70）
   DataDirChoice dirInfo_;
   std::string exeDir_;
   std::string prefsPath_;
