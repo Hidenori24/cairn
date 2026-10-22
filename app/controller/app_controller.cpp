@@ -268,6 +268,7 @@ void AppController::applyAutoBaseDate() {
   const std::string prev = session_->settings().baseDate;
   if (prev == today) return;
   session_->setBaseDate(today);
+  recordWeeklyAuto(WeeklyAutoTrigger::Rebase);  // 開いたときに取ったものは古い基準日の日程なので、合わせたあとの日程で取り直す
   afterEdit();
   toast("基準日を今日（" + today + "）にしました。前の日付は " + prev + "（アプリの設定で切り替えられます）");
 }
@@ -702,6 +703,7 @@ void AppController::openSession(const std::string& id, bool keepHistory) {
     savePrefs();
   }
   recordHistory(HistoryTrigger::Open);  // 開いたとき、その週の点がなければ記録する（Issue #64）
+  recordWeeklyAuto(WeeklyAutoTrigger::Open);  // 開いたとき、その週の頭のスナップショットがなければ取る（Issue #70）
 }
 
 bool AppController::openProject(const std::string& id) {
@@ -950,7 +952,8 @@ Result<WeeklyReport> AppController::buildWeekly(const WeeklyOptions& opt) const 
   WeeklyInput in(T, issues, rows, s->calendar(), stats, load);
   in.base = base;
   in.projectName = s->settings().name;
-  in.prev = weeklyPreviousSnapshot(s->weekly(), base);
+  in.memo = &s->weekly();  // 比べる元は期間に合わせて選ぶ（手動と自動。weeklyChooseCompare）
+  in.autos = &s->weeklyAuto();
   in.baseline = s->baselineCompare();
   return buildWeeklyReport(in, opt);
 }
@@ -1029,6 +1032,19 @@ void AppController::recordHistory(HistoryTrigger why) {
     case HistoryResult::Unchanged: toast("今週の記録から変わりはありません"); break;
     default: break;
   }
+}
+
+// ---------------------------------------------------------------- 週の頭のスナップショット
+// 自動のスナップショットを取る入口はここだけ。今は読み取り専用で開く仕組みがないので常に取れるが、将来（#62 のロックなど）
+// 読み取り専用のときはここで何もせず返す。保存は設定だけを書く（元の CSV は書き換えない。afterEdit が選ぶ）
+void AppController::recordWeeklyAuto(WeeklyAutoTrigger why) {
+  Session* s = session_.get();
+  if (!s) return;
+  if (why == WeeklyAutoTrigger::Rebase && weeklyAutoOpenedId_ != currentId_) return;  // 開いたときに取っていなければ、取り直すものがない
+  const auto r = s->recordWeeklyAuto(why == WeeklyAutoTrigger::Open ? WeeklyAutoMode::IfMissing : WeeklyAutoMode::Replace);
+  weeklyAutoOpenedId_ = why == WeeklyAutoTrigger::Open && r.ok() && r.value() == WeeklyAutoResult::Recorded ? currentId_ : std::string();
+  if (!r.ok()) return;  // 日程を計算できないときは取らない（通知もしない。週報のほうで比べる元がなくなるだけ）
+  if (r.value() == WeeklyAutoResult::Recorded || r.value() == WeeklyAutoResult::Replaced) afterEdit();
 }
 
 // ---------------------------------------------------------------- ベースライン

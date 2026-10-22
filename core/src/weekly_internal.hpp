@@ -40,6 +40,10 @@ std::string title(const std::string& did, const std::string& name);
 std::string diffPhrase(const WeeklyMilestone& m);
 // 負荷 "85%" / 分からなければ "-"
 std::string loadText(int percent);
+// 比べた相手の言い方: 手動 "2026/10/16(金) に書き出したときの状態" / 自動 "2026/10/19(月) に自動で記録した週の頭の状態"
+std::string snapshotBasisText(bool automatic, Day d);
+// 「先週から変わったこと」の見出しの下の 1 文（「…との比較です。」。終わりもスナップショットなら「…から…までの変化です。」）
+std::string changesLeadText(const WeeklyChanges& c);
 // 「ほか N 件」
 std::string moreText(int omitted);
 // ベースラインの保存日時 "YYYY-MM-DDTHH:MM" → "2026/10/19 09:30"（分からなければ空）

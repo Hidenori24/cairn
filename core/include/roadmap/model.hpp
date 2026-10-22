@@ -136,6 +136,7 @@ struct ProjectSettings {
   BaselineSet baselines;          // ベースライン（計画の日程の保存。空なら settings.json に書かない。共有・バックアップには入れない。Issue #53）
   History history;                // 状況の件数の履歴（週に 1 回まで。空なら settings.json に書かない。共有・バックアップには入れない。Issue #64）
   WeeklyMemo weekly;              // 週次レポートの所感とスナップショット（空なら settings.json に書かない。Issue #43）
+  WeeklyAuto weeklyAuto;          // 開いたときに自動で取る週の頭のスナップショット（"weeklyAuto"。空なら書かない。共有・バックアップには入れない。Issue #70）
   Json ui = Json::object();     // 表示状態。未知のキーも保持
   Json unknown = Json::object();  // settings.json の未知のキー（書き戻す）
 };

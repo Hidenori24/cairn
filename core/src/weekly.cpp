@@ -269,25 +269,47 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
   }
 
   // ---- 先週のスナップショットとの比較 ----
-  if (const WeeklySnapshot* prev = in.prev) {
+  // 比べる元: 直接渡された prev、なければ memo・autos から期間に合わせて選ぶ（Issue #70）。終わり（until）が nullptr なら「いま」
+  WeeklyCompare cmp;
+  if (in.prev) {
+    cmp = {in.prev, in.prevAuto, in.until};
+  } else if (in.memo || in.autos) {
+    static const WeeklyMemo kNoMemo;
+    static const WeeklyAuto kNoAuto;
+    cmp = weeklyChooseCompare(in.memo ? *in.memo : kNoMemo, in.autos ? *in.autos : kNoAuto, in.base, opt.period, r.range);
+  }
+  if (const WeeklySnapshot* prev = cmp.from) {
+    const WeeklySnapshot* until = cmp.to;  // 比べる終わりのスナップショット（nullptr = いま）
     WeeklyChanges& ch = r.changes;
     ch.available = true;
     ch.since = prev->base;
-    ch.truncated = prev->truncated;
-    sm.hasPrev = true;
-    sm.prevBase = prev->base;
-    sm.progressDelta = sm.progress - prev->progress;
-    sm.lateDelta = st.late - prev->late;
-    sm.tightDelta = st.tight - prev->tight;
-    sm.doneDelta = st.done - prev->done;
-    if (prev->finish && st.hasFinish) {
-      sm.hasFinishShift = true;
-      sm.finishShiftDays = cal.floatDays(*prev->finish, st.finish);
+    ch.sinceAuto = cmp.fromAuto;
+    ch.hasUntil = until != nullptr;
+    ch.until = until ? until->base : 0;
+    ch.truncated = prev->truncated || (until && until->truncated);
+    if (!until) {
+      // いまとの比較: サマリーに増減を出す。自動のスナップショット同士の比較では、いまの値と並べると食い違うので出さない
+      sm.hasPrev = true;
+      sm.prevBase = prev->base;
+      sm.prevAuto = cmp.fromAuto;
+      sm.progressDelta = sm.progress - prev->progress;
+      sm.lateDelta = st.late - prev->late;
+      sm.tightDelta = st.tight - prev->tight;
+      sm.doneDelta = st.done - prev->done;
+      if (prev->finish && st.hasFinish) {
+        sm.hasFinishShift = true;
+        sm.finishShiftDays = cal.floatDays(*prev->finish, st.finish);
+      }
     }
 
     std::unordered_map<std::string, const WeeklySnapItem*> before;
     before.reserve(prev->items.size());
     for (const WeeklySnapItem& it : prev->items) before.emplace(it.id, &it);
+    std::unordered_map<std::string, const WeeklySnapItem*> after;  // 比べる終わりがスナップショットのときだけ
+    if (until) {
+      after.reserve(until->items.size());
+      for (const WeeklySnapItem& it : until->items) after.emplace(it.id, &it);
+    }
 
     std::vector<Cand> cLate, cDoneNew;
     std::vector<Cand> cMove;
@@ -298,29 +320,51 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
       const std::size_t k = static_cast<std::size_t>(i);
       if (!T.kids[k].empty() || T.kind[k] == Kind::Ms) continue;
       const ScheduleRow& row = in.rows[k];
+      // 終わり側の状態: いまなら今の行、スナップショットならその中の値（その時点になかった課題は数えない）
+      bool nowDone = row.done, nowLate = !row.done && row.floatDays < 0;
+      OptDay nowFinish = row.asapFinish;
+      if (until) {
+        const auto g = after.find(T.ids[k]);
+        if (g == after.end()) continue;
+        nowDone = g->second->st == 'd';
+        nowLate = g->second->late && !nowDone;
+        nowFinish = g->second->finish;
+      }
       const auto f = before.find(T.ids[k]);
       if (f == before.end()) {
-        ++added;
+        if (!until) ++added;
         continue;
       }
       seenNow.insert(T.ids[k]);
       const WeeklySnapItem& was = *f->second;
-      if (row.done) {
+      if (nowDone) {
         if (was.st != 'd') cDoneNew.push_back({i, in.issues[k].resolved ? *in.issues[k].resolved : 0});
         continue;
       }
-      if (row.floatDays < 0 && !was.late) cLate.push_back({i, row.floatDays});
-      if (was.st != 'd' && was.finish && *was.finish != row.asapFinish) {
+      if (nowLate && !was.late) cLate.push_back({i, row.floatDays});
+      if (was.st != 'd' && was.finish && nowFinish && *was.finish != *nowFinish) {
         // 日付が違えば出す。営業日の差が 0（休業日の変更で土日・休業日をまたいだだけ）でも隠さない
-        const int shift = cal.floatDays(*was.finish, row.asapFinish);
+        const int shift = cal.floatDays(*was.finish, *nowFinish);
         const int mag = shift < 0 ? -shift : shift;
         cMove.push_back({i, -static_cast<std::int64_t>(mag)});  // 動きの大きい順（差が 0 のものは最後）
       }
     }
-    ch.added = prev->truncated ? 0 : added;
     int removed = 0;
-    for (const WeeklySnapItem& it : prev->items)
-      if (seenNow.find(it.id) == seenNow.end()) ++removed;
+    if (until) {
+      // 終わりもスナップショット: 終わりにあって元にない課題が増えた作業、元にあって終わりにない課題が無くなった作業
+      // （いまの課題の木には依らない。どちらかが一部だけのスナップショットなら数え違えるので数えない）
+      if (!ch.truncated) {
+        for (const WeeklySnapItem& it : until->items)
+          if (before.find(it.id) == before.end()) ++added;
+        for (const WeeklySnapItem& it : prev->items)
+          if (after.find(it.id) == after.end()) ++removed;
+      }
+      ch.added = added;
+    } else {
+      ch.added = prev->truncated ? 0 : added;
+      for (const WeeklySnapItem& it : prev->items)
+        if (seenNow.find(it.id) == seenNow.end()) ++removed;
+    }
     ch.removed = removed;
     fill(ch.newlyLate, cLate);
     fill(ch.newlyDone, cDoneNew);
@@ -338,6 +382,10 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
       mv.assignee = cleanText(assigneeOf(i));
       mv.from = f != before.end() && f->second->finish ? *f->second->finish : in.rows[k].asapFinish;
       mv.to = in.rows[k].asapFinish;
+      if (until) {
+        const auto g = after.find(T.ids[k]);
+        if (g != after.end() && g->second->finish) mv.to = *g->second->finish;
+      }
       mv.shiftDays = cal.floatDays(mv.from, mv.to);
       ch.finishMoved.push_back(std::move(mv));
     }
@@ -386,11 +434,45 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
   return r;
 }
 
+WeeklyCompare weeklyChooseCompare(const WeeklyMemo& manual, const WeeklyAuto& autos, Day base, WeeklyPeriod period, const WeeklyRange& range) {
+  const Day thisMon = weeklyMondayOf(base);
+  const WeeklySnapshot* manualPrev = weeklyPreviousSnapshot(manual, base);  // 従来: 基準日の週より前で一番新しい手動
+  const WeeklyCompare legacy{manualPrev, false, nullptr};
+  switch (period) {
+    case WeeklyPeriod::ThisWeek: {
+      if (const WeeklySnapshot* head = weeklyAutoOfWeek(autos, thisMon)) return {head, true, nullptr};
+      const WeeklySnapshot* older = weeklyAutoBefore(autos, thisMon);
+      // 今週の頭がなければ、今週より前の手動・自動のうち新しいほう（同じ日なら自動）
+      if (older && (!manualPrev || older->base >= manualPrev->base)) return {older, true, nullptr};
+      return legacy;
+    }
+    case WeeklyPeriod::LastWeek: {
+      const Day lastMon = thisMon - 7;
+      const WeeklySnapshot* from = weeklyAutoOfWeek(autos, lastMon);
+      if (!from) from = weeklyAutoBefore(autos, lastMon);  // 先週の頭がなければ、より前で一番近い自動
+      if (!from) return legacy;
+      return {from, true, weeklyAutoOfWeek(autos, thisMon)};  // 今週の頭がなければ「いま」
+    }
+    case WeeklyPeriod::Custom: {
+      const WeeklySnapshot* from = weeklyAutoAtOrBefore(autos, range.from);
+      if (!from) return legacy;
+      if (range.to >= thisMon) return {from, true, nullptr};  // 範囲が今週に届く: いま
+      const WeeklySnapshot* to = weeklyAutoAtOrBefore(autos, range.to);
+      if (!to || to == from) return {};  // 始まりと終わりを分けるスナップショットがない: 元なし
+      return {from, true, to};
+    }
+  }
+  return {};
+}
+
 WeeklySnapshot makeWeeklySnapshot(const WeeklyInput& in) {
-  const Tree& T = in.tree;
+  return makeWeeklySnapshot(in.tree, in.issues, in.rows, in.stats, in.base);
+}
+
+WeeklySnapshot makeWeeklySnapshot(const Tree& T, const std::vector<Issue>& issues, const std::vector<ScheduleRow>& rows,
+                                  const ProjectStats& st, Day base) {
   WeeklySnapshot s;
-  s.base = in.base;
-  const ProjectStats& st = in.stats;
+  s.base = base;
   s.progress = std::max(0.0, std::min(1.0, st.progress()));
   s.tasks = st.tasks;
   s.done = st.done;
@@ -398,7 +480,7 @@ WeeklySnapshot makeWeeklySnapshot(const WeeklyInput& in) {
   s.tight = st.tight;
   if (st.hasFinish) s.finish = st.finish;
   const std::size_t n = T.n > 0 ? static_cast<std::size_t>(T.n) : 0;
-  if (n == 0 || in.issues.size() != n || in.rows.size() != n || T.dfs.size() != n || T.kids.size() != n || T.kind.size() != n ||
+  if (n == 0 || issues.size() != n || rows.size() != n || T.dfs.size() != n || T.kids.size() != n || T.kind.size() != n ||
       T.ids.size() != n)
     return s;
   for (int i : T.dfs) {
@@ -413,11 +495,11 @@ WeeklySnapshot makeWeeklySnapshot(const WeeklyInput& in) {
       s.truncated = true;
       break;
     }
-    const ScheduleRow& row = in.rows[k];
+    const ScheduleRow& row = rows[k];
     WeeklySnapItem it;
     it.id = T.ids[k];
     it.st = row.done ? 'd' : row.prog ? 'p' : 't';
-    if (row.done) it.finish = in.issues[k].resolved;
+    if (row.done) it.finish = issues[k].resolved;
     else it.finish = row.asapFinish;
     it.late = !row.done && row.floatDays < 0;
     s.items.push_back(std::move(it));
@@ -537,6 +619,16 @@ std::string diffPhrase(const WeeklyMilestone& m) {
 std::string loadText(int percentValue) { return percentValue < 0 ? std::string("-") : std::to_string(percentValue) + "%"; }
 
 std::string moreText(int omitted) { return "ほか " + std::to_string(omitted) + " 件"; }
+
+std::string snapshotBasisText(bool automatic, Day d) {
+  return fmtLong(d) + (automatic ? " に自動で記録した週の頭の状態" : " に書き出したときの状態");
+}
+
+std::string changesLeadText(const WeeklyChanges& c) {
+  if (!c.hasUntil) return snapshotBasisText(c.sinceAuto, c.since) + "との比較です。";
+  return snapshotBasisText(c.sinceAuto, c.since) + "から、" + snapshotBasisText(true, c.until) +
+         "までの変化です。課題の件名・担当者・余裕はいまの値です。";
+}
 
 std::string baselineAtText(const std::string& at) {
   if (at.size() != 16) return {};
