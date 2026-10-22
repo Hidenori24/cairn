@@ -17,6 +17,39 @@ namespace {
 constexpr std::size_t kNone = static_cast<std::size_t>(-1);
 constexpr std::size_t kTipMaxItems = 6;  // バッジのツールチップに並べるリンクの数（先頭から）
 
+// GitHub の PR・Issue の状態の表示（色だけに頼らず、ラベルの文字で示す）
+struct StatusChip {
+  std::string label;  // 空 = 出さない
+  ImU32 fg = 0, bg = 0;
+};
+StatusChip chipFor(const UiState& u, const app::AppController::RemoteView& v) {
+  using P = app::AppController::RemoteView::Phase;
+  const Tokens& t = *u.t;
+  StatusChip c;
+  switch (v.phase) {
+    case P::Checking: c = {"確認中…", t.muted, t.surface2}; break;
+    case P::Failed: c = {"確認できません", t.late, t.lateBg}; break;
+    case P::Done:
+      c.label = remoteStateLabel(v.info.state);
+      switch (v.info.state) {
+        case RemoteState::Open: c.fg = t.accent, c.bg = t.accentBg; break;
+        case RemoteState::Merged:
+        case RemoteState::ClosedCompleted: c.fg = t.ok, c.bg = t.okBg; break;
+        case RemoteState::ClosedUnmerged:
+        case RemoteState::ClosedNotPlanned: c.fg = t.tight, c.bg = t.tightBg; break;
+        default: c.fg = t.muted, c.bg = t.surface2; break;  // draft
+      }
+      break;
+    default: break;
+  }
+  return c;
+}
+// "2026-10-19T18:36" → "10/19 18:36"
+std::string checkedText(const std::string& at) {
+  if (at.size() < 16) return {};
+  return "確認 " + at.substr(5, 2) + "/" + at.substr(8, 2) + " " + at.substr(11, 5);
+}
+
 void clearEdit(UiState& u) {
   u.linkEditing = false;
   u.linkEditIssue.clear();
@@ -29,6 +62,8 @@ const char* linkIconName(LinkKind kind, bool risky) {
   if (risky) return "warn";
   switch (kind) {
     case LinkKind::Web: return "globe";
+    case LinkKind::GitHubPull: return "gitpr";
+    case LinkKind::GitHubIssue: return "gitissue";
     case LinkKind::Folder: return "folder";
     default: return "file";
   }
@@ -170,6 +205,22 @@ void drawLinksSection(Frame& f, int i) {
   ImGui::PopTextWrapPos();
   ImGui::Spacing();
 
+  // ---- GitHub の状態を確認（GitHub の PR・Issue のリンクがあるときだけ。押したときだけ gh で取りに行く）----
+  u.linkCheckBtn = {{0, 0}, {0, 0}};
+  if (const std::size_t gh = c.githubLinkCount(id); gh > 0) {
+    const bool busy = c.remoteBusy();
+    const bool can = c.remoteAvailable() && !busy;
+    if (!can) ImGui::BeginDisabled();
+    if (ImGui::Button(busy ? "確認中…" : "GitHub の状態を確認")) deferAfterFrame(f, [&f, id] { f.c.checkRemote(id); });
+    u.linkCheckBtn = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
+    if (!can) ImGui::EndDisabled();
+    if (!c.remoteAvailable()) tip("この環境では GitHub の状態を確認できません");
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextDisabled("GitHub のリンク %d 件。gh（GitHub CLI）で、押したときだけ状態を取りに行きます（起動時の自動確認はしません）。", static_cast<int>(gh));
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+  }
+
   // ---- 入力欄 ----
   if (u.linkEditing) ImGui::TextColored(v4(u.t->accent), "リンクを編集中");
   if (u.linkFocusTarget) {
@@ -242,6 +293,7 @@ void drawLinksSection(Frame& f, int i) {
 
   // ---- 一覧 ----
   u.linkRows.clear();
+  u.linkStatusShown.clear();
   u.linkRowsIssue = id;
   u.linkRowsFrame = ImGui::GetFrameCount();
   u.linkRowsClip = {ImGui::GetWindowDrawList()->GetClipRectMin(), ImGui::GetWindowDrawList()->GetClipRectMax()};
@@ -255,7 +307,7 @@ void drawLinksSection(Frame& f, int i) {
   ImGui::TextDisabled("クリックで開く／右クリックでメニュー／つかんで別の課題の行・カードへ離すと移動（Ctrl でコピー）。この一覧の中では並べ替え。");
   ImGui::PopTextWrapPos();
   ImGui::Separator();
-  enum class Act { None, Open, OpenFolder, Copy, Edit, Delete, Up, Down };
+  enum class Act { None, Open, OpenFolder, Check, Copy, Edit, Delete, Up, Down };
   Act act = Act::None;
   std::size_t actIdx = kNone;
   const auto pick = [&act, &actIdx](Act a, std::size_t k) {
@@ -269,6 +321,10 @@ void drawLinksSection(Frame& f, int i) {
     ImGui::PushID(static_cast<int>(k));
     const LinkClass kind = classifyLink(l.target);
     const bool risky = isRiskyTarget(l.target);
+    const bool isGh = linkKindGitHub(kind.kind);
+    const auto rv = isGh ? c.remoteViewOf(l.target) : app::AppController::RemoteView{};
+    const StatusChip chip = chipFor(u, rv);
+    u.linkStatusShown.push_back(chip.label);
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float textH = ImGui::GetTextLineHeight() * 2 + u.m.s(2);
     const float rowH = textH + u.m.s(10);
@@ -302,8 +358,24 @@ void drawLinksSection(Frame& f, int i) {
     const float tx = b0.x + box + u.m.s(8);
     const float tw = W - btns - (tx - p.x) - u.m.s(8);
     const float ty = p.y + (rowH - textH) / 2;
-    dl->AddText(ImVec2(tx, ty), u.t->ink, ellipsize(l.title, tw).c_str());
-    dl->AddText(ImVec2(tx, ty + ImGui::GetTextLineHeight() + u.m.s(2)), u.t->muted, ellipsize(l.target, tw).c_str());
+    // 1 行目: 表示名（GitHub のリンクは右に状態のラベル）。2 行目: 場所（右に確認した日時）
+    float titleW = tw;
+    if (!chip.label.empty()) {
+      const float cw = ImGui::CalcTextSize(chip.label.c_str()).x + u.m.s(14);
+      const float cx = tx + tw - cw;
+      dl->AddRectFilled(ImVec2(cx, ty - u.m.s(1)), ImVec2(cx + cw, ty + ImGui::GetTextLineHeight() + u.m.s(1)), chip.bg, u.m.s(4));
+      dl->AddText(ImVec2(cx + u.m.s(7), ty), chip.fg, chip.label.c_str());
+      titleW = tw - cw - u.m.s(8);
+    }
+    dl->AddText(ImVec2(tx, ty), u.t->ink, ellipsize(l.title, titleW).c_str());
+    float targetW = tw;
+    if (rv.phase == app::AppController::RemoteView::Phase::Done || rv.phase == app::AppController::RemoteView::Phase::Failed) {
+      const std::string ck = checkedText(rv.checkedAt);
+      const float kw = ImGui::CalcTextSize(ck.c_str()).x;
+      dl->AddText(ImVec2(tx + tw - kw, ty + ImGui::GetTextLineHeight() + u.m.s(2)), u.t->muted, ck.c_str());
+      targetW = tw - kw - u.m.s(8);
+    }
+    dl->AddText(ImVec2(tx, ty + ImGui::GetTextLineHeight() + u.m.s(2)), u.t->muted, ellipsize(l.target, targetW).c_str());
     if (beingDragged) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + rowH), withAlpha(u.t->surface, 0.55f));  // つかんでいる行は薄く
     // 行に載せて少し待つと、場所の全体（長いときは折り返す）
     if (hovDetail && !u.attachDrag.active && !ImGui::IsPopupOpen("##lctx")) {
@@ -312,6 +384,8 @@ void drawLinksSection(Frame& f, int i) {
       ImGui::TextUnformatted(l.title.c_str());
       ImGui::TextDisabled("%s", l.target.c_str());
       if (risky) ImGui::TextColored(v4(u.t->tight), "実行ファイルやスクリプトです。開く前に確認します");
+      if (rv.phase == app::AppController::RemoteView::Phase::Failed) ImGui::TextColored(v4(u.t->late), "確認できませんでした（%s）", rv.error.c_str());
+      else if (rv.phase == app::AppController::RemoteView::Phase::Done) ImGui::TextDisabled("%s（保存しません。起動のたびに未確認に戻ります）", checkedText(rv.checkedAt).c_str());
       ImGui::PopTextWrapPos();
       ImGui::EndTooltip();
     }
@@ -325,6 +399,7 @@ void drawLinksSection(Frame& f, int i) {
       };
       if (item("開く", true)) pick(Act::Open, k);
       if (item("場所（フォルダ）を開く", hasFolder)) pick(Act::OpenFolder, k);
+      if (isGh && item("状態を確認", c.remoteAvailable() && rv.phase != app::AppController::RemoteView::Phase::Checking)) pick(Act::Check, k);
       if (item("コピー", true)) pick(Act::Copy, k);
       ImGui::Separator();
       if (item("編集", true)) pick(Act::Edit, k);
@@ -350,6 +425,7 @@ void drawLinksSection(Frame& f, int i) {
   switch (act) {
     case Act::Open: openLinkAt(f, id, k, false); break;
     case Act::OpenFolder: openLinkAt(f, id, k, true); break;
+    case Act::Check: deferAfterFrame(f, [&f, id, k] { f.c.checkRemote(id, k); }); break;
     case Act::Copy: {
       // 場所をクリップボードへ。通知にも場所は出さない
       if (f.p.setClipboardText(list[k].target)) c.toast("場所をクリップボードにコピーしました");

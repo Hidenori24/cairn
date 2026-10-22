@@ -1498,6 +1498,68 @@ int main(int argc, char** argv) {
     u.t = &ui::lightTokens();
     ui::applyStyle(*u.t, u.m);
   }
+  // GitHub の PR・Issue のリンクの状態（Issue #61）: 状態のラベル（open / draft / merged / closed）・失敗・未確認、
+  // 完了の提案の通知（注意つき）。ライト・ダークの両方
+  {
+    c.createProject(app::SampleKind::Hierarchy, "GitHub の画面", "GHS");
+    auto fake = std::make_shared<FakeRemoteStatus>();
+    c.setRemoteStatus(fake, false);
+    const auto info = [](RemoteState s, const char* at = "") {
+      RemoteInfo r;
+      r.state = s;
+      r.closedAt = at;
+      return r;
+    };
+    const auto key = [](const char* url) { return parseGitHubUrl(url)->canonicalUrl(); };
+    const char* const kUrls[] = {"https://github.com/acme/app/pull/101", "https://github.com/acme/app/pull/102", "https://github.com/acme/app/issues/103",
+                                 "https://github.com/acme/app/pull/104", "https://github.com/acme/app/pull/105", "https://github.com/acme/app/issues/106"};
+    c.addLink("11", "ログイン画面の実装", kUrls[0]);
+    c.addLink("11", "古い案（取り下げ）", kUrls[1]);
+    c.addLink("11", "仕様の確認 Issue", kUrls[2]);
+    c.addLink("11", "レビュー待ち", kUrls[3]);
+    c.addLink("11", "下書き", kUrls[4]);
+    c.addLink("11", "まだ確認していない Issue", kUrls[5]);
+    c.addLink("11", "設計書", "https://example.com/wiki/design");
+    fake->set(key(kUrls[0]), info(RemoteState::Merged, "2026-10-15T03:00:00Z"));
+    fake->set(key(kUrls[1]), info(RemoteState::ClosedUnmerged, "2026-10-16T03:00:00Z"));
+    fake->set(key(kUrls[2]), info(RemoteState::ClosedNotPlanned, "2026-10-14T03:00:00Z"));
+    fake->set(key(kUrls[3]), info(RemoteState::Open));
+    fake->set(key(kUrls[4]), info(RemoteState::Draft));
+    // 12 番は PR 2 件が閉じている（マージなしを含む → 完了の提案）。13 番は失敗
+    c.addLink("12", "機能 A", "https://github.com/acme/app/pull/201");
+    c.addLink("12", "機能 A の取り下げた案", "https://github.com/acme/app/pull/202");
+    fake->set(key("https://github.com/acme/app/pull/201"), info(RemoteState::Merged, "2026-10-12T03:00:00Z"));
+    fake->set(key("https://github.com/acme/app/pull/202"), info(RemoteState::ClosedUnmerged, "2026-10-13T03:00:00Z"));
+    c.addLink("13", "つながらない PR", "https://github.com/acme/app/pull/301");
+    fake->fail(key("https://github.com/acme/app/pull/301"), "gh が見つかりません。インストールして、gh auth login でログインしてください");
+    for (std::size_t k = 0; k < 5; ++k) c.checkRemote("11", k);
+    frames(4);
+    c.clearSelection();
+    for (const bool dark : {false, true}) {
+      u.t = dark ? &ui::darkTokens() : &ui::lightTokens();
+      ui::applyStyle(*u.t, u.m);
+      const std::string tag = dark ? "dark" : "light";
+      c.setView(app::View::List);
+      c.select("11");
+      u.detailOpen = true;
+      u.detailTab = 3;
+      ImGui::GetIO().AddMousePosEvent(5, 890);
+      frames(6);
+      shot("80_github_states_" + tag);
+      // 完了の提案の通知（マージなしを含む）と、失敗の通知
+      c.checkRemote("12");
+      c.checkRemote("13");
+      frames(4);
+      shot("81_github_toasts_" + tag);
+      // 通知を消して、次の周回でも同じ状態から始める
+      for (const auto& t : std::vector<app::Toast>(c.toasts())) c.dismissToast(t.id);
+      frames(2);
+    }
+    u.detailOpen = false;
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    c.setRemoteStatus(nullptr);
+  }
   ImGui::DestroyContext();
   return 0;
 }

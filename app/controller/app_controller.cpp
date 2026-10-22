@@ -1582,10 +1582,7 @@ void AppController::finishRemoteBatches() {
       continue;
     }
     const auto proposal = proposeCompletion(*issue, session_->links(), remoteStates(), utcOffsetMin_);
-    if (!proposal) {
-      toast("GitHub の状態を確認しました（" + std::to_string(b.keys.size()) + " 件）");
-      continue;
-    }
+    if (!proposal) continue;  // まだ閉じていないものがある（状態はリンクの横に出ている）
     if (prefs_.autoCompleteGitHub) {
       completeFromRemote(b.project, b.issueId, true);
       continue;
