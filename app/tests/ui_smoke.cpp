@@ -3406,6 +3406,69 @@ int main() {
     ui::applyStyle(*h.u.t, h.u.m);
     h.frame(2);
   }
+  // アプリで新規作成 → 課題を作る → 編集 → 完了 までで、統計の推移（バーンダウン・リードタイム・滞留日数）が出る（Issue #66）
+  {
+    const auto goTo = [&](int y, int m, int d) { h.clk.set(LocalTime{y, m, d, 9, 0, 0}); };
+    goTo(2026, 10, 12);
+    h.u.t = &ui::lightTokens();
+    h.u.m.compact = false;
+    h.u.m.scale = 1.0f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.c.filter() = Filter{};
+    h.c.clearSelection();
+    h.u.detailOpen = false;
+    h.c.createProject(app::SampleKind::Empty, "作成日の記録", "STP");
+    Session* ss = h.c.session();
+    check(ss != nullptr && ss->issues().empty(), "作成日の確認用の空のプロジェクト");
+    const std::string epic = h.c.createIssue("", "");
+    const std::string ta = h.c.createIssue(epic, "");
+    const std::string tb = h.c.createIssue(epic, ta);
+    const std::string tc = h.c.createIssue(epic, tb);
+    check(!epic.empty() && !ta.empty() && !tb.empty() && !tc.empty(), "課題を作れる");
+    const auto cellOf = [&](const std::string& id, const char* header) -> std::string {
+      const auto& hd = ss->meta().extraHeaders;
+      const Issue* o = ss->issue(id);
+      for (std::size_t i = 0; o && i < hd.size(); ++i)
+        if (hd[i] == header) return i < o->extra.size() ? o->extra[i] : std::string();
+      return "<列なし>";
+    };
+    check(cellOf(ta, "Created") == "2026-10-12" && cellOf(tc, "Created") == "2026-10-12" && cellOf(epic, "Created") == "2026-10-12",
+          "作った課題に作成日（その日）が入る");
+    check(cellOf(ta, "Updated") == "<列なし>", "作っただけでは更新日の列は作らない");
+    // 編集 → 完了
+    goTo(2026, 10, 14);
+    ss->setBaseDate(h.clk.todayIso());
+    check(ss->setName(tb, "編集した課題"), "件名を編集");
+    check(cellOf(tb, "Updated") == "2026-10-14" && cellOf(tc, "Updated") == "", "編集した課題だけに更新日が入る");
+    goTo(2026, 10, 19);
+    ss->setBaseDate(h.clk.todayIso());
+    h.c.setStatusFor({ta}, "Done");
+    check(ss->issue(ta)->resolved && fmtIso(*ss->issue(ta)->resolved) == "2026-10-19", "完了にすると完了日が入る");
+    check(cellOf(ta, "Updated") == "2026-10-19", "完了にした課題の更新日");
+    check(cellOf(ta, "Created") == "2026-10-12", "編集しても作成日は変わらない");
+    h.c.setView(app::View::Stats);
+    h.frame(3);
+    auto& st = h.u.statsTrend;
+    check(st.drawn && st.items == 3, "作成日を自動で記録したプロジェクトの推移が描かれる（作業 3 件）");
+    check(st.weeks == 2, "バーンダウンは作成した週から基準日の週まで 2 週");
+    check(st.leadN == 1, "リードタイム: 完了にした 1 件");
+    check(st.agingN == 2, "滞留日数: 未完了の 2 件（更新日・作成日から）");
+    check(st.agingRows.size() == 2 && st.agingRows[0].id == tc, "滞留は作成のままの課題が最も長い");
+    {
+      auto tr = computeTrends(*ss->tree(), ss->viewIssues(), ss->meta(), *ss->rows(), ss->calendar(), ss->baseDay());
+      check(tr.ok() && tr->hasCreatedColumn && tr->hasUpdatedColumn, "Created・Updated の列がある");
+      bool noCol = false;
+      if (tr.ok())
+        for (const auto& n : trendNotes(*tr)) noCol |= n.find("列がない") != std::string::npos;
+      check(!noCol, "「CSV に Created の列がない」の注記は出ない");
+    }
+    // Undo で作成日・更新日も戻る
+    check(ss->undo(), "元に戻す");
+    check(!ss->issue(ta)->resolved && cellOf(ta, "Updated") == "" && cellOf(ta, "Created") == "2026-10-12",
+          "元に戻すと完了日と更新日も戻り、作成日は残る");
+    h.c.deleteCurrentProject();
+    h.frame(2);
+  }
   // 統計ビューの「状況の件数の推移（累積フロー）」（Issue #64）: 案内・図・ホバー・記録なし・「いま記録する」・開いたときの自動記録・狭い幅
   {
     const auto settingsPathOf = [&](const char* folder) {

@@ -212,7 +212,7 @@ TEST_CASE("other_links: Session の追加・削除は Undo できる") {
   Session s = makeSession(imp(kCsv));
   const auto metaBefore = s.meta();
   CHECK(s.addOtherLink("2", "Cloners", true, "PRJ-3"));
-  CHECK(s.meta().extraHeaders.size() == metaBefore.extraHeaders.size() + 1);
+  CHECK(s.meta().extraHeaders.size() == metaBefore.extraHeaders.size() + 2);  // リンクの列と、編集の記録（Updated。Issue #66）
   CHECK(s.canUndo());
   CHECK(s.undo());
   CHECK(s.meta() == metaBefore);
