@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 #include "roadmap/history.hpp"
 #include "roadmap/load.hpp"
@@ -386,6 +387,30 @@ void dashedLine(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col, float th, float d
   for (float t = 0; t < len; t += dash + gap) {
     const float e = std::min(t + dash, len);
     dl->AddLine(ImVec2(a.x + ux * t, a.y + uy * t), ImVec2(a.x + ux * e, a.y + uy * e), col, th);
+  }
+}
+
+// 折れ線を破線・点線で引く。破線の位相（パターンのどこまで進んだか）を点から点へ持ち越すので、
+// 1 区間が dash より短くても（104 週を狭い幅に収めたとき）破線に見える
+void dashedPolyline(ImDrawList* dl, const std::vector<ImVec2>& pts, ImU32 col, float th, float dash, float gap) {
+  const float period = dash + gap;
+  if (pts.size() < 2 || period <= 0.f) return;
+  float pos = 0;  // パターンの先頭からの距離
+  for (std::size_t k = 1; k < pts.size(); ++k) {
+    const ImVec2 a = pts[k - 1], b = pts[k];
+    const float dx = b.x - a.x, dy = b.y - a.y;
+    const float len = std::sqrt(dx * dx + dy * dy);
+    if (len < 0.001f) continue;
+    const float ux = dx / len, uy = dy / len;
+    float t = 0;
+    while (t < len) {
+      const float phase = std::fmod(pos, period);
+      const bool on = phase < dash;
+      const float step = std::min((on ? dash : period) - phase, len - t);
+      if (on) dl->AddLine(ImVec2(a.x + ux * t, a.y + uy * t), ImVec2(a.x + ux * (t + step), a.y + uy * (t + step)), col, th);
+      t += step;
+      pos += step;
+    }
   }
 }
 
@@ -831,13 +856,27 @@ void drawCfdChart(Frame& f, const CfdSeries& cs, float W) {
     quad(x0, yAt(a.done + a.doing), yAt(a.total), x1, yAt(b.done + b.doing), yAt(b.total), u.t->line2);
   }
   dl->Flags = oldFlags;
-  for (int i = 0; i + 1 < cols; ++i) {
-    if (at(i).gap || at(i + 1).gap) continue;
-    const CfdWeek &a = at(i), &b = at(i + 1);
-    const float x0 = xOf(i), x1 = xOf(i + 1);
-    dl->AddLine(ImVec2(x0, yAt(a.done)), ImVec2(x1, yAt(b.done)), u.t->ink, u.m.s(2));
-    dashedLine(dl, ImVec2(x0, yAt(a.done + a.doing)), ImVec2(x1, yAt(b.done + b.doing)), u.t->ink, u.m.s(2), u.m.s(5), u.m.s(4));
-    dashedLine(dl, ImVec2(x0, yAt(a.total)), ImVec2(x1, yAt(b.total)), u.t->ink, u.m.s(2), u.m.s(2), u.m.s(3));
+  // 境界の線。記録のある連続した週ごとにひとつの折れ線として引き、破線・点線の位相はその中で持ち越す
+  // （週の組ごとにリセットすると、1 区間が破線より短い 104 週では実線に見えてしまう）。記録なしの区間でだけ切れる
+  for (int i = 0; i < cols;) {
+    if (at(i).gap) {
+      ++i;
+      continue;
+    }
+    int j = i;
+    while (j < cols && !at(j).gap) ++j;
+    if (j - i >= 2) {
+      std::vector<ImVec2> done, doing, total;
+      for (int k = i; k < j; ++k) {
+        done.push_back(ImVec2(xOf(k), yAt(at(k).done)));
+        doing.push_back(ImVec2(xOf(k), yAt(at(k).done + at(k).doing)));
+        total.push_back(ImVec2(xOf(k), yAt(at(k).total)));
+      }
+      dl->AddPolyline(done.data(), static_cast<int>(done.size()), u.t->ink, ImDrawFlags_None, u.m.s(2));
+      dashedPolyline(dl, doing, u.t->ink, u.m.s(2), u.m.s(5), u.m.s(4));
+      dashedPolyline(dl, total, u.t->ink, u.m.s(2), u.m.s(2), u.m.s(3));
+    }
+    i = j;
   }
   const float colW = std::min(u.m.s(6), bw * 0.5f);
   for (int i = 0; i < cols; ++i) {
@@ -850,7 +889,7 @@ void drawCfdChart(Frame& f, const CfdSeries& cs, float W) {
       dl->AddRectFilled(ImVec2(x, yAt(w.done + w.doing)), ImVec2(x + colW, yAt(w.done)), blendOver(u.t->bg, u.t->accent, 0.55f));
       dl->AddRectFilled(ImVec2(x, yAt(w.total)), ImVec2(x + colW, yAt(w.done + w.doing)), blendOver(u.t->bg, u.t->line2, 0.55f));
     }
-    dl->AddCircleFilled(ImVec2(xOf(i), yAt(w.total)), u.m.s(2.5f), u.t->ink);
+    if (bw >= u.m.s(10) || !prevOk || !nextOk) dl->AddCircleFilled(ImVec2(xOf(i), yAt(w.total)), u.m.s(2.5f), u.t->ink);  // 列が細いときは、点が連なって点線を隠さないよう、連続した週の中の点は省く
   }
   // 最新の記録の合計（数字でも読める）
   if (latest) {

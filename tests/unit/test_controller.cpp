@@ -831,3 +831,62 @@ TEST_CASE("controller: 履歴 — 作業のない新規プロジェクトには�
   CHECK(e.c.session()->history().points.size() == 1);
   CHECK(e.c.session()->history().points[0].total == 0);
 }
+
+TEST_CASE("controller: 履歴の記録は設定だけを書く（課題を編集するまで元の CSV を書き換えない）") {
+  // 非正規の CSV（CRLF・件名が空の行・解決できない親の参照）。再エクスポートすると形が変わる・行が消える
+  const std::string original =
+      "Issue Id,Issue Type,Summary,Parent,Status,Duration (weeks)\r\n"
+      "1,Task,A,,To Do,1\r\n"
+      "2,Task,,,To Do,1\r\n"
+      "3,Task,C,99,In Progress,2\r\n";
+  Env e;
+  e.fs.put("data/古い/project.csv", original);
+  e.c.start();
+  REQUIRE(e.c.session());
+  e.step(1000);
+  const std::string csvPath = "data/古い/project.csv";
+  std::string settingsPath;
+  for (const std::string& p : e.fs.paths())
+    if (p.size() > 21 && p.compare(p.size() - 21, 21, "project.settings.json") == 0 && p.find("古い") != std::string::npos) settingsPath = p;
+  // 開いたとき今週の点が入っている
+  REQUIRE(e.c.session()->history().points.size() == 1);
+  e.step(1000);
+  REQUIRE(e.fs.exists(csvPath));
+  CHECK(e.fs.content(csvPath) == original);  // CSV はバイト列のまま
+  REQUIRE_FALSE(settingsPath.empty());
+  CHECK(e.fs.content(settingsPath).find("\"history\"") != std::string::npos);  // 設定には書かれている
+  for (const std::string& p : e.fs.paths()) CHECK(p.find("_バックアップ") == std::string::npos);  // CSV を書かないので控えも作らない
+  CHECK_FALSE(e.c.hasUnsaved());
+
+  // 同じ週に開き直しても何も書かない
+  const int writes = e.fs.writeCount();
+  CHECK(e.c.openProject(e.c.currentId()));
+  e.step(1000);
+  CHECK(e.fs.writeCount() == writes);
+
+  // 手動の「いま記録する」・週次レポートも、課題を編集していなければ設定だけ
+  e.clk.set(LocalTime{2026, 10, 28, 9, 0, 0});
+  const int w0 = e.fs.writeCount();
+  e.c.recordHistory(AppController::HistoryTrigger::Manual);
+  e.step(1000);
+  CHECK(e.c.session()->history().points.size() == 2);
+  CHECK(e.fs.writeCount() == w0 + 1);  // 設定の 1 回だけ
+  CHECK(e.fs.content(csvPath) == original);
+  e.clk.set(LocalTime{2026, 11, 4, 9, 0, 0});
+  WeeklyOptions opt;
+  CHECK(e.fs.makeDirs("out").ok());
+  const int w1 = e.fs.writeCount();
+  CHECK(e.c.exportWeekly("out/週報.md", opt, false).ok());  // 週報の書き出し 1 回 + 設定 1 回
+  e.step(1000);
+  CHECK(e.c.session()->history().points.size() == 3);
+  CHECK(e.fs.writeCount() == w1 + 2);
+  CHECK(e.fs.content(csvPath) == original);
+
+  // 課題を編集したら、そのときは CSV も書く
+  Session* s = e.c.session();
+  REQUIRE(s->setField(s->tree()->ids[0], [](Issue& o) { o.summary = "編集した"; }));
+  e.c.afterEdit();
+  e.step(1000);
+  CHECK(e.fs.content(csvPath) != original);
+  CHECK(e.fs.content(csvPath).find("編集した") != std::string::npos);
+}

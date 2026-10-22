@@ -1158,8 +1158,33 @@ int main(int argc, char** argv) {
     u.detailOpen = true;
     cfdScroll(cfdVisible);
     cfdAway("68_cfd_narrow");
+    // 未着手・進行中・完了がどれもある状態にしてから（境界が重ならない）
+    for (std::size_t k = 0; k < leafIds.size(); ++k) {
+      const std::string st = k < 5 ? "Done" : (k < 9 ? "In Progress" : "To Do");
+      s->setField(leafIds[k], [&](Issue& o) {
+        o.status = st;
+        if (st != "Done") o.resolved = OptDay{};
+      });
+    }
+    c.afterEdit();
+    // 104 週・件数が一定・幅が最小（破線・点線が 1 区間より長いパターンで続くことを確かめる）
+    for (int w = 0; w < 110; ++w) {
+      goTo(first + 12 * 7 + w * 7 + 2);
+      c.recordHistory(app::AppController::HistoryTrigger::Manual);
+    }
+    io.DisplaySize = ImVec2(620, 900);
+    frames(4);
+    ImGui::GetIO().AddMousePosEvent(150, 450);  // 詳細パネルの上ではなく、統計の上でスクロールする
+    for (int k = 0; k < 60; ++k) {
+      ImGui::GetIO().AddMouseWheelEvent(0, -2);
+      frames(1);
+    }
+    clk.advanceMs(15000);  // 記録の通知（左下）が消えてから撮る
+    frames(3);
+    cfdAway("69_cfd_104w_narrow");
     io.DisplaySize = ImVec2(1440, 900);
     u.detailOpen = false;
+    goTo(*parseIso("2026-10-19"));
     // 書き出した HTML（ブラウザで開いて確かめる。ライト・ダーク）
     for (const bool dark : {false, true}) {
       ExportOptions opt;

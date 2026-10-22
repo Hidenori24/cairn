@@ -297,6 +297,7 @@ class AppController {
   std::vector<std::unique_ptr<Session>> retiredSessions_;
   std::string currentId_;
   std::uint64_t seenVersion_ = 0;
+  std::uint64_t seenContentVersion_ = 0;
   bool firstRun_ = false;
 
   std::vector<std::string> sel_;

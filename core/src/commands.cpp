@@ -120,6 +120,7 @@ bool Session::mutate(const std::function<void(ProjectData&)>& fn, const std::fun
     if (undo_.size() > kUndoMax) undo_.pop_front();
     redo_.clear();
   }
+  ++contentVersion_;
   persist();
   return true;
 }
@@ -144,6 +145,7 @@ bool Session::undo() {
   restore(std::move(undo_.back()));
   undo_.pop_back();
   rebuild();
+  ++contentVersion_;
   persist();
   return true;
 }
@@ -154,6 +156,7 @@ bool Session::redo() {
   restore(std::move(redo_.back()));
   redo_.pop_back();
   rebuild();
+  ++contentVersion_;
   persist();
   return true;
 }
@@ -956,6 +959,7 @@ void Session::addScenario(const std::string& nameIn) {
   if (std::find(sc.begin(), sc.end(), name) == sc.end()) sc.push_back(name);
   P_.settings.scenario = name;
   rebuild();
+  ++contentVersion_;  // シナリオ名は CSV の列に入る
   persist();
   notify("シナリオ「" + name + "」を追加しました。期間を変えると、このシナリオだけに保存されます");
 }
@@ -977,6 +981,7 @@ void Session::replaceIssues(std::vector<Issue> issues, ProjectMeta meta, std::ve
   if (undo_.size() > kUndoMax) undo_.pop_front();
   redo_.clear();
   loadWarns_ = std::move(warns);
+  ++contentVersion_;
   persist();
   notify(std::to_string(P_.issues.size()) + "件を読み込みました（置き換え）");
 }

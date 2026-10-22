@@ -734,6 +734,35 @@ TEST_CASE("report: 推移に状況の件数の累積フロー図（記録のな�
   CHECK(contains(exportHtml(in, dk), "状況の件数の推移（累積フロー）"));
 }
 
+TEST_CASE("report: 累積フロー図 — 破線・点線は記録のある連続した週で 1 本の折れ線（週の組ごとに切らない）") {
+  Proj p = Proj::fromCsv(kBasic);
+  History h;
+  const auto put = [&](Day d, int i) {
+    HistoryPoint x;
+    x.weekStart = fmtIso(d);
+    x.todo = 3;
+    x.doing = 2;
+    x.done = i;
+    x.total = 5 + i;
+    REQUIRE(recordHistory(h, x).ok());
+  };
+  const Day w0 = *parseIso("2026-01-05");
+  for (int i = 0; i < 30; ++i) put(w0 + i * 7, i);       // 30 週続けて記録
+  for (int i = 33; i < 40; ++i) put(w0 + i * 7, i);      // 3 週あいて、また 7 週
+  ExportOptions o;
+  o.gantt = false;
+  o.list = false;
+  ExportInput in = p.input();
+  in.history = &h;
+  in.base = w0 + 39 * 7;
+  const std::string html = exportHtml(in, o);
+  const std::size_t at = html.find("状況の件数の推移（累積フロー図）");
+  REQUIRE(at != std::string::npos);
+  const std::string svg = html.substr(at, html.find("</svg>", at) - at);
+  CHECK(count(svg, "stroke-dasharray=\"5 4\"") == 2);  // 進行中の境界: 連続した 2 区間に 1 本ずつ
+  CHECK(count(svg, "stroke-dasharray=\"2 3\"") == 2 + 1);  // 未着手の境界 2 本 + 記録なしの帯 1 つ（3 週で 1 つの帯）
+}
+
 TEST_CASE("report: 累積フロー図 — 記録が 0 件・1 件なら案内だけ。104 週でも落ちない。日付の列がなくても出る") {
   Proj p = Proj::fromCsv(kBasic);
   ExportOptions o;

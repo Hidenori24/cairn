@@ -84,6 +84,9 @@ class Session {
 
   // 変更のたびに増える（保存の予約・再描画の判断に使う）
   std::uint64_t version() const { return version_; }
+  // 課題・メタ情報（CSV に入るもの）を変えた回数。設定だけの変更（表示状態・履歴・ベースラインなど）では進まない。
+  // 保存側が、課題を編集していない間は元の CSV を再エクスポートして書き換えないために使う
+  std::uint64_t contentVersion() const { return contentVersion_; }
   // 通知（UI が取り出して表示する）
   std::vector<Notice> takeNotices();
   void notify(std::string text, NoticeAction a = NoticeAction::None);
@@ -242,6 +245,7 @@ class Session {
   std::vector<Notice> notices_;
   InheritSpec inherit_;
   std::uint64_t version_ = 0;
+  std::uint64_t contentVersion_ = 0;
   int batchDepth_ = 0;
   std::optional<Snapshot> batchSnap_;
 };

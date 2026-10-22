@@ -2,6 +2,7 @@
 // 絞り込みには従わず、プロジェクト全体の集計。スクリプトは入れない。
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 #include "report_internal.hpp"
 #include "roadmap/stats.hpp"
@@ -289,10 +290,28 @@ std::string cfdCard(const Ctx& cx, const History& hist, Day base) {
     quad(x0, chartH, yAt(a.done), x1, chartH, yAt(b.done), k.ok);
     quad(x0, yAt(a.done), yAt(a.done + a.doing), x1, yAt(b.done), yAt(b.done + b.doing), k.accent);
     quad(x0, yAt(a.done + a.doing), yAt(a.total), x1, yAt(b.done + b.doing), yAt(b.total), k.line2);
-    g += line(x0, yAt(a.done), x1, yAt(b.done), ink, 2);
-    g += line(x0, yAt(a.done + a.doing), x1, yAt(b.done + b.doing), ink, 2, true);
-    g += "<path d=\"M" + n1(x0) + " " + n1(yAt(a.total)) + "L" + n1(x1) + " " + n1(yAt(b.total)) + "\" stroke=\"" + ink +
-         "\" stroke-width=\"2\" fill=\"none\" stroke-dasharray=\"2 3\"/>";
+  }
+  // 境界の線。記録のある連続した週ごとにひとつの折れ線（<path>）として引く。破線・点線の位相はその中で続き、
+  // 記録なしの区間でだけ切れる（週の組ごとに引くと、1 区間が破線より短い 104 週では実線に見える）
+  for (int i = 0; i < cols;) {
+    if (at(i).gap) {
+      ++i;
+      continue;
+    }
+    int j = i;
+    while (j < cols && !at(j).gap) ++j;
+    if (j - i >= 2) {
+      const auto poly = [&](const std::function<int(const CfdWeek&)>& val, const char* dash) {
+        std::string d;
+        for (int m = i; m < j; ++m) d += std::string(m == i ? "M" : "L") + n1(xOf(m)) + " " + n1(yAt(val(at(m))));
+        g += "<path d=\"" + d + "\" stroke=\"" + ink + "\" stroke-width=\"2\" fill=\"none\"" +
+             (*dash ? std::string(" stroke-dasharray=\"") + dash + "\"" : std::string()) + "/>";
+      };
+      poly([](const CfdWeek& w) { return w.done; }, "");
+      poly([](const CfdWeek& w) { return w.done + w.doing; }, "5 4");
+      poly([](const CfdWeek& w) { return w.total; }, "2 3");
+    }
+    i = j;
   }
   const double colW = std::min(6.0, bw * 0.5);
   for (int i = 0; i < cols; ++i) {
@@ -305,7 +324,7 @@ std::string cfdCard(const Ctx& cx, const History& hist, Day base) {
       addRect(g, x, yAt(w.done + w.doing), colW, yAt(w.done) - yAt(w.done + w.doing), soft(k.accent));
       addRect(g, x, yAt(w.total), colW, yAt(w.done + w.doing) - yAt(w.total), soft(k.line2));
     }
-    g += circle(xOf(i), yAt(w.total), 2.5, ink);
+    if (bw >= 10 || !prevOk || !nextOk) g += circle(xOf(i), yAt(w.total), 2.5, ink);  // 列が細いときは、連続した週の中の点を省く（点が連なって点線を隠さない）
   }
   // 最新の週の値（色だけに頼らない: 数字でも読める）
   for (int i = cols - 1; i >= 0; --i) {
