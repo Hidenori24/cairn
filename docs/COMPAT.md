@@ -137,6 +137,7 @@ CHANGELOG と、各版のタグ（`v0.5.0`・`v0.7.0`・`v0.9.0` など）のコ
 | `ui.cols.plan` | 0.9.0〜 | 「計画との差」の列 |
 | `weeklyAuto` | 0.9.1〜 | 開いたときに自動で取る週の頭のスナップショット（`snaps`）。`weekly` とは別のキー。CSV には `Created`・`Updated` の列も増える |
 | `evm` | 0.10.0〜 | EVM（出来高管理）の設定（`progress`・`spiWarn`）。既定のときは書かない。未知のキーは保持する |
+| `weeklyAuto.snaps[].ms` | 0.10.0〜 | スナップショットの中のマイルストーン（`Issue Id\t状況\t見込みの完了日\t遅れ` の配列。マイルストーンがなければ書かない。#75）。0.9.1 は未知のキーとして書き戻す（`weeklyAuto` の入れ子のうち、スナップショットの中の未知のキーは保持される） |
 
 ### `roadmap_prefs.json` のキー
 
@@ -146,6 +147,7 @@ CHANGELOG と、各版のタグ（`v0.5.0`・`v0.7.0`・`v0.9.0` など）のコ
 | `dataDir`・`uiScale`・`dimPercent`・`confirmDelete`・`autoBaseToday` | 0.2.0〜（5 章の 8） |
 | `newNameFormat`・`newNameCustom`・`inherit` | 0.4.0〜 |
 | `autoCompleteGitHub` | 0.9.0〜 |
+| `mtaLateDays` | 0.10.0〜（マイルストーンの予測の遅れの警告のしきい値。整数・既定 5） |
 
 ### CSV の列
 

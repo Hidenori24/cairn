@@ -15,6 +15,7 @@
 #include "roadmap/evm.hpp"
 #include "roadmap/filestore.hpp"
 #include "roadmap/load.hpp"
+#include "roadmap/mta.hpp"
 #include "roadmap/model.hpp"
 #include "roadmap/result.hpp"
 #include "roadmap/stats.hpp"
@@ -94,6 +95,7 @@ struct WeeklyInput {
   const WeeklyMemo* memo = nullptr;       // 手動（コピー・保存したとき）のスナップショット
   const WeeklyAuto* autos = nullptr;      // 自動（週の頭）のスナップショット
   const BaselineCompare* baseline = nullptr;  // 表示するベースラインとの比較（なければ「ベースラインとの差」は出ない）
+  int mtaLateDays = kMtaDefaultLateDays;      // マイルストーンの予測の遅れの警告のしきい値（営業日。autos があるとき、Issue #75）
   // EVM（Issue #65）の計画にするベースライン（evmPickBaseline で選んだもの。null = 節を出さない）と設定。参照は呼び出しの間だけ使う
   const Baseline* evmBaseline = nullptr;
   EvmSettings evm;
@@ -285,6 +287,12 @@ struct WeeklyReport {
   int assigneesTotal = 0;
   WeeklyChanges changes;
   WeeklyBaseline baseline;
+  // マイルストーンの予測の推移と遅れの警告（Issue #75）。autos（自動のスナップショット）を渡したときだけ。名前は cleanText 済み。
+  // 警告は「遅れ・余裕小」の節に、推移の表は「マイルストーン」の節に出す
+  bool mtaAvailable = false;
+  MtaReport mta;          // series は警告のあるものを先頭に、上限（maxItems）までにする
+  int mtaOmitted = 0;     // 上限で省いた系列の数
+  int mtaWarnOmitted = 0; // 上限で省いた警告の数（警告の節に「ほか N 件」を出す）
   WeeklyEvm evm;
   std::string notes;      // 所感（そのまま）
   bool empty = false;     // 課題がない

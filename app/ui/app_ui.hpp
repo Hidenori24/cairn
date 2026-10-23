@@ -432,6 +432,36 @@ struct UiState {
     std::vector<StatsTrend::Col> cols;  // 週ごとの当たり
     ImVec2 recA{0, 0}, recB{0, 0};      // 「いま記録する」ボタン
   } statsCfd;
+  // 統計ビューの「マイルストーンの予測の推移」と遅れの警告（Issue #75）: 図に出すマイルストーンの選択（プロジェクトごと。切り替えたら初期化）と、
+  // 前のフレームの描画の結果（煙テストが当たり位置と件数を知るために使う）
+  struct StatsMta {
+    std::string projectId;                // この選択がどのプロジェクトのものか
+    bool inited = false;                  // 図に出すマイルストーンを決めた（初めは警告のあるもの → 記録のあるもの）
+    std::vector<std::string> shownIds;    // 図に出すマイルストーンの Issue Id
+    // ---- 前のフレームの描画 ----
+    bool drawn = false;                   // 節を描いた
+    bool chart = false;                   // 図を描いた（記録が 2 週以上）
+    bool pending = false;                 // 「記録が溜まるとここに出ます」の案内を出した
+    int series = 0, recorded = 0, columns = 0, gaps = 0, shownN = 0, warnings = 0, bandLines = 0, tableRows = 0;
+    float chartX1 = 0;                    // 図の右端（画面の座標）
+    float secY = 0;                       // 節の見出しの上端（画面の座標）
+    std::vector<StatsTrend::Col> cols;    // 列ごとの当たり
+    ImVec2 selA{0, 0}, selB{0, 0};        // 選択欄
+    ImVec2 bandA{0, 0}, bandB{0, 0};      // 警告の帯
+    struct Row {
+      std::string id;
+      ImVec2 a{0, 0}, b{0, 0};
+    };
+    std::vector<Row> rows;                // 表の各マイルストーンの先頭の行（押すと詳細）
+    void resetDraw() {
+      drawn = chart = pending = false;
+      series = recorded = columns = gaps = shownN = warnings = bandLines = tableRows = 0;
+      chartX1 = secY = 0;
+      cols.clear();
+      rows.clear();
+      selA = selB = bandA = bandB = ImVec2(0, 0);
+    }
+  } statsMta;
   // 「今日」ビュー（Issue #72）: 前のフレームの描画の結果（煙テストが当たり位置と件数を知るために使う）と、帯の「すべて表示」
   struct TodayRow {
     std::string id;

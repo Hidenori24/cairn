@@ -17,6 +17,7 @@
 #include <imgui_internal.h>
 
 #include "app_controller.hpp"
+#include "roadmap/mta.hpp"
 #include "roadmap/attachments.hpp"
 #include "roadmap/gen.hpp"
 #include "roadmap/github_ref.hpp"
@@ -3908,6 +3909,150 @@ int main() {
     h.u.t = &ui::darkTokens();
     ui::applyStyle(*h.u.t, h.u.m);
     h.frame(2);
+  }
+  // 統計ビューの「マイルストーンの予測の推移」と遅れの警告（Issue #75）: 案内・警告の帯・図・ホバー・表・選択・書き出し・週次レポート
+  {
+    const auto goTo = [&](int y, int m, int d) { h.clk.set(LocalTime{y, m, d, 9, 0, 0}); };
+    const std::string csvText =
+        "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Resolved,Duration (weeks),Outward issue link (Blocks),Deadline\n"
+        "1,Epic,基盤,,,,High,,,,\n"
+        "2,Task,設計,1,田中,In Progress,High,,1,3,\n"
+        "3,Task,実装,1,田中,To Do,Medium,,2,4,\n"
+        "4,Milestone,中間,1,,,High,,0,,2026-11-20\n"
+        "5,Milestone,リリース,1,,,High,,0,,2026-12-18\n"
+        "6,Task,検証,1,鈴木,To Do,Medium,,3,5,\n";
+    goTo(2026, 10, 19);
+    h.u.t = &ui::lightTokens();
+    h.u.m.compact = false;
+    h.u.m.scale = 1.0f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.c.filter() = Filter{};
+    h.c.clearSelection();
+    h.u.detailOpen = false;
+    h.c.prefs().mtaLateDays = 8;  // 基準日が 1 週進むと、動かしていない予測も 5 営業日動く。それより大きいしきい値で、作業を延ばした 1 つだけを警告にする
+    check(h.c.importText(csvText, "予測の推移", app::ImportMode::New).ok, "予測の推移用の取り込み");
+    const std::string id = h.c.currentId();
+    check(h.c.session()->weeklyAuto().snaps.size() == 1 && h.c.session()->weeklyAuto().snaps[0].milestones.size() == 2,
+          "開いたとき取る週の頭のスナップショットに、マイルストーン 2 つが入る");
+    h.c.setView(app::View::Stats);
+    h.clk.advanceMs(15000);
+    h.frame(4);
+    auto& mt = h.u.statsMta;
+    check(mt.drawn, "マイルストーンの予測の推移の節が描かれる");
+    check(mt.pending && !mt.chart && mt.recorded == 1, "記録が 1 週だけなら案内だけで、図は描かない（嘘の線を引かない）");
+    check(mt.warnings == 0 && mt.bandLines == 0, "警告はない");
+
+    // 翌週: 実装を 2 週 → 5 週に延ばして開く（基準日も今日に合わせる）
+    goTo(2026, 10, 26);
+    h.c.session()->setBaseDate(h.clk.todayIso());
+    h.c.session()->setField("3", [](Issue& o) { o.durW = 5; });
+    h.c.afterEdit();
+    check(h.c.openProject(id), "翌週に開く");
+    h.c.setView(app::View::Stats);
+    h.clk.advanceMs(15000);
+    h.frame(4);
+    check(h.c.session()->weeklyAuto().snaps.size() == 2, "週が変われば週の頭のスナップショットが 2 つになる");
+    check(mt.recorded == 2 && mt.series == 2 && mt.columns == 3 && mt.gaps == 0, "2 週ぶんあれば、2 つのマイルストーンの列は 2 週 + いま");
+    check(mt.warnings == 1 && mt.bandLines == 1, "実装を延ばしたマイルストーン 1 つだけが遅れの警告になる");
+    {
+      MtaOptions mo;
+      mo.lateDays = 8;
+      auto mr = computeMta(*h.c.session()->tree(), h.c.session()->viewIssues(), *h.c.session()->rows(), h.c.session()->calendar(), h.c.session()->weeklyAuto(),
+                           h.c.session()->baseDay(), h.c.session()->baselineCompare(), mo);
+      check(mr.ok() && mr->warnings == 1 && mr->series.size() == 2 && mr->series[0].warn && mr->series[0].warnMove >= 15, "警告は中間（延ばした作業の先）で、15 営業日以上の遅れ");
+    }
+    // 図: スクロールして見える位置へ。ホバー・表
+    ImGuiIO& io = ImGui::GetIO();
+    const auto colsVisible = [&] { return mt.chart && mt.cols.size() == 3 && mt.cols.front().a.y > 130 && mt.cols.front().b.y < 860; };
+    io.AddMousePosEvent(700, 450);
+    for (int k = 0; k < 40; ++k) {
+      io.AddMouseWheelEvent(0, 20);
+      h.frame(1);
+    }
+    check(mt.bandB.y > mt.bandA.y && mt.bandA.y >= 0 && mt.bandA.y < 300 && mt.bandB.y < 900, "遅れの警告は統計の一番上（見出しのすぐ下）に出る");
+    for (int k = 0; k < 400 && !colsVisible(); ++k) {
+      io.AddMouseWheelEvent(0, -1);
+      h.frame(2);
+    }
+    check(colsVisible(), "予測の推移の図が見える位置までスクロールできる");
+    if (colsVisible()) {
+      check(mt.cols[1].a.x > mt.cols[0].a.x && mt.cols[2].a.x > mt.cols[1].a.x && mt.chartX1 >= mt.cols.back().b.x - 0.5f, "列は左から順（週・週・いま）で、図の幅に収まる");
+      const auto& col = mt.cols[1];
+      io.AddMousePosEvent((col.a.x + col.b.x) / 2, (col.a.y + col.b.y) / 2);
+      h.frame(3);
+      ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+      check(tip && tip->Active, "列にマウスを載せると、マイルストーンごとの予測日が出る");
+      io.AddMousePosEvent(5, 5);
+      h.frame(2);
+    }
+    check(mt.shownN == 2 && mt.selB.x > mt.selA.x, "初めは 2 つのマイルストーンとも図に出す");
+    check(mt.tableRows == 2 * 3 && mt.rows.size() == 2, "表は 2 つのマイルストーン × 3 列（週・週・いま）");
+    // 表の行を押すと、そのマイルストーンの詳細を開く
+    {
+      const auto rowVisible = [&] { return mt.rows.size() == 2 && mt.rows[0].a.y > 130 && mt.rows[0].b.y < 860; };
+      io.AddMousePosEvent(700, 450);
+      for (int k = 0; k < 120 && !rowVisible(); ++k) {
+        io.AddMouseWheelEvent(0, -1);
+        h.frame(2);
+      }
+      check(rowVisible(), "表の行が見える位置までスクロールできる");
+      if (rowVisible()) {
+        const ImVec2 mid((mt.rows[0].a.x + mt.rows[0].b.x) / 2, (mt.rows[0].a.y + mt.rows[0].b.y) / 2);
+        io.AddMousePosEvent(mid.x, mid.y);
+        h.frame(3);
+        h.click(mid.x, mid.y);
+        h.frame(3);
+        check(h.c.selection().size() == 1 && h.c.selection()[0] == mt.rows[0].id, "表の行を押すと、そのマイルストーンが選ばれる");
+        check(h.u.detailOpen, "表の行を押すと詳細パネルが開く");
+      }
+      h.u.detailOpen = false;
+      h.c.clearSelection();
+    }
+    // 何も選ばなければ図は描かず、案内を出す。選び直すと戻る
+    mt.shownIds.clear();
+    h.frame(3);
+    check(mt.shownN == 0 && !mt.chart, "図に出すマイルストーンを選ばなければ、図は描かない（落ちない）");
+    mt.inited = false;
+    h.frame(3);
+    check(mt.shownN == 2 && mt.chart, "選び直すと図が戻る");
+    // ダーク・コンパクト・高DPI・狭い幅でも描ける
+    h.u.t = &ui::darkTokens();
+    h.u.m.compact = true;
+    h.u.m.scale = 1.5f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    io.DisplaySize = ImVec2(900, 900);
+    h.u.detailOpen = true;
+    h.frame(4);
+    check(mt.drawn && mt.bandLines == 1, "ダーク・コンパクト・高DPI・狭い幅でも警告が描かれる");
+    io.DisplaySize = ImVec2(1440, 900);
+    h.u.detailOpen = false;
+    h.u.t = &ui::lightTokens();
+    h.u.m.compact = false;
+    h.u.m.scale = 1.0f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(3);
+    // しきい値を上げると警告は消える（図は残る）
+    h.c.prefs().mtaLateDays = 40;
+    h.frame(3);
+    check(mt.warnings == 0 && mt.bandLines == 0 && mt.drawn, "しきい値を 40 営業日にすると警告は出ない");
+    h.c.prefs().mtaLateDays = 8;
+    // HTML 書き出しと週次レポートにも同じ内容が出る
+    {
+      ExportOptions eo;
+      eo.gantt = false;
+      eo.list = false;
+      const auto html = h.c.buildReport(eo);
+      check(html.ok() && html.value().find("マイルストーンの予測の推移") != std::string::npos && html.value().find("遅れの警告") != std::string::npos,
+            "HTML 書き出しに推移と警告が出る");
+      WeeklyOptions wo;
+      const auto md = h.c.renderWeekly(wo, false);
+      check(md.ok() && md.value().find("マイルストーンの予測の遅れ（1 件）") != std::string::npos && md.value().find("予測の推移") != std::string::npos,
+            "週次レポートの「遅れ・余裕小」と「マイルストーン」に出る");
+    }
+    h.c.deleteCurrentProject();
+    h.frame(2);
+    goTo(2026, 10, 19);
+    h.c.prefs().mtaLateDays = 5;
   }
   // 5,000 件で日付つきの推移（集計は毎フレーム。重くならない）
   {

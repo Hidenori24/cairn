@@ -356,7 +356,7 @@ std::string renderTrends(const Ctx& cx) {
   std::string out = "<h2>推移</h2>\n<p class=\"note\">作成日（Created）・完了日（Resolved）・更新日（Updated）から出しています。"
                     "週は月曜始まり、営業日は休業日を除きます。絞り込みに関係なく、プロジェクト全体の集計です。</p>\n";
   // 状況の件数の履歴（累積フロー）は CSV の日付に関係なく、覚えている記録から出す
-  const std::string cfd = in.history ? cfdCard(cx, *in.history, in.base) : std::string();
+  const std::string cfd = (in.history ? cfdCard(cx, *in.history, in.base) : std::string()) + renderMtaCard(cx);  // マイルストーンの予測の推移（Issue #75）も記録から出す
   if (!res.ok()) return out + "<p class=\"empty\">推移を集計できません。</p>\n" + cfd;
   const TrendReport& tr = res.value();
   if (tr.items == 0) return out + "<p class=\"empty\">集計できる作業がありません。</p>\n" + cfd;

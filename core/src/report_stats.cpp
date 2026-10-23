@@ -400,10 +400,12 @@ std::string renderStats(const Ctx& cx) {
   const ThemeColors& k = cx.k;
   std::string out = "<h2>統計</h2>\n<p class=\"note\">絞り込みに関係なく、プロジェクト全体の集計です。数える対象は作業（子を持たない課題）で、マイルストーンは別に数えます。基準日は " +
                     esc(fmtLong(in.base)) + " です。</p>\n";
+  out += renderMtaBand(cx);  // マイルストーンの予測の遅れの警告は、統計の一番上（Issue #75）
   const ProjectStats st = computeStats(T, in.issues, in.rows, in.base);
   if (st.tasks == 0) {
     out += "<p class=\"empty\">集計できる作業がありません。課題を追加すると、ここに進みと内訳が出ます。</p>\n";
     out += baselineSection(s);  // マイルストーンだけ・全部削除したときも、計画との差（消えた課題など）は出す
+    out += renderMtaCard(cx);   // マイルストーンの予測の推移も（削除されたマイルストーンの記録を含む）
     return out;
   }
   out += overall(s, st);

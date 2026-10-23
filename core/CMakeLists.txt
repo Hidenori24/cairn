@@ -43,10 +43,12 @@ add_library(roadmap_core STATIC
   src/report_gantt.cpp
   src/report_stats.cpp
   src/report_trends.cpp
+  src/report_mta.cpp
   src/report_evm.cpp
   src/report_list.cpp
   src/baseline.cpp
   src/history.cpp
+  src/mta.cpp
   src/links.cpp
   src/github_ref.cpp
   src/weekly_state.cpp
