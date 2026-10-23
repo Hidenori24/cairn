@@ -405,6 +405,7 @@ std::string renderStats(const Ctx& cx) {
   if (st.tasks == 0) {
     out += "<p class=\"empty\">集計できる作業がありません。課題を追加すると、ここに進みと内訳が出ます。</p>\n";
     out += baselineSection(s);  // マイルストーンだけ・全部削除したときも、計画との差（消えた課題など）は出す
+    out += renderMtaCard(cx);   // マイルストーンの予測の推移も（削除されたマイルストーンの記録を含む）
     return out;
   }
   out += overall(s, st);

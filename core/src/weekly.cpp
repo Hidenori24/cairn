@@ -71,6 +71,30 @@ void fillBaselineHeader(WeeklyBaseline& wb, const BaselineCompare& bc, std::size
   }
 }
 
+// マイルストーンの予測の推移と遅れの警告（Issue #75）。警告のある系列を先頭にして、上限（cap）までにする
+void fillMta(WeeklyReport& r, const WeeklyInput& in, std::size_t cap) {
+  if (!in.autos) return;
+  MtaOptions mo;
+  mo.lateDays = in.mtaLateDays;
+  Result<MtaReport> m = computeMta(in.tree, in.issues, in.rows, in.calendar, *in.autos, in.base, in.baseline, mo);
+  if (!m.ok()) return;
+  r.mta = std::move(m).value();
+  r.mtaAvailable = true;
+  std::stable_partition(r.mta.series.begin(), r.mta.series.end(), [](const MtaSeries& s) { return s.warn; });  // 警告を先頭に
+  if (r.mta.series.size() > cap) {
+    r.mtaOmitted = static_cast<int>(r.mta.series.size() - cap);
+    r.mta.series.resize(cap);
+  }
+  int shownWarn = 0;
+  for (const MtaSeries& s : r.mta.series) shownWarn += s.warn ? 1 : 0;
+  r.mtaWarnOmitted = std::max(0, r.mta.warnings - shownWarn);  // 上限で省いた警告（警告の節にも「ほか N 件」を出す）
+  for (MtaSeries& s : r.mta.series) {  // 件名・Issue Id は他の節と同じ下ごしらえ（制御文字・壊れた UTF-8）
+    s.id = cleanText(s.id);
+    s.did = cleanText(s.did);
+    s.name = cleanText(s.name);
+  }
+}
+
 }  // namespace
 
 WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) {
@@ -95,6 +119,8 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
   if (n == 0 || in.issues.size() != n || in.rows.size() != n || T.dfs.size() != n || T.dfsPos.size() != n || T.kids.size() != n ||
       T.did.size() != n || T.name.size() != n || T.kind.size() != n || T.dl.size() != n || T.preds.size() != n || T.ids.size() != n) {
     r.empty = true;
+    // 課題を全部削除したあとも、マイルストーンの記録（削除された系列）は出す（入力の食い違いのときは出さない）
+    if (n == 0 && in.issues.empty() && in.rows.empty()) fillMta(r, in, std::max<std::size_t>(1, opt.maxItems));
     // 課題が 0 件（全部削除した）ときは、入力の食い違いではないので、有効な比較（消えた課題）は出す
     if (n == 0 && in.issues.empty() && in.rows.empty() && opt.sections.baseline && in.baseline && in.baseline->entries.empty())
       fillBaselineHeader(r.baseline, *in.baseline, std::max<std::size_t>(1, opt.maxItems));
@@ -443,26 +469,7 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
     fillB(wb.added, cAdded);
   }
 
-  // ---- マイルストーンの予測の推移と遅れの警告（Issue #75）----
-  if (in.autos) {
-    MtaOptions mo;
-    mo.lateDays = in.mtaLateDays;
-    Result<MtaReport> m = computeMta(T, in.issues, in.rows, cal, *in.autos, in.base, in.baseline, mo);
-    if (m.ok()) {
-      r.mta = std::move(m).value();
-      r.mtaAvailable = true;
-      std::stable_partition(r.mta.series.begin(), r.mta.series.end(), [](const MtaSeries& s) { return s.warn; });  // 警告を先頭に
-      if (r.mta.series.size() > cap) {
-        r.mtaOmitted = static_cast<int>(r.mta.series.size() - cap);
-        r.mta.series.resize(cap);
-      }
-      for (MtaSeries& s : r.mta.series) {  // 件名・Issue Id は他の節と同じ下ごしらえ（制御文字・壊れた UTF-8）
-        s.id = cleanText(s.id);
-        s.did = cleanText(s.did);
-        s.name = cleanText(s.name);
-      }
-    }
-  }
+  fillMta(r, in, cap);  // マイルストーンの予測の推移と遅れの警告（Issue #75）
   return r;
 }
 
@@ -525,7 +532,9 @@ WeeklySnapshot makeWeeklySnapshot(const Tree& T, const std::vector<Issue>& issue
       WeeklySnapItem mi;
       mi.id = T.ids[k];
       mi.st = mr.done ? 'd' : mr.prog ? 'p' : 't';
-      mi.finish = mr.done && issues[k].resolved ? issues[k].resolved : OptDay(mr.asapFinish);
+      // 完了済みは完了日だけ（完了日がなければ空。asapFinish は期限や基準日の前の営業日になりうるので、達成した日として残さない）
+      if (mr.done) mi.finish = issues[k].resolved;
+      else mi.finish = mr.asapFinish;
       mi.late = !mr.done && mr.floatDays < 0;
       s.milestones.push_back(std::move(mi));
       continue;
@@ -536,7 +545,7 @@ WeeklySnapshot makeWeeklySnapshot(const Tree& T, const std::vector<Issue>& issue
     }
     if (s.items.size() >= kWeeklyMaxSnapshotItems) {
       s.truncated = true;
-      break;
+      continue;  // 作業は入りきらないが、あとに続くマイルストーンは別の枠で取る（Issue #75）
     }
     const ScheduleRow& row = rows[k];
     WeeklySnapItem it;

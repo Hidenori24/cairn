@@ -1241,26 +1241,45 @@ void drawMtaChart(Frame& f, const MtaReport& rep, const std::vector<std::size_t>
   }
 }
 
-// 表: マイルストーンごとに、週ごとの予測日と前の点からの動き。行を押すと、そのマイルストーンの詳細を開く
+// 表: マイルストーンごとに（見出しの行）、週ごとの予測日と前の点からの動き。行を押すと、そのマイルストーンの詳細を開く。
+// 幅が狭くても列が収まるよう、件名は見出しの行に出し、週・予測日・動きの 3 列を幅の割合で決める
 void drawMtaTable(Frame& f, const MtaReport& rep, float W) {
   UiState& u = f.u;
   UiState::StatsMta& sm = u.statsMta;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float h = u.m.rowH();
-  const float nameW = std::clamp(W * 0.34f, u.m.s(120), u.m.s(340)), weekW = u.m.s(104), dateW = u.m.s(104);
-  const float moveW = std::max(W - nameW - weekW - dateW, u.m.s(80));
+  const float weekW = std::clamp(W * 0.22f, u.m.s(56), u.m.s(120)), dateW = std::clamp(W * 0.2f, u.m.s(52), u.m.s(110));
+  const float moveW = std::max(W - weekW - dateW - u.m.s(12), u.m.s(60));
+  const float x1 = weekW + u.m.s(6), x2 = x1 + dateW;
   {
     const ImVec2 q = ImGui::GetCursorScreenPos();
-    dl->AddText(ImVec2(q.x + u.m.s(6), q.y), u.t->muted, "マイルストーン");
-    dl->AddText(ImVec2(q.x + nameW, q.y), u.t->muted, "週");
-    dl->AddText(ImVec2(q.x + nameW + weekW, q.y), u.t->muted, "予測日");
-    dl->AddText(ImVec2(q.x + nameW + weekW + dateW, q.y), u.t->muted, "前の点からの動き");
+    dl->AddText(ImVec2(q.x + u.m.s(6), q.y), u.t->muted, "週");
+    dl->AddText(ImVec2(q.x + x1, q.y), u.t->muted, "予測日");
+    dl->AddText(ImVec2(q.x + x2, q.y), u.t->muted, "前の点からの動き");
     ImGui::Dummy(ImVec2(W, ImGui::GetTextLineHeight() + u.m.s(4)));
   }
   constexpr std::size_t kMaxRows = 300;
   std::size_t rows = 0, omitted = 0;
   for (const MtaSeries& s : rep.series) {
-    bool first = true;
+    bool any = false;
+    for (const MtaPoint& pt : s.points) any = any || pt.has || pt.ended;
+    if (!any) continue;
+    // 見出しの行（マイルストーンの名前）。現在のマイルストーンなら押して詳細を開く
+    {
+      const ImVec2 p = ImGui::GetCursorScreenPos();
+      const bool hov = !s.removed && ImGui::IsMouseHoveringRect(p, ImVec2(p.x + W, p.y + h)) && ImGui::IsWindowHovered();
+      if (hov) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + h), u.t->hover, u.m.s(4));
+      const float ty = p.y + (h - ImGui::GetTextLineHeight()) / 2;
+      ImGui::PushFont(u.fontBold);
+      clippedText(u, ImVec2(p.x + u.m.s(6), ty), W - u.m.s(12), s.warn ? u.t->late : u.t->ink, (s.warn ? "! " : "") + mtaLegendText(s));
+      ImGui::PopFont();
+      if (!s.removed) sm.rows.push_back({s.id, p, ImVec2(p.x + W, p.y + h)});
+      if (hov) {
+        ImGui::SetTooltip("押すと、このマイルストーンの詳細を開きます");
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) openDetail(f, s.id, 0);
+      }
+      ImGui::Dummy(ImVec2(W, h));
+    }
     for (std::size_t c = 0; c < s.points.size(); ++c) {
       const MtaPoint& pt = s.points[c];
       if (!pt.has && !pt.ended) continue;
@@ -1270,27 +1289,19 @@ void drawMtaTable(Frame& f, const MtaReport& rep, float W) {
       }
       ++rows;
       const ImVec2 p = ImGui::GetCursorScreenPos();
-      const bool hov = !s.removed && ImGui::IsMouseHoveringRect(p, ImVec2(p.x + W, p.y + h)) && ImGui::IsWindowHovered();
+      const bool hov = ImGui::IsMouseHoveringRect(p, ImVec2(p.x + W, p.y + h)) && ImGui::IsWindowHovered();
       if (hov) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + h), u.t->hover, u.m.s(4));
       const float ty = p.y + (h - ImGui::GetTextLineHeight()) / 2;
-      if (first) clippedText(u, ImVec2(p.x + u.m.s(6), ty), nameW - u.m.s(12), s.warn ? u.t->late : u.t->ink, (s.warn ? "! " : "") + mtaLegendText(s));
-      clippedText(u, ImVec2(p.x + nameW, ty), weekW - u.m.s(8), u.t->muted, mtaColumnText(rep.columns[c]));
-      clippedText(u, ImVec2(p.x + nameW + weekW, ty), dateW - u.m.s(8), u.t->ink, mtaDateText(pt));
-      clippedText(u, ImVec2(p.x + nameW + weekW + dateW, ty), moveW - u.m.s(8), pt.late ? u.t->late : u.t->ink, mtaMoveText(pt));
+      clippedText(u, ImVec2(p.x + u.m.s(6), ty), weekW - u.m.s(4), u.t->muted, mtaColumnText(rep.columns[c]));
+      clippedText(u, ImVec2(p.x + x1, ty), dateW - u.m.s(4), u.t->ink, mtaDateText(pt));
+      clippedText(u, ImVec2(p.x + x2, ty), moveW, pt.late ? u.t->late : u.t->ink, mtaMoveText(pt));
       dl->AddLine(ImVec2(p.x, p.y + h), ImVec2(p.x + W, p.y + h), u.t->rowline);
-      if (first && !s.removed) sm.rows.push_back({s.id, p, ImVec2(p.x + W, p.y + h)});
-      if (hov) {
-        ImGui::SetTooltip("%s\n押すと、このマイルストーンの詳細を開きます", mtaPointText(s, rep.columns[c], c).c_str());
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) openDetail(f, s.id, 0);
-      }
+      if (hov) ImGui::SetTooltip("%s", mtaPointText(s, rep.columns[c], c).c_str());  // 動きの文字が切れても、ここで全文が読める
       ImGui::Dummy(ImVec2(W, h));
-      first = false;
     }
   }
   sm.tableRows = static_cast<int>(rows);
-  if (omitted > 0) {
-    ImGui::TextDisabled("ほか %d 行は省きました。", static_cast<int>(omitted));
-  }
+  if (omitted > 0) ImGui::TextDisabled("ほか %d 行は省きました。", static_cast<int>(omitted));
 }
 
 // 「マイルストーンの予測の推移」の節。図に出すマイルストーンの選択（プロジェクトごと）→ 凡例 → 折れ線 → 表
@@ -1377,7 +1388,7 @@ void drawMta(Frame& f, const Result<MtaReport>& res, const Tree& T, float W) {
   }
   if (rep.truncatedWeeks) ImGui::TextDisabled("古い週は省きました（最大 %d 週）。", kMtaMaxWeeks);
   ImGui::Dummy(ImVec2(0, u.m.s(8)));
-  ImGui::Text("週ごとの予測日（すべてのマイルストーン。行を押すと詳細を開きます）");
+  ImGui::Text("週ごとの予測日（すべてのマイルストーン。名前の行を押すと詳細を開きます）");
   drawMtaTable(f, rep, W);
 }
 
@@ -1587,6 +1598,7 @@ void drawStatsView(Frame& f, ImVec2 size) {
       drawPlanDiff(f, *bc0, T, I, W);
       u.statsPlan.drawn = true;
     }
+    drawMta(f, mta, T, W);  // マイルストーンの予測の推移（削除されたマイルストーンの記録を含む）
     ImGui::EndGroup();
     ImGui::Dummy(ImVec2(0, u.m.s(40)));
     ImGui::EndChild();

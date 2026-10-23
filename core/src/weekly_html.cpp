@@ -156,6 +156,7 @@ std::string mtaWarnHtml(const WeeklyReport& r) {
                   std::to_string(r.mta.lateDays) + " 営業日以上遅れたマイルストーンです。</p>\n<ul>\n";
   for (const MtaSeries& s : r.mta.series)
     if (s.warn) b += "<li class=\"rk-late\">" + E(mtaWarnText(s)) + "</li>\n";
+  if (r.mtaWarnOmitted > 0) b += "<li class=\"sub\">" + E(moreText(r.mtaWarnOmitted)) + "</li>\n";
   return b + "</ul>\n";
 }
 
@@ -401,6 +402,7 @@ std::string weeklyHtml(const WeeklyReport& r, const IClock* clock) {
   if (r.empty) {
     h += "<p class=\"empty\">課題がありません。</p>\n";
     if (r.sections.baseline && r.baseline.available) h += baselineHtml(r);  // 全部削除したあとの「消えた課題」
+    if (r.sections.milestones && r.mtaAvailable && r.mta.hasRecords()) h += section("マイルストーン", mtaTrendHtml(r));  // 削除されたマイルストーンの予測の記録
     if (r.sections.notes) h += notesHtml(r);  // 課題がなくても、所感は書ける
   } else {
     const WeeklySections& s = r.sections;

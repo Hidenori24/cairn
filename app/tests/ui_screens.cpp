@@ -1309,6 +1309,17 @@ int main(int argc, char** argv) {
     u.detailOpen = true;
     mtaScroll(mtaChartVisible);
     mtaAway("79_mta_narrow");
+    ImGui::GetIO().AddMousePosEvent(700, 600);  // 開いたままの選択欄を、外を押して閉じる
+    ImGui::GetIO().AddMouseButtonEvent(0, true);
+    frames(1);
+    ImGui::GetIO().AddMouseButtonEvent(0, false);
+    frames(2);
+    ImGui::GetIO().AddMousePosEvent(250, 450);  // 詳細パネルの上ではなく、統計の上でスクロールする
+    for (int k = 0; k < 400 && !(u.statsMta.rows.size() == 4 && u.statsMta.rows.front().a.y > 150 && u.statsMta.rows.front().a.y < 400); ++k) {
+      ImGui::GetIO().AddMouseWheelEvent(0, -1);
+      frames(2);
+    }
+    mtaAway("79b_mta_table_narrow");  // 表（狭い幅でも 3 列が収まる）
     io.DisplaySize = ImVec2(1440, 900);
     u.detailOpen = false;
     // 書き出した HTML と週次レポート（ブラウザで開いて確かめる。ライト・ダーク）

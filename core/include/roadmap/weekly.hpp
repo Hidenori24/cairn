@@ -232,6 +232,7 @@ struct WeeklyReport {
   bool mtaAvailable = false;
   MtaReport mta;          // series は警告のあるものを先頭に、上限（maxItems）までにする
   int mtaOmitted = 0;     // 上限で省いた系列の数
+  int mtaWarnOmitted = 0; // 上限で省いた警告の数（警告の節に「ほか N 件」を出す）
   std::string notes;      // 所感（そのまま）
   bool empty = false;     // 課題がない
 };

@@ -110,9 +110,11 @@ Result<MtaReport> computeMta(const Tree& T, const std::vector<Issue>& issues, co
         if (s.index < 0) continue;
         const std::size_t k = static_cast<std::size_t>(s.index);
         const ScheduleRow& row = rows[k];
+        // 完了済みで完了日がないものは、達成した日が分からないので点にしない（asapFinish は期限や基準日の前の営業日になりうる）
+        if (row.done && !issues[k].resolved) continue;
         p.has = true;
         p.achieved = row.done;
-        p.date = row.done && issues[k].resolved ? *issues[k].resolved : row.asapFinish;
+        p.date = row.done ? *issues[k].resolved : row.asapFinish;
         continue;
       }
       if (!bySlot[c]) continue;

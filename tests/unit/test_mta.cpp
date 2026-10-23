@@ -819,3 +819,96 @@ TEST_CASE("mta: 週次レポート — 記録が 2 週に満たなければ案�
   CHECK_FALSE(has(html2, "<b>*"));
   CHECK(has(html2, "&lt;b&gt;*中間*&lt;/b&gt;"));
 }
+
+// ---------------------------------------------------------------- Copilot の指摘（#94）への回帰テスト
+TEST_CASE("mta: 完了日のない完了済みのマイルストーンは、達成した日として記録せず、点にもしない") {
+  std::string csv = kCsv;
+  const std::size_t at = csv.find("2026-10-14");  // 6（完了済み）の Resolved
+  REQUIRE(at != std::string::npos);
+  csv.erase(at, std::string("2026-10-14").size());
+  Proj p(csv);
+  const ProjectStats st = computeStats(p.comp.T, p.issues, p.comp.R, D("2026-10-19"));
+  const WeeklySnapshot s = makeWeeklySnapshot(p.comp.T, p.issues, p.comp.R, st, D("2026-10-19"));
+  const WeeklySnapItem* six = nullptr;
+  for (const WeeklySnapItem& it : s.milestones)
+    if (it.id == "6") six = &it;
+  REQUIRE(six);
+  CHECK(six->st == 'd');
+  CHECK_FALSE(six->finish);  // asapFinish（期限や基準日の前の営業日）を達成日にしない
+  // いまの点も作らない（過去の記録があっても、達成として描かない）
+  const WeeklyAuto a = autoOf({snapOf("2026-10-05", {msItem("6", 'p', D("2026-10-16"))}), snapOf("2026-10-12", {msItem("6", 'p', D("2026-10-16"))})});
+  const auto r = p.mta(a);
+  REQUIRE(r.ok());
+  const MtaSeries* m6 = seriesOf(*r, "6");
+  REQUIRE(m6);
+  CHECK_FALSE(m6->points.back().has);
+  CHECK(m6->achievedNow);
+  CHECK_FALSE(m6->warn);
+}
+
+TEST_CASE("mta: 作業が 5,000 件を超えても、あとに続くマイルストーンはスナップショットに入る") {
+  std::string csv = "Issue Id,Issue Type,Summary,Parent,Status,Duration (weeks)\n";
+  for (int i = 1; i <= 5001; ++i) csv += std::to_string(i) + ",Task,T" + std::to_string(i) + ",,To Do,1\n";
+  csv += "9000,Milestone,最後の節目,,,0\n";
+  Proj p(csv);
+  const ProjectStats st = computeStats(p.comp.T, p.issues, p.comp.R, D("2026-10-19"));
+  const WeeklySnapshot s = makeWeeklySnapshot(p.comp.T, p.issues, p.comp.R, st, D("2026-10-19"));
+  CHECK(s.items.size() == kWeeklyMaxSnapshotItems);
+  CHECK(s.truncated);
+  REQUIRE(s.milestones.size() == 1);
+  CHECK(s.milestones[0].id == "9000");
+}
+
+TEST_CASE("mta: 週次レポートの警告は、上限で省いた件数を警告の節にも「ほか N 件」と出す（推移の節を外しても）") {
+  Proj p;
+  const Day x = p.finishOf("4");
+  const WeeklyAuto a = autoOf({snapOf("2026-10-05", {msItem("4", 'p', p.wd(x, -7)), msItem("5", 't', p.wd(p.finishOf("5"), -7))}),
+                               snapOf("2026-10-12", {msItem("4", 'p', p.wd(x, -7)), msItem("5", 't', p.wd(p.finishOf("5"), -7))})});
+  WeeklyOptions o;
+  o.maxItems = 1;
+  o.sections.milestones = false;  // 推移の節は出さない
+  const WeeklyReport r = weeklyOf(p, &a, o);
+  REQUIRE(r.mtaAvailable);
+  CHECK(r.mta.warnings == 2);
+  CHECK(r.mta.series.size() == 1);
+  CHECK(r.mtaWarnOmitted == 1);
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "マイルストーンの予測の遅れ（2 件）"));
+  CHECK(has(md, "ほか 1 件"));
+  CHECK_FALSE(has(md, "予測の推移"));
+  const std::string html = weeklyHtml(r);
+  CHECK(has(html, "ほか 1 件"));
+}
+
+TEST_CASE("mta: 課題を全部削除したあとも、削除されたマイルストーンの記録は週次レポート・HTML 書き出しに出る") {
+  Proj p;
+  const WeeklyAuto a = autoOf({snapOf("2026-10-05", {msItem("9", 't', D("2026-11-06"))}), snapOf("2026-10-12", {msItem("9", 't', D("2026-11-13"))})});
+  {
+    const Tree empty;
+    const std::vector<Issue> noIssues;
+    const std::vector<ScheduleRow> noRows;
+    const ProjectStats stats;
+    const LoadReport load;
+    WeeklyInput in(empty, noIssues, noRows, p.cal, stats, load);
+    in.base = D("2026-10-19");
+    in.autos = &a;
+    const WeeklyReport r = buildWeeklyReport(in, {});
+    CHECK(r.empty);
+    REQUIRE(r.mtaAvailable);
+    const std::string md = weeklyMarkdown(r);
+    CHECK(has(md, "課題がありません"));
+    CHECK(has(md, "(削除された) 9"));
+    CHECK(has(md, "予測の推移"));
+    CHECK(has(weeklyHtml(r), "(削除された) 9"));
+    WeeklyOptions off;
+    off.sections.milestones = false;
+    CHECK_FALSE(has(weeklyMarkdown(buildWeeklyReport(in, off)), "(削除された) 9"));
+  }
+  // 作業が 0 件（マイルストーンだけ）の HTML 書き出しでも、推移の節を出す
+  Proj onlyMs("Issue Id,Issue Type,Summary,Parent,Status,Priority,Resolved,Duration (weeks),Deadline\n1,Milestone,節目,,,High,,0,2026-11-13\n");
+  const WeeklyAuto b = autoOf({snapOf("2026-10-05", {msItem("1", 't', D("2026-11-06")), msItem("9", 't', D("2026-11-06"))}),
+                               snapOf("2026-10-12", {msItem("1", 't', D("2026-11-13")), msItem("9", 't', D("2026-11-13"))})});
+  const std::string html = exportOf(onlyMs, &b);
+  CHECK(has(html, "マイルストーンの予測の推移"));
+  CHECK(has(html, "(削除された) 9"));
+}
