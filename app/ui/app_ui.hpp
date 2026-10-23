@@ -1,6 +1,7 @@
 // 画面全体（SPEC 10章）。毎フレーム AppController の状態を読んで描く（即時モード）。
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -82,7 +83,7 @@ class IPlatform {
 enum class Dlg {
   None, NewProject, EditProject, ConfirmDelete, Import, Export, Folder, Settings, Workload, Warnings, Shortcuts,
   TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete, PasteChildren, AttachOpenWarn, AttachPreview,
-  ExportHtml, Weekly, BaselineSave, BaselineManage, ConfirmBaselineDelete, LinkOpenWarn
+  ExportHtml, Weekly, BaselineSave, BaselineManage, ConfirmBaselineDelete, LinkOpenWarn, ConfirmTakeOver
 };
 
 enum class EditField { None, Name, Assignee, Dur, Pred };
@@ -212,6 +213,21 @@ struct UiState {
   std::string previewIssue;       // プレビュー中の添付（Dlg::AttachPreview）
   std::size_t previewIndex = 0;
   float previewZoom = 0;          // 0 = 全体に合わせる
+
+  // 読み取り専用（他の人が編集中など。Issue #62）。drawApp が毎フレームの先頭で設定する。ドラッグを始めない判断に使う
+  bool ro = false;
+  // 詳細パネルの依存タブの課題の行（先行・後続・関連。前のフレームの範囲と課題 id。煙テストが、読み取り専用でもたどれることを確かめる）
+  struct IssuePill {
+    ImVec2 a, b;
+    std::string id;
+  };
+  std::vector<IssuePill> issuePills;
+  // ダイアログの下端のボタンの範囲（最後に描いたもの。煙テストが押す位置を知る）
+  std::vector<std::pair<std::string, std::pair<ImVec2, ImVec2>>> dlgButtons;
+  // 読み取り専用の帯（Issue #62）: 前のフレームに帯を出したか、出した文言、ボタンの範囲（画面の座標。煙テストが押す位置を知る）
+  bool roBandShown = false;
+  std::string roBandText;
+  std::pair<ImVec2, ImVec2> roRecheckBtn{{0, 0}, {0, 0}}, roTakeoverBtn{{0, 0}, {0, 0}};
 
   // 依存の相手を画面（一覧・ガント・ボード）のクリックで選ぶモード（Esc で中止）
   struct LinkPick {
@@ -388,6 +404,34 @@ struct UiState {
     std::vector<StatsTrend::Col> cols;  // 週ごとの当たり
     ImVec2 recA{0, 0}, recB{0, 0};      // 「いま記録する」ボタン
   } statsCfd;
+  // 「今日」ビュー（Issue #72）: 前のフレームの描画の結果（煙テストが当たり位置と件数を知るために使う）と、帯の「すべて表示」
+  struct TodayRow {
+    std::string id;
+    std::string sec;                                  // 節のキー（late / due / prog / start / ms / week）
+    ImVec2 a{0, 0}, b{0, 0};                          // 行・カードの枠
+    ImVec2 chkA{0, 0}, chkB{0, 0};                    // 完了にするチェック
+    ImVec2 tomA{0, 0}, tomB{0, 0};                    // 「明日」
+    ImVec2 nxtA{0, 0}, nxtB{0, 0};                    // 「来週」
+  };
+  struct TodayView {
+    bool drawn = false;
+    bool week = false;                                // 描いたタブ
+    bool empty = false;                               // 「今日やることはありません」を出した
+    bool noMine = false;                              // 担当が「自分」の課題が 1 件もない案内を出した
+    bool baseNote = false;                            // 基準日が今日と違う案内を出した
+    int total = 0;                                    // 今日の節の件数の合計
+    std::vector<std::pair<std::string, int>> sections;  // 描いた節（キー, 件数）
+    std::vector<TodayRow> rows;                       // 見えている行・カード
+    int bands = 0, bandsShown = 0;                    // 進行中の帯（全部・出した数）
+    std::array<int, 5> colCounts{};                   // 今週の列ごとの件数
+    int completing = 0, late = 0, tight = 0, elsewhere = 0;  // 今週のサマリー
+    std::pair<ImVec2, ImVec2> tabToday{{0, 0}, {0, 0}}, tabWeek{{0, 0}, {0, 0}}, whoMe{{0, 0}, {0, 0}}, whoAll{{0, 0}, {0, 0}},
+        baseBtn{{0, 0}, {0, 0}}, elsewhereBtn{{0, 0}, {0, 0}}, bandsBtn{{0, 0}, {0, 0}};
+    std::vector<std::pair<ImVec2, ImVec2>> colRects;  // 今週の列の枠
+    bool bandsAll = false;                            // 帯をすべて出す
+  } today;
+  // リストで開いたら、この課題の行までスクロールする（「今日」の行のダブルクリック）。見つけたら空にする
+  std::string revealId;
   struct RowDrag {
     std::string id;
     bool active = false;

@@ -43,6 +43,7 @@ const char* titleOf(Dlg d) {
     case Dlg::BaselineSave: return "ベースラインを保存";
     case Dlg::BaselineManage: return "ベースラインの管理";
     case Dlg::ConfirmBaselineDelete: return "ベースラインを削除";
+    case Dlg::ConfirmTakeOver: return "編集を引き継ぎますか";
     default: return "";
   }
 }
@@ -55,6 +56,7 @@ float widthOf(const UiState& u, Dlg d) {
     case Dlg::LinkOpenWarn:
     case Dlg::Conflict:
     case Dlg::ConfirmBaselineDelete:
+    case Dlg::ConfirmTakeOver:
     case Dlg::ConfirmQuit: return u.m.s(460);
     case Dlg::BaselineSave: return u.m.s(560);
     case Dlg::BaselineManage: return u.m.s(720);
@@ -94,9 +96,11 @@ int buttons(Frame& f, std::initializer_list<const char*> labels, bool danger = f
   ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - total - u.m.s(12)));
   int pressed = -1;
   std::vector<const char*> v(labels);
+  u.dlgButtons.clear();
   // 副ボタンを先に（左）、主ボタン（v[0]）を最後（右端）に
   for (std::size_t k = 1; k < v.size(); ++k) {
     if (ImGui::Button(v[k], ImVec2(ImGui::CalcTextSize(v[k]).x + u.m.s(28), 0))) pressed = static_cast<int>(k);
+    u.dlgButtons.push_back({v[k], {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()}});
     ImGui::SameLine();
   }
   ImGui::PushStyleColor(ImGuiCol_Button, v4(danger ? u.t->late : u.t->accent));
@@ -104,6 +108,7 @@ int buttons(Frame& f, std::initializer_list<const char*> labels, bool danger = f
   ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->accentInk));
   if (!primaryEnabled) ImGui::BeginDisabled();
   if (ImGui::Button(v[0], ImVec2(ImGui::CalcTextSize(v[0]).x + u.m.s(28), 0)) && primaryEnabled) pressed = 0;
+  u.dlgButtons.push_back({v[0], {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()}});
   if (!primaryEnabled) ImGui::EndDisabled();
   ImGui::PopStyleColor(3);
   return pressed;
@@ -226,7 +231,7 @@ void dlgImport(Frame& f) {
       ImGui::SetNextItemWidth(u.m.s(220));
       ImGui::InputText("##iname", &u.importName);
     }
-    ImGui::BeginDisabled(f.c.session() == nullptr);
+    ImGui::BeginDisabled(f.c.session() == nullptr || f.c.readOnly());  // 読み取り専用では置き換えない
     ImGui::RadioButton("今のプロジェクトを置き換え（Undoで戻せる）", &mode, 1);
     ImGui::EndDisabled();
     u.importReplace = mode == 1;
@@ -993,6 +998,28 @@ void dlgAppSettings(Frame& f) {
   ImGui::Unindent();
   ImGui::EndDisabled();
 
+  // ---- 共有フォルダで交代して使う（編集中のロック。Issue #62）----
+  ImGui::SeparatorText("共有フォルダで交代して使う");
+  bool useLock = pr.useLock;
+  if (ImGui::Checkbox("編集中のロックを使う（他の人が編集中なら、読み取り専用で開く）", &useLock)) c.setUseLock(useLock);
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextDisabled("プロジェクトを開いている間、そのフォルダに「.roadmap.lock」を作り、ほかの人が同時に開いて、あとから保存して上書きしてしまうのを防ぎます。");
+  ImGui::TextDisabled("ロックには、上の「自分の名前」とこのパソコンの名前（マシン名）が入り、ほかの人の画面に「◯◯さん（マシン名）が編集中」と出ます。ログには出しません。");
+  ImGui::TextDisabled("共有ドライブ（ファイルサーバーの SMB）で、一人ずつ交代して使う想定です。OneDrive・Google Drive などの同期フォルダでは、ロックが確実に働かないため対象外です。");
+  ImGui::TextDisabled("ひとりで使うとき、ロックが邪魔なときはオフにできます（オフのあいだは、ロックを作らず、ほかの人のロックも見ません）。ロックを知らない古い版のアプリと混ぜて使うと、ロックは効きません。");
+  ImGui::PopTextWrapPos();
+  if (c.session() && pr.useLock && c.lockEnabled()) {
+    const char* now = "いま開いているプロジェクト: ロックなし（保存前の新しいプロジェクト、または以前の保存形式）";
+    switch (c.lockStatus().kind) {
+      case app::AppController::LockKind::Mine: now = "いま開いているプロジェクト: あなたが編集中（ロックを持っています）"; break;
+      case app::AppController::LockKind::Other:
+      case app::AppController::LockKind::Lost: now = "いま開いているプロジェクト: ほかの人が編集中（読み取り専用）"; break;
+      case app::AppController::LockKind::Failed: now = "いま開いているプロジェクト: ロックを作れないため、読み取り専用"; break;
+      default: break;
+    }
+    ImGui::TextDisabled("%s", now);
+  }
+
   // ---- その他 ----
   ImGui::SeparatorText("その他");
   ImGui::BeginDisabled(!pr.hintDismissed);
@@ -1009,6 +1036,36 @@ void dlgAppSettings(Frame& f) {
   ImGui::SameLine();
   ImGui::TextDisabled("バージョン %s", ROADMAP_VERSION);
   if (buttons(f, {"閉じる"}) == 0) close(f);
+}
+
+// 他の人のロックを引き継ぐ確認（Issue #62）。新しいロックは相手が編集中かもしれないので、未保存の変更が失われる旨を出す。
+// 古いロック（持ち主がいないようなもの）は、軽い確認だけ
+void dlgConfirmTakeOver(Frame& f) {
+  app::AppController& c = f.c;
+  const app::AppController::LockStatus st = c.lockStatus();
+  if (!c.session() || !c.readOnly() || st.kind == app::AppController::LockKind::Failed) return close(f);
+  std::string who = st.user.empty() ? "だれか" : st.user + "さん";
+  if (!st.machine.empty()) who += "（" + st.machine + "）";
+  const bool light = st.stale || st.broken || st.free;
+  ImGui::PushTextWrapPos(0);
+  if (light) {
+    if (st.broken) ImGui::TextUnformatted("ロックのファイルが壊れていて、持ち主がいないようです。編集を引き継ぎます。");
+    else if (st.free) ImGui::TextUnformatted("ロックは解けています。編集を引き継ぎます。");
+    else ImGui::Text("%sのロックは、しばらく更新されていません（アプリが落ちた・ネットワークが切れたなど）。編集を引き継ぎます。", who.c_str());
+    ImGui::TextDisabled("引き継いだあとは、このパソコンで編集できます。");
+  } else {
+    ImGui::Text("%sが編集中かもしれません。", who.c_str());
+    ImGui::TextUnformatted("引き継ぐと、相手が保存していない変更は失われます。相手の画面は読み取り専用に切り替わります。");
+    ImGui::TextDisabled("相手に確かめてから引き継ぐことをおすすめします。");
+  }
+  ImGui::PopTextWrapPos();
+  const int b = buttons(f, {"引き継ぐ", "キャンセル"}, !light);
+  if (b == 0) {
+    close(f);
+    (void)c.takeOverLock();
+  } else if (b == 1) {
+    close(f);
+  }
 }
 
 void dlgConfirmIssueDelete(Frame& f) {
@@ -1164,6 +1221,8 @@ void dlgSettings(Frame& f) {
     u.dName = s->settings().baseDate;
   }
   ImGui::SeparatorText("日程の計算");
+  if (c.readOnly()) ImGui::TextDisabled("読み取り専用で開いているため、日程の計算の設定は変えられません");
+  ImGui::BeginDisabled(c.readOnly());
   ImGui::TextUnformatted("基準日");
   ImGui::SetNextItemWidth(u.m.s(140));
   ImGui::InputText("##base", &u.dName);
@@ -1214,6 +1273,7 @@ void dlgSettings(Frame& f) {
     ImGui::SameLine();
     ImGui::TextDisabled("%d日", static_cast<int>(parseHolidays(u.dText).size()));
   }
+  ImGui::EndDisabled();
   ImGui::SeparatorText("表示");
   ImGui::TextUnformatted("ガントの列");
   for (const auto& [k, l] : {std::pair<const char*, const char*>{"asg", "担当"}, {"status", "状況"}, {"dur", "期間"}, {"float", "余裕"}}) {
@@ -1308,7 +1368,7 @@ void dlgWarnings(Frame& f) {
 
 void dlgShortcuts(Frame& f) {
   const std::pair<const char*, const char*> global[] = {
-      {"Ctrl+K", "コマンドパレット"}, {"Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y", "元に戻す / やり直す"}, {"1 2 3 4 5", "ガント / ボード / リスト / ギャップ / 統計"},
+      {"Ctrl+K", "コマンドパレット"}, {"Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y", "元に戻す / やり直す"}, {"1 2 3 4 5 6", "ガント / ボード / リスト / ギャップ / 統計 / 今日・今週"},
       {"/", "絞り込み欄へ"},        {"?", "この一覧"},  {"Ctrl+,", "アプリの設定"},
       {"Ctrl+ホイール / Ctrl+「+」「-」 / Ctrl+0", "画面全体の拡大縮小 / 100%に戻す"},
       {"Ctrl+ホイール（ガントの時間軸の上）", "ガントの時間軸の拡大縮小（マウスの位置の日付を動かさない）"},
@@ -1499,7 +1559,7 @@ void drawDialogs(Frame& f) {
   }
   // Esc と外側クリックで閉じる（確認ダイアログは外側クリックでは閉じない）
   const bool confirm = u.dlg == Dlg::ConfirmDelete || u.dlg == Dlg::ConfirmQuit || u.dlg == Dlg::Conflict ||
-                       u.dlg == Dlg::ConfirmIssueDelete || u.dlg == Dlg::AttachOpenWarn || u.dlg == Dlg::LinkOpenWarn || u.dlg == Dlg::ConfirmBaselineDelete || (u.dlg == Dlg::AppSettings && !u.pendingDir.empty());
+                       u.dlg == Dlg::ConfirmIssueDelete || u.dlg == Dlg::AttachOpenWarn || u.dlg == Dlg::LinkOpenWarn || u.dlg == Dlg::ConfirmBaselineDelete || u.dlg == Dlg::ConfirmTakeOver || (u.dlg == Dlg::AppSettings && !u.pendingDir.empty());
   const bool outside = ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                        !ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup |
                                                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
@@ -1525,6 +1585,7 @@ void drawDialogs(Frame& f) {
     case Dlg::Conflict: dlgConflict(f); break;
     case Dlg::ConfirmQuit: dlgConfirmQuit(f); break;
     case Dlg::AppSettings: dlgAppSettings(f); break;
+    case Dlg::ConfirmTakeOver: dlgConfirmTakeOver(f); break;
     case Dlg::ConfirmIssueDelete: dlgConfirmIssueDelete(f); break;
     case Dlg::PasteChildren: dlgPasteChildren(f); break;
     case Dlg::AttachOpenWarn: dlgAttachOpenWarn(f); break;
@@ -1545,7 +1606,7 @@ void startPasteChildren(Frame& f) {
   app::AppController& c = f.c;
   UiState& u = f.u;
   Session* s = c.session();
-  if (!s) return;
+  if (!s || !c.canEdit()) return;
   if (c.selection().size() != 1 || !s->issue(c.selection()[0])) {
     c.toast("子課題を貼り付ける親の課題を1つ選んでください");
     return;
@@ -1568,7 +1629,7 @@ void startPasteChildren(Frame& f) {
 void pasteFromClipboard(Frame& f) {
   app::AppController& c = f.c;
   Session* s = c.session();
-  if (!s) return;
+  if (!s || !c.canEdit()) return;
   if (c.selection().size() == 1 && s->issue(c.selection()[0])) {
     const auto clip = f.p.clipboardText();
     if (!clip || text::trim(*clip).empty()) {  // テキストがあれば、画像より先に子課題の貼り付け（Excel などは両方を載せる）

@@ -34,6 +34,7 @@ add_library(roadmap_ui STATIC
   ui/link_drag.cpp
   ui/view_goals.cpp
   ui/view_stats.cpp
+  ui/view_today.cpp
   ui/panel_detail.cpp
   ui/panel_attach.cpp
   ui/panel_links.cpp
@@ -54,6 +55,7 @@ if(ROADMAP_BUILD_APP AND WIN32)
     platform/win32_main.cpp
     platform/win32_platform.cpp
     platform/win32_gh.cpp
+    platform/win32_lock.cpp
     resources/app.rc
   )
   target_link_libraries(roadmap_app PRIVATE roadmap_ui shell32 ole32 comdlg32 uuid)

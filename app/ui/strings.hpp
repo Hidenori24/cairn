@@ -9,6 +9,7 @@ inline constexpr const char* kViewBoard = "ボード";
 inline constexpr const char* kViewList = "リスト";
 inline constexpr const char* kViewGoals = "ギャップ";
 inline constexpr const char* kViewStats = "統計";
+inline constexpr const char* kViewToday = "今日";
 inline constexpr const char* kSearchHint = "件名・ID・ラベルで絞り込み  ( / )";
 inline constexpr const char* kLate = "遅れ";
 inline constexpr const char* kTight = "余裕小";

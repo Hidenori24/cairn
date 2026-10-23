@@ -227,6 +227,7 @@ void drawLinksSection(Frame& f, int i) {
     ImGui::SetKeyboardFocusHere();
     u.linkFocusTarget = false;
   }
+  ImGui::BeginDisabled(f.c.readOnly());  // 読み取り専用では、リンクを追加・直せない（開く・コピーはできる）
   ImGui::SetNextItemWidth(W);
   bool enter = ImGui::InputTextWithHint("##ltarget", "場所（https://… ・ \\\\サーバー\\共有\\… ・ C:\\…）", &u.linkTargetBuf,
                                         ImGuiInputTextFlags_EnterReturnsTrue);
@@ -250,6 +251,7 @@ void drawLinksSection(Frame& f, int i) {
     u.linkPasteBtn = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
     tip("クリップボードのテキストの各行を、1 行 1 リンクとして追加します（20 行まで）");
   }
+  ImGui::EndDisabled();
   if (!u.linkError.empty()) {
     ImGui::PushTextWrapPos(0);
     ImGui::TextColored(v4(u.t->late), "%s", u.linkError.c_str());
@@ -343,7 +345,7 @@ void drawLinksSection(Frame& f, int i) {
       dl->AddRectFilled(p, ImVec2(p.x + W, p.y + rowH), u.t->hover, u.m.s(4));
       ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     }
-    if (grabbed && !u.attachDrag.active && !u.attachDragCancelled && ImGui::IsMouseDragging(ImGuiMouseButton_Left, dragPx)) {
+    if (grabbed && !u.ro && !u.attachDrag.active && !u.attachDragCancelled && ImGui::IsMouseDragging(ImGuiMouseButton_Left, dragPx)) {
       u.attachDrag.active = true;
       u.attachDrag.link = true;
       u.attachDrag.issueId = id;
@@ -402,18 +404,18 @@ void drawLinksSection(Frame& f, int i) {
       if (isGh && item("状態を確認", c.remoteAvailable() && rv.phase != app::AppController::RemoteView::Phase::Checking)) pick(Act::Check, k);
       if (item("コピー", true)) pick(Act::Copy, k);
       ImGui::Separator();
-      if (item("編集", true)) pick(Act::Edit, k);
-      if (item("削除", true)) pick(Act::Delete, k);
+      if (item("編集", !u.ro)) pick(Act::Edit, k);
+      if (item("削除", !u.ro)) pick(Act::Delete, k);
       ImGui::Separator();
-      if (item("上へ", k > 0)) pick(Act::Up, k);
-      if (item("下へ", k + 1 < list.size())) pick(Act::Down, k);
+      if (item("上へ", k > 0 && !u.ro)) pick(Act::Up, k);
+      if (item("下へ", k + 1 < list.size() && !u.ro)) pick(Act::Down, k);
       ImGui::EndPopup();
     }
     ImGui::SetCursorScreenPos(ImVec2(p.x + W - btns + u.m.s(4), p.y + (rowH - ImGui::GetFrameHeight()) / 2));
     if (ImGui::SmallButton("開く")) pick(Act::Open, k);
     if (risky) tip("実行ファイルやスクリプトです。開く前に確認します");
     ImGui::SameLine();
-    if (iconButton(u, "del", "trash", "リンクを外す（場所のファイルや URL には何もしません）")) pick(Act::Delete, k);
+    if (iconButton(u, "del", "trash", "リンクを外す（場所のファイルや URL には何もしません）", !u.ro)) pick(Act::Delete, k);
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + rowH));
     ImGui::Separator();
     ImGui::PopID();

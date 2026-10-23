@@ -18,6 +18,7 @@ const char* viewKey(View v) {
     case View::List: return "list";
     case View::Goals: return "goals";
     case View::Stats: return "stats";
+    case View::Today: return "today";
     default: return "gantt";
   }
 }
@@ -26,11 +27,14 @@ View viewFromKey(const std::string& k) {
   if (k == "list") return View::List;
   if (k == "goals") return View::Goals;
   if (k == "stats") return View::Stats;
+  if (k == "today") return View::Today;
   return View::Gantt;
 }
 
 AppController::AppController(IFileStore& fs, const IClock& clock, std::string dataDir, std::string prefsPath)
-    : fs_(fs), clock_(clock), ws_(std::make_unique<Workspace>(fs, clock, std::move(dataDir))), prefsPath_(std::move(prefsPath)) {}
+    : fs_(fs), clock_(clock), ws_(std::make_unique<Workspace>(fs, clock, std::move(dataDir))), prefsPath_(std::move(prefsPath)) {
+  installWriteGuard();
+}
 
 // GitHub の状態の確認を 1 件ずつ実行する。async = 別のスレッドで走らせ、tick が結果を拾う。そうでなければ start の中で実行する
 class AppController::RemoteWorker {
@@ -104,7 +108,13 @@ class AppController::RemoteWorker {
   std::thread th_;
 };
 
-AppController::~AppController() = default;
+AppController::~AppController() {
+  // 終了時に、自分のロックなら消す（保存は呼び出し側が flushNow で済ませる）
+  if (lockStore_ && lock_.status.kind == LockKind::Mine) {
+    const std::string path = lockPath(lock_.projectId);
+    if (!path.empty()) (void)releaseLock(*lockStore_, path, lock_.mine.token);
+  }
+}
 
 // ---------------------------------------------------------------- 保存先（アプリの設定）
 void AppController::setDataDirInfo(const DataDirChoice& c, std::string exeDir) {
@@ -126,8 +136,18 @@ int AppController::countProjectsIn(const std::string& dir) {
 
 Result<Workspace::MigrateReport> AppController::migrateLegacy() {
   afterEdit();
+  if (const Status g = lockGate(); !g) {  // 未保存の編集を書く前に、ロックを確かめる
+    toast("フォルダ構成へ移せませんでした（元のファイルはそのままです）: " + g.error());
+    return Error{g.error()};
+  }
   auto r = ws_->migrateLegacy();
   lastSync_ = now();
+  if (r && r->moved > 0 && session_ && lockEnabled() && lock_.status.kind == LockKind::None) {
+    // 開いているプロジェクトがフォルダ構成になったら、ここからロックを取る（平置きにはロックがない）
+    lock_.projectId.clear();
+    enterLock();
+    applyReadOnly();
+  }
   if (!r) {
     saveState_ = SaveState::Error;
     saveError_ = r.error();
@@ -206,7 +226,9 @@ Status AppController::switchDataDir(const std::string& dirIn, bool copy) {
       }
   }
 
+  leaveLock();  // 古い保存先のロックを外す（新しい場所で開き直すときに取る）
   ws_ = std::move(next);
+  installWriteGuard();
   lastSync_ = now();
   const bool isDefault = !exeDir_.empty() && storableDataDir(dir, defaultDir()) == ".";
   dirInfo_ = {dir, false, isDefault ? DataDirSource::Default : DataDirSource::Prefs, false};
@@ -262,7 +284,7 @@ void AppController::start() {
 }
 
 void AppController::applyAutoBaseDate() {
-  if (!prefs_.autoBaseToday || !session_ || currentId_.empty()) return;
+  if (!prefs_.autoBaseToday || !session_ || currentId_.empty() || readOnly()) return;
   if (!baseAdjusted_.insert(currentId_).second) return;  // 起動中に1回だけ（手で戻した日付は変えない）
   const std::string today = clock_.todayIso();
   const std::string prev = session_->settings().baseDate;
@@ -306,10 +328,12 @@ std::size_t AppController::attachmentCount(const std::string& issueId) const { r
 
 AttachOutcome AppController::attachFiles(const std::string& issueId, const std::vector<std::string>& files) {
   AttachOutcome out;
+  if (!canEdit()) return out;
   if (!canAttach()) {
     toast(attachDisabledReason());
     return out;
   }
+  if (!verifyLockBeforeWrite()) return out;  // 本体を書く前に、引き継がれていないか確かめる
   if (currentProjectDir().empty() && !flushNow()) {  // まだ書いていないプロジェクトは、先にフォルダを作る
     toast("保存できないため、添付を置けません");
     return out;
@@ -333,10 +357,12 @@ AttachOutcome AppController::attachFiles(const std::string& issueId, const std::
 }
 
 bool AppController::attachData(const std::string& issueId, const std::string& name, const std::string& data) {
+  if (!canEdit()) return false;
   if (!canAttach()) {
     toast(attachDisabledReason());
     return false;
   }
+  if (!verifyLockBeforeWrite()) return false;
   if (currentProjectDir().empty() && !flushNow()) return false;
   auto r = roadmap::attachData(fs_, clock_, currentProjectDir(), session_->attachments(), issueId, name, data, prefs_.me);
   if (!r) {
@@ -350,6 +376,7 @@ bool AppController::attachData(const std::string& issueId, const std::string& na
 }
 
 bool AppController::attachClipboardImage(const std::string& issueId, const std::string& bmp) {
+  if (!canEdit()) return false;
   if (!canAttach()) {
     toast(attachDisabledReason());
     return false;
@@ -367,6 +394,7 @@ bool AppController::attachClipboardImage(const std::string& issueId, const std::
 }
 
 bool AppController::moveAttachment(const std::string& fromIssue, std::size_t index, const std::string& toIssue) {
+  if (!canEdit()) return false;
   if (!canAttach()) {
     toast(attachDisabledReason());
     return false;
@@ -375,6 +403,7 @@ bool AppController::moveAttachment(const std::string& fromIssue, std::size_t ind
     toast("移す先の課題がありません");
     return false;
   }
+  if (!verifyLockBeforeWrite()) return false;
   auto r = roadmap::moveAttachment(fs_, currentProjectDir(), session_->attachments(), fromIssue, index, toIssue);
   if (!r) {
     toast("添付を移せませんでした（" + r.error() + "）");
@@ -387,6 +416,7 @@ bool AppController::moveAttachment(const std::string& fromIssue, std::size_t ind
 }
 
 bool AppController::copyAttachment(const std::string& fromIssue, std::size_t index, const std::string& toIssue) {
+  if (!canEdit()) return false;
   if (!canAttach()) {
     toast(attachDisabledReason());
     return false;
@@ -395,6 +425,7 @@ bool AppController::copyAttachment(const std::string& fromIssue, std::size_t ind
     toast("コピー先の課題がありません");
     return false;
   }
+  if (!verifyLockBeforeWrite()) return false;
   auto r = roadmap::copyAttachment(fs_, clock_, currentProjectDir(), session_->attachments(), fromIssue, index, toIssue, prefs_.me);
   if (!r) {
     toast("添付をコピーできませんでした（" + r.error() + "）");
@@ -407,7 +438,7 @@ bool AppController::copyAttachment(const std::string& fromIssue, std::size_t ind
 }
 
 bool AppController::reorderAttachment(const std::string& issueId, std::size_t from, std::size_t to) {
-  if (!session_) return false;
+  if (!session_ || !canEdit()) return false;
   auto s = roadmap::reorderAttachment(session_->attachments(), issueId, from, to);
   if (!s) return false;
   if (from == to) return true;
@@ -417,7 +448,7 @@ bool AppController::reorderAttachment(const std::string& issueId, std::size_t fr
 }
 
 bool AppController::removeAttachment(const std::string& issueId, std::size_t index) {
-  if (!session_) return false;
+  if (!session_ || !canEdit() || !verifyLockBeforeWrite()) return false;
   auto s = roadmap::removeAttachment(fs_, currentProjectDir(), session_->attachments(), issueId, index);
   if (!s) {
     toast("添付を外せませんでした（" + s.error() + "）");
@@ -465,6 +496,7 @@ bool AppController::addLink(const std::string& issueId, const std::string& title
     return false;
   };
   if (!session_) return fail("プロジェクトを開いてからリンクを付けてください");
+  if (readOnly()) return fail("読み取り専用で開いているため、リンクを付けられません");
   if (!session_->issue(issueId)) return fail("リンクを付ける課題がありません");
   auto r = roadmap::linkAdd(session_->links(), clock_, issueId, title, target);
   if (!r) return fail(r.error());
@@ -475,6 +507,7 @@ bool AppController::addLink(const std::string& issueId, const std::string& title
 
 LinkPasteOutcome AppController::addLinksFromText(const std::string& issueId, const std::string& text) {
   LinkPasteOutcome out;
+  if (!canEdit()) return out;
   if (!session_ || !session_->issue(issueId)) {
     toast("リンクを付ける課題がありません");
     return out;
@@ -501,6 +534,10 @@ LinkPasteOutcome AppController::addLinksFromText(const std::string& issueId, con
 
 bool AppController::editLink(const std::string& issueId, std::size_t index, const std::string& title, const std::string& target,
                              std::string* reason) {
+  if (readOnly()) {
+    if (reason) *reason = "読み取り専用で開いているため、リンクを直せません";
+    return false;
+  }
   if (!session_ || !session_->issue(issueId)) {
     if (reason) *reason = "リンクを直す課題がありません";
     return false;
@@ -516,7 +553,7 @@ bool AppController::editLink(const std::string& issueId, std::size_t index, cons
 }
 
 bool AppController::removeLink(const std::string& issueId, std::size_t index) {
-  if (!session_) return false;
+  if (!session_ || !canEdit()) return false;
   auto s = roadmap::linkRemove(session_->links(), issueId, index);
   if (!s) return false;
   session_->touchLinks();
@@ -526,7 +563,7 @@ bool AppController::removeLink(const std::string& issueId, std::size_t index) {
 }
 
 bool AppController::reorderLink(const std::string& issueId, std::size_t from, std::size_t to) {
-  if (!session_) return false;
+  if (!session_ || !canEdit()) return false;
   auto s = roadmap::linkReorder(session_->links(), issueId, from, to);
   if (!s) return false;
   if (from == to) return true;
@@ -536,6 +573,7 @@ bool AppController::reorderLink(const std::string& issueId, std::size_t from, st
 }
 
 bool AppController::moveLink(const std::string& fromIssue, std::size_t index, const std::string& toIssue) {
+  if (!canEdit()) return false;
   if (!session_ || !session_->issue(toIssue)) {
     toast("移す先の課題がありません");
     return false;
@@ -552,6 +590,7 @@ bool AppController::moveLink(const std::string& fromIssue, std::size_t index, co
 }
 
 bool AppController::copyLink(const std::string& fromIssue, std::size_t index, const std::string& toIssue) {
+  if (!canEdit()) return false;
   if (!session_ || !session_->issue(toIssue)) {
     toast("コピー先の課題がありません");
     return false;
@@ -572,6 +611,8 @@ void AppController::afterEdit() {
   absorbNotices();
   if (session_->version() != seenVersion_) {
     seenVersion_ = session_->version();
+    // 読み取り専用のあいだは、表示の状態の変更もメモリ上だけ。Workspace へ渡さない（ファイルへ書かない）
+    if (readOnly()) return;
     if (session_->contentVersion() != seenContentVersion_) {
       seenContentVersion_ = session_->contentVersion();
       ws_->update(currentId_, recordOf(session_->data()));
@@ -595,7 +636,7 @@ void AppController::tick() {
   pumpRemote();
   const std::int64_t t = now();
   if (saveDueAt_ >= 0 && t >= saveDueAt_) {
-    auto s = ws_->flush();
+    auto s = flushGuarded();
     if (s) {
       saveState_ = SaveState::Saved;
       saveError_.clear();
@@ -610,6 +651,7 @@ void AppController::tick() {
       ++retryStep_;
     }
   }
+  tickLock();
   toasts_.erase(std::remove_if(toasts_.begin(), toasts_.end(), [&](const Toast& x) { return x.expiresAt <= t; }),
                 toasts_.end());
 }
@@ -622,7 +664,7 @@ void AppController::retrySave() {
 
 bool AppController::flushNow() {
   afterEdit();
-  auto s = ws_->flush();
+  auto s = flushGuarded();
   if (!s) {
     saveState_ = SaveState::Error;
     saveError_ = s.error();
@@ -631,6 +673,7 @@ bool AppController::flushNow() {
   saveState_ = SaveState::Saved;
   savedAt_ = clock_.hhmm();
   saveDueAt_ = -1;
+  tickLock();  // 最初の保存でフォルダができたら、ここからロックを取る
   return true;
 }
 
@@ -643,11 +686,20 @@ void AppController::onActivated() {
   if (now() - lastSync_ > 3000) syncFolder(false);
 }
 
-void AppController::syncFolder(bool manual) {
+void AppController::syncFolder(bool manual) { runSync(manual, true); }
+
+void AppController::runSync(bool manual, bool announce) {
   afterEdit();
+  if (const Status g = lockGate(); !g) {  // 未保存の編集を書く前に、ロックを確かめる
+    saveState_ = SaveState::Error;
+    saveError_ = g.error();
+    return;
+  }
+  guardLost_.reset();
   auto r = ws_->sync();
   lastSync_ = now();
   if (!r) {
+    if (handleGuardLoss()) return;  // 書く直前の検査で引き継ぎが分かった: 読み取り専用に切り替えた
     saveState_ = SaveState::Error;
     saveError_ = r.error();
     return;
@@ -665,7 +717,7 @@ void AppController::syncFolder(bool manual) {
     openSession(!r->firstAddedId.empty() ? r->firstAddedId : ws_->entries().front().id(), false);
   }
   const std::string msg = r->message(manual);
-  if (!msg.empty()) toast(msg);
+  if (announce && !msg.empty()) toast(msg);
 }
 
 // ---------------------------------------------------------------- プロジェクト
@@ -694,6 +746,11 @@ void AppController::openSession(const std::string& id, bool keepHistory) {
   seenContentVersion_ = session_->contentVersion();
   if (currentId_ != id) colFilter_ = ColumnFilter{};  // 列の値はプロジェクトごとに違う
   currentId_ = id;
+  if (lock_.projectId != id) {  // 別のプロジェクトを開いた: 前のロックを外し、これのロックを取る（読み直しでは何もしない）
+    leaveLock();
+    enterLock();
+  }
+  applyReadOnly();
   firstRun_ = false;
   sel_.clear();
   cursor_.clear();
@@ -732,7 +789,7 @@ std::string AppController::createProject(SampleKind kind, const std::string& nam
 }
 
 void AppController::editProject(const std::string& name, const std::string& key) {
-  if (!session_) return;
+  if (!session_ || !canEdit()) return;
   session_->setNameKey(name, key);
   afterEdit();
 }
@@ -751,15 +808,28 @@ void AppController::duplicateProject() {
 }
 
 bool AppController::deleteCurrentProject() {
-  if (!session_) return false;
+  if (!session_ || !canEdit()) return false;
   const ProjectEntry* e = ws_->find(currentId_);
   const std::string stem = e ? e->stem : "";
   const bool folder = !e || e->layout == Layout::Folder;
+  if (!verifyLockBeforeWrite()) return false;  // 引き継いだ人のフォルダを動かさない
+  // 自分のロックは、フォルダごと動かす前に外す（_削除済み に持ち込まない）。動かせなければ取り直す
+  const bool wasMine = lock_.status.kind == LockKind::Mine;
+  if (wasMine) {
+    const std::string path = lockPath(currentId_);
+    if (!path.empty()) (void)releaseLock(*lockStore_, path, lock_.mine.token);
+  }
   auto s = ws_->remove(currentId_);
   if (!s) {
+    if (wasMine) {
+      const std::string path = lockPath(currentId_);
+      if (!path.empty()) tryAcquire(path);
+      applyReadOnly();
+    }
     toast("フォルダのファイルを移せませんでした: " + s.error());
     return false;
   }
+  lock_ = LockState{};
   if (!stem.empty())
     toast(folder ? "フォルダ「" + stem + "」を「_削除済み」に移しました" : "フォルダの「" + stem + ".csv」を「_削除済み」に移しました");
   retiredSessions_.push_back(std::move(session_));
@@ -804,6 +874,10 @@ ImportOutcome AppController::importText(const std::string& textIn, const std::st
   }
   afterEdit();
   if (mode == ImportMode::Replace && session_) {
+    if (!canEdit()) {
+      out.error = "読み取り専用で開いているため、置き換えられません";
+      return out;
+    }
     session_->replaceIssues(imp->issues, imp->meta, imp->warns);
     afterEdit();
   } else {
@@ -825,13 +899,45 @@ bool AppController::confirmJsonImport(bool overwrite) {
   pendingJson_.reset();
   std::string first;
   for (auto& p : b.projects) {
-    const bool same = !p.settings.id.empty() && ws_->find(p.settings.id);
+    bool same = !p.settings.id.empty() && ws_->find(p.settings.id);
     std::string id;
+    bool overwritten = false;
     if (same && overwrite) {
-      id = p.settings.id;
-      ws_->update(id, p);
-      ws_->find(id)->dirty = true;
-    } else {
+      const std::string tid = p.settings.id;
+      if (tid == currentId_) {
+        // 開いているプロジェクト: 読み取り専用なら上書きしない。編集できるなら、いつもの保存（ロックの検査つき）で書く
+        if (!readOnly()) {
+          ws_->update(tid, p);
+          ws_->find(tid)->dirty = true;
+          id = tid;
+          overwritten = true;
+        }
+      } else if (!lockEnabled() || lockPath(tid).empty()) {
+        ws_->update(tid, p);
+        ws_->find(tid)->dirty = true;
+        id = tid;
+        overwritten = true;
+      } else {
+        // 開いていないプロジェクト: そのロックを取って、書き終えるまで持つ（取れなければ上書きしない。確かめられないときも同じ）
+        const std::string path = lockPath(tid);
+        const AcquireResult acq = acquireLock(*lockStore_, clock_, lockRandom(), path, lockWho());
+        if (acq.kind == AcquireKind::Acquired) {
+          ws_->update(tid, p);
+          ws_->find(tid)->dirty = true;
+          const Status w = ws_->flush();  // 取っている間に書く
+          (void)releaseLock(*lockStore_, path, acq.lock.token);
+          if (!w) toast("書き込めませんでした（あとで保存し直します）: " + w.error());
+          id = tid;
+          overwritten = true;
+        }
+      }
+      if (!overwritten) {
+        // 他の人が編集中（またはロックを確かめられない）のプロジェクトは上書きしない（別のプロジェクトとして読み込む）
+        p.settings.name += "（読み込み）";
+        toast("「" + p.settings.name + "」と同じプロジェクトを他の人が編集中か、ロックを確かめられないため、上書きせず別のプロジェクトとして読み込みました");
+      }
+    }
+    if (!overwritten) {
       p.settings.id.clear();
       id = ws_->add(std::move(p), true);
     }
@@ -935,7 +1041,7 @@ Status AppController::exportReport(const std::string& path, const ExportOptions&
 std::string AppController::weeklyNotes() const { return session_ ? session_->weekly().notes : std::string(); }
 
 void AppController::setWeeklyNotes(const std::string& notes) {
-  if (!session_) return;
+  if (!session_ || readOnly()) return;  // 読み取り専用のあいだは覚えない（書き出しは使える）
   session_->setWeeklyNotes(notes);
   afterEdit();
 }
@@ -972,7 +1078,7 @@ std::string AppController::weeklyFileName(const WeeklyOptions& opt, bool html) c
 
 void AppController::recordWeekly(const WeeklyOptions& opt) {
   Session* s = session_.get();
-  if (!s || !s->tree() || !s->rows()) return;
+  if (!s || !s->tree() || !s->rows() || readOnly()) return;  // 読み取り専用のあいだは、所感もスナップショットも記録しない
   const Tree& T = *s->tree();
   const std::vector<Issue>& issues = s->viewIssues();
   const std::vector<ScheduleRow>& rows = *s->rows();
@@ -1013,11 +1119,14 @@ void AppController::releaseFrame() {
 }
 
 // ---------------------------------------------------------------- 状況の件数の履歴
-// 履歴を書く入口はここだけ。今は読み取り専用で開く仕組みがないので常に書けるが、将来（#62 のロックなど）
-// 読み取り専用のときはここで何もせず返す
+// 履歴を書く入口はここだけ。読み取り専用（他の人のロック。Issue #62）のときは何もしない
 void AppController::recordHistory(HistoryTrigger why) {
   Session* s = session_.get();
   if (!s) return;
+  if (readOnly()) {
+    if (why == HistoryTrigger::Manual) canEdit();  // 手で押したときだけ理由を出す（開いたときや週報の書き出しでは黙る）
+    return;
+  }
   const bool manual = why == HistoryTrigger::Manual;
   const auto r = s->recordHistory(why == HistoryTrigger::Open ? HistoryMode::IfMissing : HistoryMode::Replace);
   if (!r.ok()) {
@@ -1035,11 +1144,11 @@ void AppController::recordHistory(HistoryTrigger why) {
 }
 
 // ---------------------------------------------------------------- 週の頭のスナップショット
-// 自動のスナップショットを取る入口はここだけ。今は読み取り専用で開く仕組みがないので常に取れるが、将来（#62 のロックなど）
-// 読み取り専用のときはここで何もせず返す。保存は設定だけを書く（元の CSV は書き換えない。afterEdit が選ぶ）
+// 自動のスナップショットを取る入口はここだけ。読み取り専用（他の人のロック。Issue #62）のときは何もしない。
+// 保存は設定だけを書く（元の CSV は書き換えない。afterEdit が選ぶ）
 void AppController::recordWeeklyAuto(WeeklyAutoTrigger why) {
   Session* s = session_.get();
-  if (!s) return;
+  if (!s || readOnly()) return;
   if (why == WeeklyAutoTrigger::Rebase && weeklyAutoOpenedId_ != currentId_) return;  // 開いたときに取っていなければ、取り直すものがない
   const auto r = s->recordWeeklyAuto(why == WeeklyAutoTrigger::Open ? WeeklyAutoMode::IfMissing : WeeklyAutoMode::Replace);
   weeklyAutoOpenedId_ = why == WeeklyAutoTrigger::Open && r.ok() && r.value() == WeeklyAutoResult::Recorded ? currentId_ : std::string();
@@ -1052,6 +1161,7 @@ std::string AppController::defaultBaselineName() const { return clock_.todayIso(
 
 Result<std::string> AppController::saveBaseline(const std::string& name) {
   if (!session_) return Error{"プロジェクトが開かれていません"};
+  if (!canEdit()) return Error{"読み取り専用で開いているため、保存できません"};
   auto r = session_->addBaseline(name);
   if (!r.ok()) {
     toast("ベースラインを保存できません: " + r.error());
@@ -1064,7 +1174,7 @@ Result<std::string> AppController::saveBaseline(const std::string& name) {
 }
 
 bool AppController::renameBaseline(const std::string& id, const std::string& name) {
-  if (!session_) return false;
+  if (!session_ || !canEdit()) return false;
   const Status st = session_->renameBaseline(id, name);
   if (!st.ok()) {
     toast("名前を変えられません: " + st.error());
@@ -1075,7 +1185,7 @@ bool AppController::renameBaseline(const std::string& id, const std::string& nam
 }
 
 bool AppController::deleteBaseline(const std::string& id) {
-  if (!session_) return false;
+  if (!session_ || !canEdit()) return false;
   const Baseline* b = baselineFind(session_->baselines(), id);
   const std::string name = b ? b->name : std::string();
   if (!session_->removeBaseline(id)) return false;
@@ -1252,14 +1362,14 @@ std::string AppController::filterLabel() const {
 
 // ---------------------------------------------------------------- 選択への操作
 void AppController::indentSelection() {
-  if (!session_) return;
+  if (!session_ || !canEdit()) return;
   session_->beginBatch();
   for (const auto& id : selectionRoots()) session_->indent(id);
   session_->endBatch();
   afterEdit();
 }
 void AppController::outdentSelection() {
-  if (!session_) return;
+  if (!session_ || !canEdit()) return;
   auto roots = selectionRoots();
   session_->beginBatch();
   // 下から順に（元の親の直後へ入れるため、並びが逆にならないように）
@@ -1268,7 +1378,7 @@ void AppController::outdentSelection() {
   afterEdit();
 }
 void AppController::moveSelection(int dir) {
-  if (!session_) return;
+  if (!session_ || !canEdit()) return;
   auto roots = selectionRoots();
   session_->beginBatch();
   if (dir > 0) std::reverse(roots.begin(), roots.end());
@@ -1277,24 +1387,24 @@ void AppController::moveSelection(int dir) {
   afterEdit();
 }
 ChainResult AppController::chainSelection(const std::vector<std::string>& order) {
-  if (!session_) return {};
+  if (!session_ || !canEdit()) return {};
   const auto r = session_->chainIssues(sel_, order);
   afterEdit();
   return r;
 }
 int AppController::unchainSelection() {
-  if (!session_) return 0;
+  if (!session_ || !canEdit()) return 0;
   const int n = session_->unchainIssues(sel_);
   afterEdit();
   return n;
 }
 void AppController::deleteSelection() {
-  if (!session_ || sel_.empty()) return;
+  if (!session_ || sel_.empty() || !canEdit()) return;
   session_->deleteIssues(sel_);
   afterEdit();
 }
 void AppController::setStatusFor(const std::vector<std::string>& ids, const std::string& st) {
-  if (!session_) return;
+  if (!session_ || !canEdit()) return;
   session_->beginBatch();
   for (const auto& id : ids)
     if (const Tree* T = session_->tree(); T && T->find(id) >= 0 && T->isLeaf(T->find(id))) session_->setStatus(id, st);
@@ -1302,12 +1412,12 @@ void AppController::setStatusFor(const std::vector<std::string>& ids, const std:
   afterEdit();
 }
 void AppController::setPrioFor(const std::vector<std::string>& ids, const std::string& pr) {
-  if (!session_) return;
+  if (!session_ || !canEdit()) return;
   session_->bulk(ids, [&](Issue& o) { o.prio = pr; });
   afterEdit();
 }
 void AppController::setAssigneeFor(const std::vector<std::string>& ids, const std::string& who) {
-  if (!session_) return;
+  if (!session_ || !canEdit()) return;
   const std::string w = text::trim(who);
   session_->bulk(ids, [&](Issue& o) { o.assignee = w; });
   afterEdit();
@@ -1336,13 +1446,13 @@ std::string AppController::newIssueName(const std::string& parentId) const {
   return makeNewIssueName(in);
 }
 std::string AppController::createIssue(std::string parentId, std::string afterId) {
-  if (!session_) return "";
+  if (!session_ || !canEdit()) return "";
   const std::string id = session_->addIssue(parentId, afterId, newIssueName(parentId));
   afterEdit();
   return id;
 }
 std::string AppController::addSibling() {
-  if (!session_) return "";
+  if (!session_ || !canEdit()) return "";
   std::string id;
   if (cursor_.empty() || !session_->issue(cursor_)) id = createIssue("", "");
   else id = createIssue(session_->issue(cursor_)->parent, cursor_);
@@ -1350,17 +1460,19 @@ std::string AppController::addSibling() {
   return id;
 }
 std::string AppController::addChild() {
-  if (!session_) return "";
+  if (!session_ || !canEdit()) return "";
   if (cursor_.empty()) return addSibling();
   const std::string id = createIssue(cursor_, "");
   if (!id.empty()) select(id);
   return id;
 }
 void AppController::undo() {
-  if (session_ && session_->undo()) afterEdit();
+  if (!session_ || !canEdit(false)) return;
+  if (session_->undo()) afterEdit();
 }
 void AppController::redo() {
-  if (session_ && session_->redo()) afterEdit();
+  if (!session_ || !canEdit(false)) return;
+  if (session_->redo()) afterEdit();
 }
 
 // ---------------------------------------------------------------- テンプレート
@@ -1646,6 +1758,7 @@ void AppController::finishRemoteBatches() {
             firstError + "）");
       continue;
     }
+    if (readOnly()) continue;  // 読み取り専用のあいだは、完了の提案も自動の完了もしない（状態はリンクの横に出ている）
     const auto proposal = proposeCompletion(*issue, session_->links(), remoteStates(), utcOffsetFn_);
     if (!proposal) continue;  // まだ閉じていないものがある（状態はリンクの横に出ている）
     if (prefs_.autoCompleteGitHub) {
@@ -1667,6 +1780,10 @@ void AppController::finishRemoteBatches() {
 }
 
 bool AppController::completeFromRemote(const std::string& project, const std::string& issueId, bool automatic) {
+  if (readOnly()) {  // 提案もしない（読み取り専用で開いているあいだは変えられない）
+    if (!automatic) canEdit();
+    return false;
+  }
   if (!session_ || currentId_ != project) {
     toast("プロジェクトが切り替わったため、完了にしませんでした");
     return false;
@@ -1689,6 +1806,441 @@ bool AppController::completeFromRemote(const std::string& project, const std::st
   toast(label + (automatic ? "のリンクがすべて閉じていたので、自動で完了にしました（完了日 " : "を完了にしました（完了日 ") + fmtIso(day) + "）",
         NoticeAction::Undo);
   return true;
+}
+
+// ---------------------------------------------------------------- 編集中のロック（Issue #62）
+// ロックの内容（利用者名・マシン名）は画面にだけ出し、ログには出さない
+namespace {
+std::string pad2(int v) { return (v < 10 ? "0" : "") + std::to_string(v); }
+
+std::string holderLabel(const AppController::LockStatus& st) {
+  std::string who = st.user.empty() ? "だれか" : st.user + "さん";
+  if (!st.machine.empty()) who += "（" + st.machine + "）";
+  return who;
+}
+
+void fillHolder(AppController::LockStatus& st, const LockInfo& info) {
+  st.user = info.user;
+  st.machine = info.machine;
+  st.openedAt = info.openedAt;
+  st.heartbeatAt = info.heartbeatAt;
+}
+}  // namespace
+
+void AppController::setLockStore(ILockStore* store, IRandom* rng, std::string machine) {
+  lockStore_ = store;
+  lockRng_ = rng;
+  machine_ = std::move(machine);
+  if (session_ && lockStore_ && prefs_.useLock) {
+    // 開いたあとに窓口を渡されたときも、いまのプロジェクトのロックを取る
+    lock_.projectId.clear();
+    enterLock();
+    applyReadOnly();
+  }
+}
+
+IRandom& AppController::lockRandom() {
+  if (lockRng_) return *lockRng_;
+  if (!ownRng_) ownRng_ = std::make_unique<SystemRandom>();
+  return *ownRng_;
+}
+
+LockWho AppController::lockWho() const {
+  LockWho w;
+  w.user = text::trim(prefs_.me);
+  w.machine = machine_;
+  return w;
+}
+
+std::string AppController::lockPath(const std::string& id) const {
+  const ProjectEntry* e = ws_->find(id);
+  if (!e || e->layout != Layout::Folder) return "";
+  const std::string dir = ws_->projectDir(*e);
+  return dir.empty() ? std::string() : lockPathIn(dir);
+}
+
+bool AppController::readOnly() const {
+  const LockKind k = lock_.status.kind;
+  return k == LockKind::Other || k == LockKind::Failed || k == LockKind::Lost;
+}
+
+bool AppController::canEdit(bool announce) {
+  if (!readOnly()) return true;
+  if (announce) {
+    const std::string msg = "読み取り専用で開いているため、変更できません（画面上部の「再確認」「編集を引き継ぐ」で切り替えられます）";
+    if (toasts_.empty() || toasts_.back().text != msg) toast(msg);
+  }
+  return false;
+}
+
+void AppController::toastLong(const std::string& text) {
+  toast(text);
+  toasts_.back().expiresAt = now() + 15000;  // 読み取り専用に切り替わった理由は、見落とさないよう長めに出す
+}
+
+void AppController::applyReadOnly() {
+  const bool ro = readOnly();
+  if (session_) session_->setReadOnly(ro);
+  if (!lock_.projectId.empty()) ws_->setFrozen(lock_.projectId, ro);
+}
+
+void AppController::tryAcquire(const std::string& path) {
+  const AcquireResult r = acquireLock(*lockStore_, clock_, lockRandom(), path, lockWho());
+  LockStatus st;
+  switch (r.kind) {
+    case AcquireKind::Acquired:
+      st.kind = LockKind::Mine;
+      lock_.mine = r.lock;
+      lock_.beatWarned = false;
+      break;
+    case AcquireKind::Held:
+      st.kind = LockKind::Other;
+      st.stale = r.stale;
+      st.broken = r.broken;
+      fillHolder(st, r.lock);
+      break;
+    case AcquireKind::Failed:
+      st.kind = LockKind::Failed;
+      st.reason = r.error;
+      break;
+  }
+  lock_.status = st;
+  lock_.lastCheck = now();
+}
+
+void AppController::enterLock() {
+  lock_ = LockState{};
+  lock_.projectId = currentId_;
+  if (!lockEnabled() || !session_) return;
+  const ProjectEntry* e = ws_->find(currentId_);
+  if (!e || e->layout != Layout::Folder) return;  // 平置きはプロジェクトのフォルダがないので、ロックしない
+  const std::string path = lockPath(currentId_);
+  if (path.empty()) {
+    lock_.pending = true;  // まだ書いていない新しいプロジェクト。最初の保存のあとで取る
+    return;
+  }
+  tryAcquire(path);
+}
+
+void AppController::leaveLock() {
+  if (lockStore_ && lock_.status.kind == LockKind::Mine) {
+    const std::string path = lockPath(lock_.projectId);
+    if (!path.empty()) {
+      // 未保存の編集は、ロックを持っているうちに書く（各ファイルの直前にも検査する）
+      const ProjectEntry* e = ws_->find(lock_.projectId);
+      if (e && (e->dirty || e->settingsDirty)) {
+        guardLost_.reset();
+        (void)ws_->flush();
+        guardLost_.reset();
+      }
+      // 書けなかった（引き継がれていた・確かめられない・書き込みの失敗）ときは、前のプロジェクトを書かずに、
+      // 未保存の編集を別のプロジェクトとして残す（切り替えたあとの保存で、前のプロジェクトを新しい持ち主の上に書かない）
+      const std::string old = lock_.projectId;
+      const std::string kept = preserveUnsaved(old);
+      if (!kept.empty()) toastLong("保存できなかったため、あなたの未保存の編集は「" + kept + "」として残しました");
+      (void)releaseLock(*lockStore_, path, lock_.mine.token);
+    }
+  }
+  if (!lock_.projectId.empty()) ws_->setFrozen(lock_.projectId, false);
+  lock_ = LockState{};
+}
+
+Status AppController::lockGate() {
+  if (!lockEnabled() || lock_.status.kind != LockKind::Mine || !session_) return okStatus();
+  const ProjectEntry* e = ws_->find(currentId_);
+  if (!e || (!e->dirty && !e->settingsDirty)) return okStatus();
+  const std::string path = lockPath(currentId_);
+  if (path.empty()) return okStatus();
+  const OwnershipResult o = checkOwnership(*lockStore_, path, lock_.mine.token);
+  if (o.kind == Ownership::Mine) return okStatus();
+  // 確かめられないとき（ネットワークの不調など）は、失ったとは決めず、保存を見合わせて待つ（再試行する）
+  if (o.kind == Ownership::Unreadable) return Error{"ロックを確かめられないため、保存を見合わせています（" + o.error + "）"};
+  loseLock(o);
+  return okStatus();
+}
+
+Status AppController::flushGuarded() {
+  if (const Status g = lockGate(); !g) return g;
+  guardLost_.reset();
+  if (!ws_->externallyChangedDirty().empty()) {
+    // フォルダのファイルが自分の記録より新しい（ロックを使わない古い版が書いたなど）。そのまま書くと上書きしてしまうので、
+    // 外部変更の取り込み（8.5）に回す。両方変わっていれば、フォルダの版を別のプロジェクトとして残して、手元を書く
+    runSync(false, true);
+    if (saveState_ == SaveState::Error) return Error{saveError_};
+    return okStatus();
+  }
+  const ProjectEntry* cur = ws_->find(currentId_);
+  const bool wroteCurrent = cur && (cur->dirty || cur->settingsDirty) && lock_.status.kind == LockKind::Mine;
+  const Status s = ws_->flush();
+  if (!s) {
+    if (handleGuardLoss()) return okStatus();  // 書く直前の検査で引き継ぎが分かった: 書かず、読み取り専用に切り替えた
+    return s;
+  }
+  if (wroteCurrent) {
+    // 書き終えたあとにも確かめる。検査と書き込みの間に引き継がれていたら、混ざった可能性を知らせて読み取り専用にする
+    const std::string path = lockPath(currentId_);
+    if (!path.empty()) {
+      const OwnershipResult o = checkOwnership(*lockStore_, path, lock_.mine.token);
+      if (o.kind == Ownership::Other || o.kind == Ownership::Missing || o.kind == Ownership::Broken) loseLock(o, true);
+    }
+  }
+  return okStatus();
+}
+
+bool AppController::writeAllowed(const ProjectEntry& e) {
+  if (!lockEnabled() || lock_.status.kind != LockKind::Mine || e.id() != lock_.projectId) return true;
+  const std::string path = lockPath(e.id());
+  if (path.empty()) return true;
+  const OwnershipResult o = checkOwnership(*lockStore_, path, lock_.mine.token);
+  if (o.kind == Ownership::Mine) return true;
+  if (o.kind != Ownership::Unreadable) guardLost_ = o;  // 引き継がれた・消された・壊れた。確かめられないだけなら、再試行に任せる
+  return false;
+}
+
+bool AppController::handleGuardLoss() {
+  if (!guardLost_) return false;
+  const OwnershipResult o = *guardLost_;
+  guardLost_.reset();
+  loseLock(o);
+  return true;
+}
+
+void AppController::installWriteGuard() {
+  ws_->setWriteGuard([this](const ProjectEntry& e) { return writeAllowed(e); });
+}
+
+bool AppController::verifyLockBeforeWrite() {
+  if (!lockEnabled() || lock_.status.kind != LockKind::Mine || !session_) return true;
+  const std::string path = lockPath(currentId_);
+  if (path.empty()) return true;
+  const OwnershipResult o = checkOwnership(*lockStore_, path, lock_.mine.token);
+  if (o.kind == Ownership::Mine) return true;
+  if (o.kind == Ownership::Unreadable) {
+    toast("ロックを確かめられないため、書き込みを見合わせました（" + o.error + "）");
+    return false;
+  }
+  loseLock(o);  // 引き継がれていた: 何も書かず、読み取り専用に切り替える
+  return false;
+}
+
+std::string AppController::preserveUnsaved(const std::string& id) {
+  std::string kept;
+  if (const ProjectEntry* e = ws_->find(id); e && (e->dirty || e->settingsDirty)) {
+    ProjectRecord rec = e->rec;
+    rec.settings.id.clear();
+    rec.settings.name += "（未保存の編集）";
+    rec.settings.attachments.clear();  // 添付の本体は複製しない
+    kept = rec.settings.name;
+    ws_->add(std::move(rec), true);  // 別のプロジェクトとして残す（次の保存で書く）
+  }
+  ws_->discardUnsaved(id);
+  return kept;
+}
+
+void AppController::loseLock(const OwnershipResult& o, bool afterWrite) {
+  afterEdit();  // 手元の最新の編集を Workspace に入れる（まだ自分のロックの状態のうちに）
+  const std::string kept = preserveUnsaved(currentId_);
+  LockStatus st;
+  st.kind = LockKind::Lost;
+  std::string why;
+  switch (o.kind) {
+    case Ownership::Other:
+      fillHolder(st, o.current);
+      st.stale = lockIsStale(o.current, clock_.epochMs());
+      why = afterWrite ? "保存の途中で" + holderLabel(st) + "が編集を引き継ぎました。あなたの保存と相手の保存が混ざった可能性があるため、読み取り専用に切り替えました。内容を確かめてください"
+                       : holderLabel(st) + "がこのプロジェクトの編集を引き継いだため、保存せずに読み取り専用に切り替えました";
+      break;
+    case Ownership::Missing:
+      st.free = true;
+      st.reason = "ロックのファイルがなくなりました";
+      why = afterWrite ? "保存の途中でロックのファイルがなくなりました。読み取り専用に切り替えました。内容を確かめてください"
+                       : "ロックのファイルがなくなったため、保存せずに読み取り専用に切り替えました";
+      break;
+    default:
+      st.broken = true;
+      st.stale = true;
+      st.reason = "ロックのファイルが壊れています";
+      why = afterWrite ? "保存の途中でロックのファイルが壊れました。読み取り専用に切り替えました。内容を確かめてください"
+                       : "ロックのファイルが壊れていたため、保存せずに読み取り専用に切り替えました";
+      break;
+  }
+  lock_.status = st;
+  lock_.mine = LockInfo{};
+  lock_.lastCheck = now();
+  applyReadOnly();
+  runSync(false, false);  // 別のプロジェクトを書き、このプロジェクトはフォルダの版に読み直す
+  toastLong(why + (kept.empty() ? std::string() : "。あなたの未保存の編集は「" + kept + "」として残しました"));
+}
+
+void AppController::tickLock() {
+  if (!lockStore_) return;
+  const std::int64_t t = now();
+  if (lock_.pending && session_) {
+    const ProjectEntry* e = ws_->find(lock_.projectId);
+    if (!e) {
+      lock_.pending = false;
+    } else if (!e->stem.empty() && !e->dirty && !e->settingsDirty && lockEnabled()) {
+      const std::string path = lockPath(lock_.projectId);
+      lock_.pending = false;
+      if (!path.empty()) {
+        tryAcquire(path);
+        applyReadOnly();
+      }
+    }
+  }
+  LockStatus& st = lock_.status;
+  if (st.kind == LockKind::Other && !st.broken && !st.free) {
+    LockInfo h;
+    h.heartbeatAt = st.heartbeatAt;
+    st.stale = lockIsStale(h, clock_.epochMs());
+  }
+  if (!lockEnabled() || !session_) return;
+  if (t - lock_.lastCheck < kLockHeartbeatMs) return;
+  const std::string path = lockPath(lock_.projectId);
+  if (path.empty()) return;
+  if (st.kind == LockKind::Mine) {
+    lock_.lastCheck = t;
+    const OwnershipResult o = heartbeat(*lockStore_, clock_, path, lock_.mine);
+    if (o.kind == Ownership::Mine) {
+      lock_.beatWarned = false;
+    } else if (o.kind == Ownership::Unreadable) {
+      if (!lock_.beatWarned) {
+        lock_.beatWarned = true;
+        toast("ロックを更新できません（共有フォルダに接続できていない可能性があります）。保存のたびに確かめます");
+      }
+    } else {
+      loseLock(o);  // 引き継がれた・消された・壊された
+    }
+  } else if (st.kind == LockKind::Other || st.kind == LockKind::Lost) {
+    // 持ち主の様子を見直す（ロックが解けたら、帯の文言が変わる）
+    lock_.lastCheck = t;
+    const OwnershipResult o = checkOwnership(*lockStore_, path, "");
+    if (o.kind == Ownership::Missing) {
+      st.free = true;
+    } else if (o.kind == Ownership::Other) {
+      st.free = false;
+      st.broken = false;
+      fillHolder(st, o.current);
+      st.stale = lockIsStale(o.current, clock_.epochMs());
+    } else if (o.kind == Ownership::Broken) {
+      st.free = false;
+      st.broken = true;
+      st.stale = true;
+    }
+  }
+}
+
+void AppController::recheckLock() {
+  if (!lockEnabled() || !session_) return;
+  if (lock_.status.kind == LockKind::None || lock_.status.kind == LockKind::Mine) return;
+  const std::string path = lockPath(currentId_);
+  if (path.empty()) return;
+  tryAcquire(path);  // ロックが解けていれば取れる（取れなければ、いまの持ち主が分かる）
+  lock_.projectId = currentId_;
+  applyReadOnly();
+  runSync(false, false);  // 取ったあとで、フォルダの最新を読む（相手が最後に保存した内容で編集を始める）
+  const LockStatus& st = lock_.status;
+  if (st.kind == LockKind::Mine) toast("ロックを取りました。編集できます");
+  else if (st.kind == LockKind::Other) toast(st.free ? "ロックが解けました" : holderLabel(st) + "がまだ編集中です");
+  else toast("ロックを取れませんでした: " + st.reason);
+}
+
+bool AppController::takeOverLock() {
+  if (!lockEnabled() || !session_) return false;
+  if (lock_.status.kind == LockKind::Mine || lock_.status.kind == LockKind::None) return true;
+  const std::string path = lockPath(currentId_);
+  if (path.empty()) return false;
+  const AcquireResult r = takeOver(*lockStore_, clock_, lockRandom(), path, lockWho());
+  if (r.kind == AcquireKind::Acquired) {
+    LockStatus st;
+    st.kind = LockKind::Mine;
+    lock_.status = st;
+    lock_.mine = r.lock;
+    lock_.beatWarned = false;
+    lock_.lastCheck = now();
+    applyReadOnly();
+    runSync(false, false);  // 引き継いだ時点のフォルダの内容を読み直してから編集する
+    toast("編集を引き継ぎました");
+    return true;
+  }
+  if (r.kind == AcquireKind::Held) {  // 同時に引き継ごうとした別の人に先を越された
+    LockStatus st;
+    st.kind = LockKind::Other;
+    st.stale = r.stale;
+    st.broken = r.broken;
+    fillHolder(st, r.lock);
+    lock_.status = st;
+    applyReadOnly();
+    toast(holderLabel(st) + "が先に引き継ぎました");
+    return false;
+  }
+  toast("編集を引き継げませんでした: " + r.error);
+  return false;
+}
+
+void AppController::setUseLock(bool on) {
+  if (prefs_.useLock == on) return;
+  if (on && session_) flushNow();  // ロックなしで編集した内容を、ロックを取る前に書く
+  prefs_.useLock = on;
+  savePrefs();
+  if (!session_) return;
+  if (!on) {
+    leaveLock();
+    lock_.projectId = currentId_;
+    applyReadOnly();
+    return;
+  }
+  enterLock();
+  applyReadOnly();
+  if (readOnly()) runSync(false, false);
+}
+
+std::string AppController::lockSinceLabel() const {
+  const std::int64_t at = lock_.status.openedAt;
+  if (at <= 0) return "";
+  const int offMin = utcOffsetFn_ ? utcOffsetFn_(at / 1000) : 0;
+  const std::int64_t local = at + static_cast<std::int64_t>(offMin) * 60000;
+  std::int64_t days = local / 86400000;
+  std::int64_t ms = local % 86400000;
+  if (ms < 0) {
+    ms += 86400000;
+    --days;
+  }
+  const int hh = static_cast<int>(ms / 3600000), mm = static_cast<int>((ms / 60000) % 60);
+  std::string out = pad2(hh) + ":" + pad2(mm);
+  if (fmtIso(static_cast<Day>(days)) != clock_.todayIso()) {
+    const Ymd ymd = civilFromDays(static_cast<Day>(days));
+    out = std::to_string(ymd.m) + "/" + std::to_string(ymd.d) + " " + out;
+  }
+  return out;
+}
+
+std::string AppController::readOnlyBand() const {
+  const LockStatus& st = lock_.status;
+  switch (st.kind) {
+    case LockKind::Other: {
+      if (st.free) return "編集していた人はいなくなりました（ロックが解けています）。「再確認」で編集できます";
+      if (st.broken) return "ロックのファイルが壊れています（持ち主がいないようです）。読み取り専用で開いています";
+      const std::string since = lockSinceLabel();
+      if (st.stale) {
+        const std::int64_t idleMin = std::max<std::int64_t>(0, (clock_.epochMs() - st.heartbeatAt) / 60000);
+        return holderLabel(st) + "の編集中の記録が残っています" + (since.empty() ? "" : "（" + since + " から") +
+               (since.empty() ? "（" : "、") + std::to_string(idleMin) +
+               "分前から更新がありません）。持ち主がいないようです。読み取り専用で開いています";
+      }
+      return holderLabel(st) + "が" + (since.empty() ? "" : " " + since + " から") + "編集中です。読み取り専用で開いています";
+    }
+    case LockKind::Failed:
+      return "ロックを作れないため、読み取り専用で開いています（" + st.reason + "）";
+    case LockKind::Lost: {
+      if (st.free) return "ロックのファイルがなくなったため、読み取り専用に切り替えました。「再確認」で編集できます";
+      if (st.broken) return "ロックのファイルが壊れたため、読み取り専用に切り替えました。「編集を引き継ぐ」で編集できます";
+      const std::string since = lockSinceLabel();
+      return holderLabel(st) + "が編集を引き継いだため、読み取り専用に切り替えました" + (since.empty() ? "" : "（" + since + " から）");
+    }
+    default:
+      return "";
+  }
 }
 
 }  // namespace roadmap::app

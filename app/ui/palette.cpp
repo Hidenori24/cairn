@@ -20,17 +20,18 @@ std::vector<Cmd> buildCommands(Frame& f) {
   UiState& u = f.u;
   Session* s = c.session();
   std::vector<Cmd> v;
+  const bool ro = c.readOnly();  // 読み取り専用（他の人が編集中）のあいだは、変更するコマンドを並べない
   const bool hasSel = !c.selection().empty();
   const std::string cur = c.cursor();
   const auto add = [&](const char* g, std::string t, const char* k, std::function<void()> fn) {
     v.push_back({g, std::move(t), k ? k : "", std::move(fn)});
   };
   if (s) {
-    add("課題", "課題を追加（最上位）", nullptr, [&f] {
+    if (!ro) add("課題", "課題を追加（最上位）", nullptr, [&f] {
       const auto id = f.c.createIssue("", "");
       if (!id.empty()) beginEdit(f, id, EditField::Name, true);
     });
-    if (hasSel) {
+    if (hasSel && !ro) {
       add("課題", "選択した課題の子を追加", "Shift+N", [&f] {
         const auto id = f.c.addChild();
         if (!id.empty()) beginEdit(f, id, EditField::Name, true);
@@ -52,6 +53,15 @@ std::vector<Cmd> buildCommands(Frame& f) {
     add("表示", "リストを表示", "3", [&c] { c.setView(app::View::List); });
     add("表示", "ギャップを表示", "4", [&c] { c.setView(app::View::Goals); });
     add("表示", "統計を表示", "5", [&c] { c.setView(app::View::Stats); });
+    add("表示", "今日・今週やることを表示", "6", [&c] { c.setView(app::View::Today); });
+    add("表示", "今日・今週: 今日", nullptr, [&c] {
+      c.setUi("todayTab", "today");
+      c.setView(app::View::Today);
+    });
+    add("表示", "今日・今週: 今週", nullptr, [&c] {
+      c.setUi("todayTab", "week");
+      c.setView(app::View::Today);
+    });
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"day", "日"}, {"week", "週"}, {"month", "月"}, {"all", "全体"}})
       add("表示", std::string("ガントの拡大率: ") + l, nullptr, [&c, &u, key = std::string(k)] {
         c.setUi("zoom", key);
@@ -81,25 +91,32 @@ std::vector<Cmd> buildCommands(Frame& f) {
     c.setTheme(t == "auto" ? "light" : t == "light" ? "dark" : "auto");
   });
   if (s) {
-    add("計画", "同時作業の制限のオン/オフ", nullptr, [&c] {
+    if (!ro) add("計画", "同時作業の制限のオン/オフ", nullptr, [&c] {
       Session* ss = c.session();
       ss->setResource({!ss->settings().resource.on, ss->settings().resource.cap});
       c.afterEdit();
     });
     add("計画", "担当者の負荷を見る", nullptr, [&f] { openDialog(f, Dlg::Workload); });
-    add("計画", "基準日を今日にする", nullptr, [&c] {
+    if (!ro) add("計画", "基準日を今日にする", nullptr, [&c] {
       c.session()->setBaseDate(c.clock().todayIso());
       c.afterEdit();
     });
     add("計画", "プロジェクト設定", nullptr, [&f] { openDialog(f, Dlg::Settings); });
-    add("編集", "元に戻す", "Ctrl+Z", [&c] { c.undo(); });
-    add("編集", "やり直す", "Ctrl+Shift+Z", [&c] { c.redo(); });
+    if (!ro) {
+      add("編集", "元に戻す", "Ctrl+Z", [&c] { c.undo(); });
+      add("編集", "やり直す", "Ctrl+Shift+Z", [&c] { c.redo(); });
+    }
+    if (ro) {
+      add("プロジェクト", "ロックを再確認（編集できる状態にする）", nullptr, [&c] { c.recheckLock(); });
+      if (c.lockStatus().kind == app::AppController::LockKind::Other || c.lockStatus().kind == app::AppController::LockKind::Lost)
+        add("プロジェクト", "編集を引き継ぐ…", nullptr, [&f] { openDialog(f, Dlg::ConfirmTakeOver); });
+    }
   }
   add("アプリ", "アプリの設定", "Ctrl+,", [&f] { openDialog(f, Dlg::AppSettings); });
   add("アプリ", "保存先を変える", nullptr, [&f] { openDialog(f, Dlg::AppSettings); });
   add("プロジェクト", "新しいプロジェクト", nullptr, [&f] { openDialog(f, Dlg::NewProject); });
   if (s) {
-    add("プロジェクト", "名前・キーを変更", nullptr, [&f] { openDialog(f, Dlg::EditProject); });
+    if (!ro) add("プロジェクト", "名前・キーを変更", nullptr, [&f] { openDialog(f, Dlg::EditProject); });
     add("プロジェクト", "複製", nullptr, [&c] { c.duplicateProject(); });
   }
   add("プロジェクト", "CSVを取り込む", nullptr, [&f] { openDialog(f, Dlg::Import); });
@@ -109,7 +126,7 @@ std::vector<Cmd> buildCommands(Frame& f) {
   });
   if (s && s->tree()) add("プロジェクト", "HTML に書き出す…", nullptr, [&f] { openDialog(f, Dlg::ExportHtml); });
   if (s && s->tree()) add("プロジェクト", "週次レポート…", nullptr, [&f] { openDialog(f, Dlg::Weekly); });
-  if (s && s->tree()) add("計画", "ベースラインを保存…", nullptr, [&f] { openDialog(f, Dlg::BaselineSave); });
+  if (s && s->tree() && !ro) add("計画", "ベースラインを保存…", nullptr, [&f] { openDialog(f, Dlg::BaselineSave); });
   if (s) add("計画", "ベースラインの管理…", nullptr, [&f] { openDialog(f, Dlg::BaselineManage); });
   add("プロジェクト", "全プロジェクトをバックアップ", nullptr, [&f] {
     f.u.exportKind = "backup";
@@ -122,6 +139,12 @@ std::vector<Cmd> buildCommands(Frame& f) {
   return v;
 }
 }  // namespace
+
+std::vector<std::string> paletteTitles(Frame& f) {
+  std::vector<std::string> v;
+  for (const Cmd& c : buildCommands(f)) v.push_back(c.title);
+  return v;
+}
 
 void drawPalette(Frame& f) {
   app::AppController& c = f.c;

@@ -61,6 +61,7 @@ class MemFileStore final : public IFileStore {
 
   // テスト用の操作
   void put(const std::string& path, const std::string& data);  // 外部からの書き込み（時刻を進める）
+  void erase(const std::string& path) { files_.erase(path); }  // 外部からの削除（失敗の差し込みを通さない）
   bool exists(const std::string& path) const { return files_.count(path) > 0; }
   const std::string& content(const std::string& path) const { return files_.at(path).data; }
   std::vector<std::string> paths() const;
