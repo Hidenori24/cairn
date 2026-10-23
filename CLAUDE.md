@@ -10,12 +10,12 @@ JIRA CSVを読み、営業日でスケジュールを計算し、ガント・ボ
 - std::regex は使わない。文字列は UTF-8 の std::string。ファイル名・パスは std::filesystem::path（u8path / char8_t に注意）。
 - 例外はUI層の最上位だけで捕まえる。core はエラーを戻り値（Result 型）で返す。
 - 乱数・時計・ファイルシステムは注入できるようにする（IClock, IFileStore）。
-- 画面の文言は日本語。コード中のコメントも日本語でよい。文言を足したら `python3 tools/gen_ui_glyphs.py`（UI の煙テストが検出する）。
+- 画面の文言は日本語。コード中のコメントも日本語でよい。文言を足したら `python3 tools/gen_ui_glyphs.py`（UI のスモークテストが検出する）。
 - 描画中に編集しても参照が壊れないよう、画面は `Session::viewIssues()` と `tree()`/`rows()` を使う（フレームの終わりまで古い計算結果を残す）。
 - 依存を足すときは理由をPR/コミットに書く。
 
 ## ビルドとテスト
-- 構成: `cmake --preset windows-release` / `cmake --preset linux-asan`（core+cli のみ）/ `cmake --preset linux-ui`（UI の煙テスト）
+- 構成: `cmake --preset windows-release` / `cmake --preset linux-asan`（core+cli のみ）/ `cmake --preset linux-ui`（UI のスモークテスト）
 - ビルド: `cmake --build --preset <preset>`
 - テスト: `ctest --preset <preset> --output-on-failure`
 - golden だけ: `ctest -R golden`（`cli_golden_*` は rmcli の出力とのバイト比較）

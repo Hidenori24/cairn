@@ -13,7 +13,7 @@ else()
 endif()
 option(ROADMAP_BUILD_APP "GUI（roadmap_app）をビルドする。Windows のみ" ${_roadmap_app_default})
 option(ROADMAP_BUILD_TESTS "core・cli のテストをビルドする" ON)
-option(ROADMAP_UI_TESTS "UI（ImGui）をヘッドレスで動かす煙テストをビルドする（Linux可）" OFF)
+option(ROADMAP_UI_TESTS "UI（ImGui）をヘッドレスで動かすスモークテストをビルドする（Linux可）" OFF)
 option(ROADMAP_WERROR "警告をエラーにする" OFF)
 option(ROADMAP_SANITIZE "ASan + UBSan（GCC/Clang）" OFF)
 
