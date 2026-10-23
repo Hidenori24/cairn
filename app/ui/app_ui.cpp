@@ -616,6 +616,7 @@ void drawTopBar(Frame& f) {
     const float w = std::clamp(W * 0.18f, u.m.s(160), u.m.s(300));
     const ImVec2 q = ImGui::GetCursorScreenPos();
     if (u.focusSearch) {
+      ImGui::SetWindowFocus();  // Esc で外したフォーカスも戻してから入力欄へ移す
       ImGui::SetKeyboardFocusHere();
       u.focusSearch = false;
     }

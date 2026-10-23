@@ -427,6 +427,10 @@ void keyboardUxScenario() {
   h.key(ImGuiKey_Escape);
   check(h.c.filter().q.empty(), "検索中の Esc で、元の検索語も含めて解除する");
   check(h.c.selection().size() == 1 && h.c.selection().front() == selected, "検索解除の Esc では課題の選択を保つ");
+  h.u.focusSearch = true;
+  h.frame(3);
+  check(ImGui::GetIO().WantTextInput, "Esc で解除した後も、もう一度検索欄にフォーカスできる");
+  h.key(ImGuiKey_Escape);
 
   // 検索の × は入力欄と重ならず、密度・倍率・テーマによらず押せる。
   ImGui::GetIO().DisplaySize = ImVec2(3200, 1800);
@@ -437,10 +441,14 @@ void keyboardUxScenario() {
         h.u.m.compact = compact;
         h.u.t = dark ? &ui::darkTokens() : &ui::lightTokens();
         ui::applyStyle(*h.u.t, h.u.m);
+        h.frame(2);  // 画面サイズ・スタイルの変更を反映してから操作する
         h.c.filter().q = "検索語";
         h.u.focusSearch = true;
         h.frame(3);
         ImGuiWindow* root = ImGui::FindWindowByName("##root");
+        if (!root || ImGui::GetActiveID() != root->GetID("##q"))
+          std::fprintf(stderr, "検索フォーカス: scale=%.1f compact=%d dark=%d active=%u nav=%u\n", scale, compact, dark,
+                       ImGui::GetActiveID(), ImGui::GetCurrentContext()->NavId);
         check(root && ImGui::GetActiveID() == root->GetID("##q"), "検索欄がアクティブ");
         if (!root) continue;
         const ImRect box = root->NavRectRel[ImGuiNavLayer_Main];
@@ -489,7 +497,11 @@ void keyboardUxScenario() {
 }
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  if (argc == 2 && std::string(argv[1]) == "--keyboard") {
+    keyboardUxScenario();
+    return failures ? 1 : 0;
+  }
   readOnlyScenario(false);
   readOnlyScenario(true);
   keyboardUxScenario();
