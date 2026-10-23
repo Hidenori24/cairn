@@ -31,7 +31,7 @@ JIRA 互換の CSV を原本に、課題の階層・依存関係・期間から 
 
 `-rc` が付いた版（`1.0.0-rc.1` など）は、リリース候補の pre-release です。
 
-**Windows の SmartScreen について**: 配布物にはコード署名していますが、新しいアプリは評判が蓄積するまで警告が出ることがあります。発行元と配布元を確認し、信頼できる場合は「詳細情報」→「実行」で起動できます。`SHA256SUMS.txt` でも取得したファイルが変わっていないことを確かめられます。
+**Windows の SmartScreen について**: 配布物にはコード署名をしていないため、初めて実行すると「Windows によって PC が保護されました」と表示されます。公式の配布元から取得したことを確認し、信頼できる場合は「詳細情報」→「実行」で起動できます。`SHA256SUMS.txt` でも取得したファイルが変わっていないことを確かめられます。
 
 ### 機能
 
@@ -195,7 +195,7 @@ Get a build from [Releases](https://github.com/Hidenori24/task_management_tool/r
 
 Versions with `-rc` (for example `1.0.0-rc.1`) are release candidates, published as pre-releases.
 
-**Windows SmartScreen**: the files are code-signed, but a new app may still show a warning until it builds reputation. Check the publisher and download source; if you trust them, choose "More info" and then "Run anyway". You can also compare the file with `SHA256SUMS.txt` to check it was not changed.
+**Windows SmartScreen**: the files are not code-signed, so Windows may show "Windows protected your PC" the first time you run them. Verify that you downloaded them from the official release and, if you trust the source, choose "More info" and then "Run anyway". You can also compare the file with `SHA256SUMS.txt` to check it was not changed.
 
 ### Features
 

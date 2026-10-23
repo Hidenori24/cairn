@@ -174,32 +174,38 @@ jobs:
           foreach ($f in "Cairn-windows-x64.zip","Cairn-Setup-$ver.exe","SHA256SUMS.txt") {
             if (-not (Test-Path (Join-Path $rel $f))) { throw "配布物 $f がありません" }
           }
-      - name: リリース配布物にコード署名
+      - name: リリース配布物にコード署名（証明書がある場合）
         if: (github.event_name == 'workflow_dispatch' && inputs.release_tag != '') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
         shell: pwsh
         env:
           CAIRN_SIGNING_CERTIFICATE_BASE64: ${{ secrets.CAIRN_SIGNING_CERTIFICATE_BASE64 }}
           CAIRN_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.CAIRN_SIGNING_CERTIFICATE_PASSWORD }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:CAIRN_SIGNING_CERTIFICATE_BASE64) -or [string]::IsNullOrWhiteSpace($env:CAIRN_SIGNING_CERTIFICATE_PASSWORD)) {
-            throw "署名には Actions secrets CAIRN_SIGNING_CERTIFICATE_BASE64 と CAIRN_SIGNING_CERTIFICATE_PASSWORD が必要です"
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:CAIRN_SIGNING_CERTIFICATE_BASE64)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:CAIRN_SIGNING_CERTIFICATE_PASSWORD)
+          if ($hasCertificate -ne $hasPassword) {
+            throw "署名する場合は Actions secrets CAIRN_SIGNING_CERTIFICATE_BASE64 と CAIRN_SIGNING_CERTIFICATE_PASSWORD の両方が必要です"
           }
-          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
-            Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $signTool) { throw "Windows SDK の signtool.exe が見つかりません" }
-          $certPath = Join-Path $env:RUNNER_TEMP "cairn-signing.pfx"
-          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:CAIRN_SIGNING_CERTIFICATE_BASE64))
-          try {
-            $files = Get-ChildItem dist -Filter *.exe -File -Recurse
-            if (-not $files) { throw "署名対象の exe が dist にありません" }
-            foreach ($file in $files) {
-              & $signTool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $certPath /p $env:CAIRN_SIGNING_CERTIFICATE_PASSWORD $file.FullName
-              if ($LASTEXITCODE -ne 0) { throw "署名に失敗しました: $($file.Name)" }
-              & $signTool verify /pa /v $file.FullName
-              if ($LASTEXITCODE -ne 0) { throw "署名の検証に失敗しました: $($file.Name)" }
+          if (-not $hasCertificate) {
+            Write-Host "Trusted signing certificate is not configured; release files will remain unsigned."
+          } else {
+            $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+              Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+            if (-not $signTool) { throw "Windows SDK の signtool.exe が見つかりません" }
+            $certPath = Join-Path $env:RUNNER_TEMP "cairn-signing.pfx"
+            [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:CAIRN_SIGNING_CERTIFICATE_BASE64))
+            try {
+              $files = Get-ChildItem dist -Filter *.exe -File -Recurse
+              if (-not $files) { throw "署名対象の exe が dist にありません" }
+              foreach ($file in $files) {
+                & $signTool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $certPath /p $env:CAIRN_SIGNING_CERTIFICATE_PASSWORD $file.FullName
+                if ($LASTEXITCODE -ne 0) { throw "署名に失敗しました: $($file.Name)" }
+                & $signTool verify /pa /v $file.FullName
+                if ($LASTEXITCODE -ne 0) { throw "署名の検証に失敗しました: $($file.Name)" }
+              }
+            } finally {
+              Remove-Item $certPath -Force -ErrorAction SilentlyContinue
             }
-          } finally {
-            Remove-Item $certPath -Force -ErrorAction SilentlyContinue
           }
       - uses: actions/upload-artifact@v6
         with:
@@ -267,6 +273,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
       - uses: actions/download-artifact@v7
         with:
           name: Cairn-windows
@@ -277,8 +286,16 @@ jobs:
           zip -r -X Cairn-windows-x64.zip Cairn
           sha256sum Cairn-windows-x64.zip Cairn/*.exe Cairn-Setup-*.exe > SHA256SUMS.txt
           cat SHA256SUMS.txt
+      - name: リリースノート
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          sh tools/release_notes.sh "$ver" docs/CHANGELOG.md > dist/notes.md
+          printf '\n---\nポータブル版: zip を展開して Cairn.exe を実行（インストール不要）。\n' >> dist/notes.md
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: dist/notes.md
           # タグに「-」を含む（v1.0.0-rc.1 など）ときは pre-release にして「最新」にしない
           prerelease: ${{ contains(github.ref_name, '-') }}
           make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
