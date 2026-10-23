@@ -132,22 +132,32 @@ struct Gantt {
     std::string months, vlines, dayWd, dayWe, weeks;
     const float weekW = ax.px * 7;
     const int every = ganttWeekLabelEvery(weekW, 1.f);
+    const int dayEvery = std::max(1, static_cast<int>(std::ceil(24.f / std::max(ax.px, 1.f))));
     for (Day d = ax.rs; d <= capHi; ++d) {
       const Ymd ymd = civilFromDays(d);
       const float x = ax.x(d);
       const bool panelStart = (d - ax.rs) % kPrintDaysPerPanel == 0;
-      if (ymd.d == 1 || d == ax.rs || panelStart) {
-        if (x - lastLabel >= 58.f) {
-          const std::string label = panelStart && d != ax.rs ? std::to_string(ymd.m) + "/" + std::to_string(ymd.d) : std::to_string(ymd.y) + "/" + std::to_string(ymd.m);
-          addText(months, x + 4, rowH2 / 2 + 4, label);
-          lastLabel = x;
-        }
-        if (ymd.d == 1) vlines += "M" + pathNum(x) + " 0v" + pathNum(headH);
+      const int daysToPanelEnd = kPrintDaysPerPanel - ((d - ax.rs) % kPrintDaysPerPanel);
+      const bool labelNearPanelEnd = static_cast<float>(daysToPanelEnd) * ax.px < 58.f;
+      if (panelStart) {
+        // 各パネルの先頭に必ず日付を置き、直前パネルのラベルは境界に近づけない。
+        lastLabel = -1e9f;
+        const std::string label = d == ax.rs ? std::to_string(ymd.y) + "/" + std::to_string(ymd.m)
+                                               : std::to_string(ymd.m) + "/" + std::to_string(ymd.d);
+        addText(months, x + 4, rowH2 / 2 + 4, label);
+        lastLabel = x;
+      } else if ((ymd.d == 1 || d == ax.rs) && !labelNearPanelEnd && x - lastLabel >= 58.f) {
+        addText(months, x + 4, rowH2 / 2 + 4, std::to_string(ymd.y) + "/" + std::to_string(ymd.m));
+        lastLabel = x;
       }
+      if (ymd.d == 1) vlines += "M" + pathNum(x) + " 0v" + pathNum(headH);
       if (styleZoom == "day") {
-        const int w = dow(d);
-        std::string& tgt = (w == 0 || w == 6) ? dayWe : dayWd;
-        addText(tgt, x + ax.px / 2, rowH2 + rowH2 / 2 + 4, std::to_string(ymd.d));
+        const int dayInPanel = (d - ax.rs) % kPrintDaysPerPanel;
+        if (dayInPanel % dayEvery == 0) {
+          const int w = dow(d);
+          std::string& tgt = (w == 0 || w == 6) ? dayWe : dayWd;
+          addText(tgt, x + ax.px / 2, rowH2 + rowH2 / 2 + 4, std::to_string(ymd.d));
+        }
       } else if (styleZoom == "week" && dow(d) == 1) {
         const int wk = (d - ax.rs) / 7;
         if (wk % every == 0) addText(weeks, x + 2, rowH2 + rowH2 / 2 + 4, fmtShort(d));
