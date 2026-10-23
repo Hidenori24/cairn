@@ -1,6 +1,7 @@
 // 報告の書き出し（HTML + インライン SVG）
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <set>
 #include <string>
@@ -327,7 +328,8 @@ TEST_CASE("report: 文字コード・形（doctype・meta charset・lang・BOM �
   CHECK(contains(h, "</html>"));
   CHECK(contains(h, "<title>テストプロジェクト - 報告</title>"));
   // 印刷: A4 横・@media print・ページの区切り
-  CHECK(contains(h, "@page{size:A4 landscape"));
+  CHECK(contains(h, "@page{size:A4 portrait"));
+  CHECK(contains(h, "@page gantt{size:A4 landscape"));
   CHECK(contains(h, "@media print"));
   CHECK(contains(h, "break-before:page"));
   CHECK(contains(h, "break-inside:avoid"));
@@ -398,9 +400,9 @@ TEST_CASE("report: 内容のオン・オフ（ガント・統計・リスト）"
   CHECK(has(none, "書き出す内容が選ばれていません"));
   CHECK_FALSE(has(none, "<h2>"));
   // 最初の節だけ新しいページにしない
-  CHECK(count(all, "<section class=\"part first\">") == 1);
+  CHECK(count(all, "<section class=\"part first") == 1);
   CHECK(count(all, "<section class=\"part\">") == 2);
-  CHECK(count(g, "<section class=\"part first\">") == 1);
+  CHECK(count(g, "<section class=\"part first") == 1);
 }
 
 TEST_CASE("report: ライトが既定（背景は白）、ダークも選べる") {
@@ -908,7 +910,7 @@ TEST_CASE("report: 長いガントは行ごとに区切った SVG になり、�
   o.stats = false;
   o.list = false;
   const std::string h = exportHtml(p.input(), o);
-  const std::size_t chunks = count(h, "<div class=\"gseg\">");
+  const std::size_t chunks = count(h, "<div class=\"gseg");
   CHECK(chunks >= 3);
   CHECK(count(h, "id=\"gh\"") == 1);
   CHECK(count(h, "id=\"gb\"") == 1);
@@ -1144,11 +1146,19 @@ TEST_CASE("report: 日程が大きく動いても、ガントの時間軸は計�
     ExportInput in = p.input();
     in.baseline = &cmp.value();
     const std::string h = exportHtml(in, o);
-    // SVG の幅
-    const std::size_t sv = h.find("<svg xmlns");
-    REQUIRE(sv != std::string::npos);
-    const std::size_t wp = h.find("width=\"", sv);
-    const double W = std::stod(h.substr(wp + 7, h.find('"', wp + 7) - wp - 7));
+    // 各期間の SVG は約 2 か月幅。計画バーは全期間の座標を共有 defs に
+    // 持つため、最後の表示 viewBox の右端までを全体の有効幅とする。
+    double axisRight = 0;
+    for (std::size_t q = h.find("viewBox=\""); q != std::string::npos; q = h.find("viewBox=\"", q + 1)) {
+      const std::size_t start = q + 9;
+      const std::size_t space1 = h.find(' ', start);
+      const std::size_t space2 = h.find(' ', space1 + 1);
+      const std::size_t space3 = h.find(' ', space2 + 1);
+      const double x0 = std::stod(h.substr(start, space1 - start));
+      const double width = std::stod(h.substr(space2 + 1, space3 - space2 - 1));
+      axisRight = std::max(axisRight, x0 + width);
+    }
+    REQUIRE(axisRight > 0);
     std::size_t n = 0;
     for (std::size_t q = h.find("class=\"plan\""); q != std::string::npos; q = h.find("class=\"plan\"", q + 1)) {
       const std::size_t r = h.rfind("<rect x=\"", q);
@@ -1157,7 +1167,7 @@ TEST_CASE("report: 日程が大きく動いても、ガントの時間軸は計�
       const std::size_t wq = h.find("width=\"", r);
       const double w = std::stod(h.substr(wq + 7, h.find('"', wq + 7) - wq - 7));
       CHECK(x >= 590.0 - 1e-6);       // 左の表（幅 590）に重ならない
-      CHECK(x + w <= W + 1e-6);       // SVG の外に出ない
+      CHECK(x + w <= axisRight + 1e-6);  // 全期間の SVG の外に出ない
       ++n;
     }
     CHECK(n >= 1);
