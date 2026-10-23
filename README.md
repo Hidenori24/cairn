@@ -91,7 +91,7 @@ cmake --preset linux-asan
 cmake --build --preset linux-asan
 ctest --preset linux-asan
 
-# Linux で UI をヘッドレスで動かす煙テスト
+# Linux で UI をヘッドレスで動かすスモークテスト
 cmake --preset linux-ui && cmake --build --preset linux-ui && ctest --preset linux-ui
 ```
 
@@ -158,7 +158,7 @@ rmcli validate input.csv                                                        
 - golden との照合: 計算13ケース（全フィールド）と書き出しCSV 6ファイル（バイト一致）。`rmcli` の出力も golden とバイト一致
 - 単体テスト・性質のテスト（往復の安定・Undo の完全性・計算の不変条件・資源制限の単調性・フィルタの整合）
 - 性能（リリースビルド）: 5,000件の計算が約5ms（制限ありで約40ms）
-- UI: ImGui をヘッドレスで動かす煙テスト（全ビュー・全ダイアログ・パレット・その場編集・5,000行）を ASan/UBSan で実行
+- UI: ImGui をヘッドレスで動かすスモークテスト（全ビュー・全ダイアログ・パレット・その場編集・5,000行）を ASan/UBSan で実行
 - Windows の exe は MinGW でクロスビルドし、Wine 上で起動・クリック・その場編集・保存まで確認
 - **Windows 実機（MSVC ビルド）での IME・高DPI の確認は未実施**です。手順は [docs/ui-spike.md](docs/ui-spike.md)
 

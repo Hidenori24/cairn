@@ -1399,7 +1399,7 @@ struct FilterSel {
   std::string& name;
   bool& standalone;
   std::string& rootId;
-  ImVec2 &whoA, &whoB, &rootA, &rootB;  // 選択欄の位置（煙テストが使う）
+  ImVec2 &whoA, &whoB, &rootA, &rootB;  // 選択欄の位置（スモークテストが使う）
 };
 
 void drawFilterCombos(Frame& f, Session& s, const Tree& T, FilterSel sel, const char* whoId, const char* rootIdStr) {

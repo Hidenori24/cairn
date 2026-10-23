@@ -1,5 +1,5 @@
 # GUI（Dear ImGui）。UI のコード（app/ui）は ImGui だけに依存し、Win32・DX11 は app/platform に閉じ込める。
-# Linux では UI をヘッドレスで動かす煙テスト（ROADMAP_UI_TESTS）だけをビルドする。
+# Linux では UI をヘッドレスで動かすスモークテスト（ROADMAP_UI_TESTS）だけをビルドする。
 
 add_library(imgui_lib STATIC
   ${imgui_SOURCE_DIR}/imgui.cpp

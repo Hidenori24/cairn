@@ -118,7 +118,7 @@ int linkReorderSlot(const UiState& u, const std::string& issueId, ImVec2 pos) {
 
 namespace {
 // バッジのツールチップ: 先頭から 6 件を 1 行ずつ（種類のアイコン・表示名・場所を薄く）。残りは「ほか N 件」。
-// 描画中にリンクの一覧が変わらないよう、先に写してから描く。出した行は u.linkTipLines に残す（煙テスト用）
+// 描画中にリンクの一覧が変わらないよう、先に写してから描く。出した行は u.linkTipLines に残す（スモークテスト用）
 void drawLinkTooltip(Frame& f, const std::string& issueId) {
   UiState& u = f.u;
   const auto& list = f.c.linksOf(issueId);

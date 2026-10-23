@@ -65,7 +65,7 @@
     {
       "name": "linux-ui",
       "inherits": "base",
-      "displayName": "Linux / UIの煙テスト（ImGuiヘッドレス）",
+      "displayName": "Linux / UIのスモークテスト（ImGuiヘッドレス）",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "ROADMAP_BUILD_APP": "OFF",

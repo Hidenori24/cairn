@@ -724,7 +724,7 @@ void drawTodayView(Frame& f, ImVec2 size) {
   UiState& u = f.u;
   Session* s = c.session();
   UiState::TodayView& tv = u.today;
-  // 前のフレームの描画の結果を捨てる（煙テストが「いま描いたもの」を見るため）
+  // 前のフレームの描画の結果を捨てる（スモークテストが「いま描いたもの」を見るため）
   const bool bandsAll = tv.bandsAll;
   tv = UiState::TodayView{};
   tv.bandsAll = bandsAll;

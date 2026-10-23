@@ -142,7 +142,7 @@ struct UiState {
     std::string id;
   };
   std::vector<DropTarget> dropTargets, dropBuild;
-  // 行・カードの添付バッジの範囲（煙テストが、マウスを載せる位置を知るため。前のフレームのものが attachBadges）
+  // 行・カードの添付バッジの範囲（スモークテストが、マウスを載せる位置を知るため。前のフレームのものが attachBadges）
   std::vector<DropTarget> attachBadges, attachBadgeBuild;
   std::string attachWarnPath;  // 開く前に警告している添付の本体（Dlg::AttachOpenWarn）
   // 添付のサムネイル（添付タブの行）をつかんで別の課題へ動かすドラッグ（離した位置のドロップ先は dropTargets で調べる）。
@@ -157,13 +157,13 @@ struct UiState {
   } attachDrag;
   int attachDragEscFrame = -10;      // 添付のドラッグを Esc で取り消したフレーム（そのフレームの Esc は、ほかの Esc の動作に使わない）
   bool attachDragCancelled = false;  // 取り消したドラッグ。マウスのボタンを離すまで、つかみ直したことにしない
-  // 前のフレームの添付タブの行の範囲（画面の座標）。並べ替えの位置の判定と、煙テストの当たり位置に使う
+  // 前のフレームの添付タブの行の範囲（画面の座標）。並べ替えの位置の判定と、スモークテストの当たり位置に使う
   std::vector<std::pair<ImVec2, ImVec2>> attachRows;
   std::string attachRowsIssue;
   int attachRowsFrame = -10;
   // 添付タブの一覧（スクロールする子ウィンドウ）の見える範囲。この外では並べ替えの位置を出さない（隠れた行へ並べ替えない）
   std::pair<ImVec2, ImVec2> attachRowsClip{{0, 0}, {0, 0}};
-  // 前のフレームの添付タブの「ファイルを選んで追加」ボタンとサムネイルの大きさのスライダーの範囲（画面の座標）。煙テストの当たり位置
+  // 前のフレームの添付タブの「ファイルを選んで追加」ボタンとサムネイルの大きさのスライダーの範囲（画面の座標）。スモークテストの当たり位置
   std::pair<ImVec2, ImVec2> attachPickBtn{{0, 0}, {0, 0}}, attachSlider{{0, 0}, {0, 0}};
   // ---- 関連リンク（Issue #60。添付タブの中の「リンク」の節）----
   std::string linkTargetBuf, linkTitleBuf;  // 追加・編集の入力欄（場所・表示名）
@@ -173,15 +173,15 @@ struct UiState {
   std::size_t linkEditIndex = 0;
   bool linkFocusTarget = false;             // 次のフレームで場所の入力欄にフォーカスを入れる
   std::string linkWarnTarget;               // 開く前に警告しているリンクの場所（Dlg::LinkOpenWarn）
-  // 前のフレームのリンクの行の範囲（画面の座標）。並べ替えの位置の判定と、煙テストの当たり位置に使う（attachRows と同じ）
+  // 前のフレームのリンクの行の範囲（画面の座標）。並べ替えの位置の判定と、スモークテストの当たり位置に使う（attachRows と同じ）
   std::vector<std::pair<ImVec2, ImVec2>> linkRows;
   std::string linkRowsIssue;
   int linkRowsFrame = -10;
   std::pair<ImVec2, ImVec2> linkRowsClip{{0, 0}, {0, 0}};
-  // 前のフレームのリンクの節の部品の範囲（画面の座標。煙テストが当たり位置を知るため）
+  // 前のフレームのリンクの節の部品の範囲（画面の座標。スモークテストが当たり位置を知るため）
   std::pair<ImVec2, ImVec2> linkTargetBox{{0, 0}, {0, 0}}, linkTitleBox{{0, 0}, {0, 0}}, linkAddBtn{{0, 0}, {0, 0}},
       linkPasteBtn{{0, 0}, {0, 0}}, linkCancelBtn{{0, 0}, {0, 0}};
-  // リンクの右クリックのメニュー: 開いたリンク（課題・番号）と、前のフレームの項目の範囲（煙テストが押す位置を知るため）
+  // リンクの右クリックのメニュー: 開いたリンク（課題・番号）と、前のフレームの項目の範囲（スモークテストが押す位置を知るため）
   std::string linkCtxIssue;
   std::size_t linkCtxIndex = 0;
   bool linkCtxRequest = false;
@@ -191,10 +191,10 @@ struct UiState {
     bool enabled = true;
   };
   std::vector<MenuItemGeom> linkCtxItems;
-  // 行・カードのリンクのバッジの範囲（前のフレームのものが linkBadges）と、最後に出したバッジのツールチップの行（煙テスト用）
+  // 行・カードのリンクのバッジの範囲（前のフレームのものが linkBadges）と、最後に出したバッジのツールチップの行（スモークテスト用）
   std::vector<DropTarget> linkBadges, linkBadgeBuild;
   // ---- GitHub の状態の確認（Issue #61）----
-  // 前のフレームの節の部品の範囲（画面の座標。煙テストが当たり位置を知るため）と、出した状態の表示（行ごと。出さない行は空）
+  // 前のフレームの節の部品の範囲（画面の座標。スモークテストが当たり位置を知るため）と、出した状態の表示（行ごと。出さない行は空）
   std::pair<ImVec2, ImVec2> linkCheckBtn{{0, 0}, {0, 0}}, toastActionBtn{{0, 0}, {0, 0}};
   std::vector<std::string> linkStatusShown;
   std::vector<std::string> linkTipLines;
@@ -216,15 +216,15 @@ struct UiState {
 
   // 読み取り専用（他の人が編集中など。Issue #62）。drawApp が毎フレームの先頭で設定する。ドラッグを始めない判断に使う
   bool ro = false;
-  // 詳細パネルの依存タブの課題の行（先行・後続・関連。前のフレームの範囲と課題 id。煙テストが、読み取り専用でもたどれることを確かめる）
+  // 詳細パネルの依存タブの課題の行（先行・後続・関連。前のフレームの範囲と課題 id。スモークテストが、読み取り専用でもたどれることを確かめる）
   struct IssuePill {
     ImVec2 a, b;
     std::string id;
   };
   std::vector<IssuePill> issuePills;
-  // ダイアログの下端のボタンの範囲（最後に描いたもの。煙テストが押す位置を知る）
+  // ダイアログの下端のボタンの範囲（最後に描いたもの。スモークテストが押す位置を知る）
   std::vector<std::pair<std::string, std::pair<ImVec2, ImVec2>>> dlgButtons;
-  // 読み取り専用の帯（Issue #62）: 前のフレームに帯を出したか、出した文言、ボタンの範囲（画面の座標。煙テストが押す位置を知る）
+  // 読み取り専用の帯（Issue #62）: 前のフレームに帯を出したか、出した文言、ボタンの範囲（画面の座標。スモークテストが押す位置を知る）
   bool roBandShown = false;
   std::string roBandText;
   std::pair<ImVec2, ImVec2> roRecheckBtn{{0, 0}, {0, 0}}, roTakeoverBtn{{0, 0}, {0, 0}};
@@ -294,14 +294,14 @@ struct UiState {
     std::string project;      // 開いたプロジェクト（切り替わったら閉じる）
     app::View view = app::View::Gantt;  // 開いたビュー（ボードは作る課題の状況を起点に合わせる）
     int escFrame = -1;        // Esc で閉じたフレーム（同じ Esc で選択を外さない）
-    // 前のフレームの項目の位置（画面の座標。煙テストが押す位置を知るために使う）
+    // 前のフレームの項目の位置（画面の座標。スモークテストが押す位置を知るために使う）
     std::pair<ImVec2, ImVec2> succItem{{0, 0}, {0, 0}}, predItem{{0, 0}, {0, 0}}, cancelItem{{0, 0}, {0, 0}};
   } linkMenu;
   // 一覧の行・ボードのカードの、依存のドラッグ用の位置（画面の座標。このフレームに描いた見えているものだけ。
-  // 描き始めに clear し、linkSlotAdd で足す。煙テストが当たり位置を知るためにも使う）
+  // 描き始めに clear し、linkSlotAdd で足す。スモークテストが当たり位置を知るためにも使う）
   struct LinkSlot {
     int idx = -1;                 // 課題の添字（tree()）
-    std::string id;               // 描いた時点の tree() での課題 id（煙テストが、同じフレームの描画が1つの計算結果に揃っているかを見る）
+    std::string id;               // 描いた時点の tree() での課題 id（スモークテストが、同じフレームの描画が1つの計算結果に揃っているかを見る）
     ImVec2 a{0, 0}, b{0, 0};      // 行・カードの枠（相手に選んだとき強調する範囲）
     float padX = 0;               // 相手に選べる範囲を、左右にここまで広げる（ハンドルのある余白）
     ImVec2 hl{0, 0}, hr{0, 0};    // 左右のハンドルの中心
@@ -325,7 +325,7 @@ struct UiState {
     std::uint64_t previewVer = 0;
     LinkPreview preview;
   } arrowDrag;
-  // 前のフレームのガントの依存の矢印（画面の座標の折れ線）と、マウスの下の矢印。煙テストが当たり位置を知るために使う
+  // 前のフレームのガントの依存の矢印（画面の座標の折れ線）と、マウスの下の矢印。スモークテストが当たり位置を知るために使う
   struct ArrowGeom {
     std::string from, to;     // 矢印の両端の行の課題 id
     std::vector<ImVec2> pts;
@@ -337,7 +337,7 @@ struct UiState {
   // ベースライン（Issue #53）: 管理ダイアログで名前を変えている行の id、削除の確認中の id
   std::string blRenameId, blDeleteId;
   bool blRenameFocus = false;
-  // 前のフレームのガントの計画のバー（画面の座標。見えている行だけ）。煙テストが描画の有無と位置を知るために使う
+  // 前のフレームのガントの計画のバー（画面の座標。見えている行だけ）。スモークテストが描画の有無と位置を知るために使う
   struct PlanGeom {
     std::string id;
     float xl = 0, xr = 0, y0 = 0, y1 = 0;  // 計画のバー（マイルストーンは菱形を囲む四角）
@@ -345,20 +345,20 @@ struct UiState {
     std::string label;                      // 差の文字（"! +3日" など。出さないときは空）
   };
   std::vector<PlanGeom> planGeom;
-  // 前のフレームの統計ビューの「計画との差」の節（煙テストが描画の有無と当たり位置を知るために使う）
+  // 前のフレームの統計ビューの「計画との差」の節（スモークテストが描画の有無と当たり位置を知るために使う）
   struct StatsPlan {
     bool drawn = false;
     int tiles = 0;                          // 件数のタイルの数
     std::vector<DropTarget> lateRows;       // 遅れの大きい順の行（id = 課題の Issue Id）
   } statsPlan;
-  // 前のフレームのガントのバーの位置（画面の座標。見えている行だけ）。煙テストが当たり位置を知るために使う
+  // 前のフレームのガントのバーの位置（画面の座標。見えている行だけ）。スモークテストが当たり位置を知るために使う
   struct BarGeom {
     std::string id;
     float xl = 0, xr = 0, cy = 0;
   };
   std::vector<BarGeom> barGeom;
   // 前のフレームの統計ビューの負荷ヒートマップ（画面の座標。見えている行のセルだけ）と、集計の行数。
-  // 煙テストが描画の有無と当たり位置を知るために使う
+  // スモークテストが描画の有無と当たり位置を知るために使う
   struct StatsLoadCell {
     std::string who;
     int week = 0;
@@ -368,7 +368,7 @@ struct UiState {
   std::vector<StatsLoadCell> statsLoadCells;
   int statsLoadRows = 0, statsDoneRows = 0;
   // 統計ビューの「推移」（Issue #54 の A）: 絞り込みの選択（プロジェクトごと。切り替えたら初期化）と、
-  // 前のフレームの描画の結果（煙テストが当たり位置と件数を知るために使う）
+  // 前のフレームの描画の結果（スモークテストが当たり位置と件数を知るために使う）
   struct StatsTrend {
     std::string projectId;       // この選択がどのプロジェクトのものか
     TrendFilter::Who who = TrendFilter::Who::All;
@@ -384,7 +384,7 @@ struct UiState {
     };
     std::vector<Col> weekCols;   // 週ごとの当たり（過去の週だけ）
     Col lastCol;                 // 予測の週も含めた最後の列
-    float chartX1 = 0;           // 図の右端（画面の座標）。列がここに収まっていることを煙テストが確かめる
+    float chartX1 = 0;           // 図の右端（画面の座標）。列がここに収まっていることをスモークテストが確かめる
     struct AgingRow {
       std::string id;
       ImVec2 a{0, 0}, b{0, 0};
@@ -393,7 +393,7 @@ struct UiState {
     ImVec2 whoA{0, 0}, whoB{0, 0}, rootA{0, 0}, rootB{0, 0};  // 担当者・ルート課題の選択欄
   } statsTrend;
   // 統計ビューの「EVM（出来高管理）」（Issue #65）: 絞り込みと計画にするベースラインの選択（プロジェクトごと。切り替えたら初期化）と、
-  // 前のフレームの描画の結果（煙テストが当たり位置と件数を知るために使う）
+  // 前のフレームの描画の結果（スモークテストが当たり位置と件数を知るために使う）
   struct StatsEvm {
     std::string projectId;       // この選択がどのプロジェクトのものか
     TrendFilter::Who who = TrendFilter::Who::All;
@@ -412,7 +412,7 @@ struct UiState {
     int notes = 0;               // 数えなかった件数の注記の行数
     float chartX0 = 0, chartX1 = 0;   // 図の左右（画面の座標）
     float nowX = 0;              // 今日の線の x（画面の座標）
-    std::vector<ImVec2> pvPts, evPts; // 線の頂点（画面の座標。煙テストが形を確かめる）
+    std::vector<ImVec2> pvPts, evPts; // 線の頂点（画面の座標。スモークテストが形を確かめる）
     ImVec2 whoA{0, 0}, whoB{0, 0}, rootA{0, 0}, rootB{0, 0};   // 担当者・ルート課題の選択欄
     ImVec2 baseA{0, 0}, baseB{0, 0}, progA{0, 0}, progB{0, 0}; // ベースライン・進行中の扱いの選択欄
     ImVec2 spiA{0, 0}, spiB{0, 0};                             // SPI の警告のしきい値の入力欄
@@ -420,7 +420,7 @@ struct UiState {
     ImVec2 assumpA{0, 0}, assumpB{0, 0};                       // 「計算の前提」の見出し
     bool assumpOpen = false;
   } statsEvm;
-  // 統計ビューの「状況の件数の推移（累積フロー）」（Issue #64）: 前のフレームの描画の結果（煙テストが当たり位置と件数を知るために使う）
+  // 統計ビューの「状況の件数の推移（累積フロー）」（Issue #64）: 前のフレームの描画の結果（スモークテストが当たり位置と件数を知るために使う）
   struct StatsCfd {
     bool drawn = false;         // 節を描いた
     bool chart = false;         // 図を描いた（記録が 2 点以上）
@@ -433,7 +433,7 @@ struct UiState {
     ImVec2 recA{0, 0}, recB{0, 0};      // 「いま記録する」ボタン
   } statsCfd;
   // 統計ビューの「マイルストーンの予測の推移」と遅れの警告（Issue #75）: 図に出すマイルストーンの選択（プロジェクトごと。切り替えたら初期化）と、
-  // 前のフレームの描画の結果（煙テストが当たり位置と件数を知るために使う）
+  // 前のフレームの描画の結果（スモークテストが当たり位置と件数を知るために使う）
   struct StatsMta {
     std::string projectId;                // この選択がどのプロジェクトのものか
     bool inited = false;                  // 図に出すマイルストーンを決めた（初めは警告のあるもの → 記録のあるもの）
@@ -462,7 +462,7 @@ struct UiState {
       selA = selB = bandA = bandB = ImVec2(0, 0);
     }
   } statsMta;
-  // 「今日」ビュー（Issue #72）: 前のフレームの描画の結果（煙テストが当たり位置と件数を知るために使う）と、帯の「すべて表示」
+  // 「今日」ビュー（Issue #72）: 前のフレームの描画の結果（スモークテストが当たり位置と件数を知るために使う）と、帯の「すべて表示」
   struct TodayRow {
     std::string id;
     std::string sec;                                  // 節のキー（late / due / prog / start / ms / week）
