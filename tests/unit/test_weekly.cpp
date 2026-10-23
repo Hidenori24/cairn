@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "roadmap/baseline.hpp"
 #include "roadmap/clock.hpp"
 #include "roadmap/filestore.hpp"
 #include "roadmap/load.hpp"
@@ -602,7 +603,7 @@ TEST_CASE("weekly: 項目ごとのオン・オフ") {
   CHECK_FALSE(has(one, "## 進行中"));
   CHECK(WeeklySections{}.any());
   WeeklySections off;
-  off.summary = off.done = off.progress = off.next = off.risks = off.milestones = off.assignees = off.changes = off.notes = false;
+  off.summary = off.done = off.progress = off.next = off.risks = off.milestones = off.assignees = off.changes = off.notes = off.evm = false;
   CHECK_FALSE(off.any());
   // 期間によって見出しが変わる
   o = WeeklyOptions{};
@@ -693,7 +694,7 @@ TEST_CASE("weekly: HTML の項目ごとのオン・オフと、期間・営業�
   // 全部オフ
   o.sections = WeeklySections{};
   o.sections.summary = o.sections.done = o.sections.progress = o.sections.next = o.sections.risks = false;
-  o.sections.milestones = o.sections.assignees = o.sections.changes = o.sections.notes = false;
+  o.sections.milestones = o.sections.assignees = o.sections.changes = o.sections.notes = o.sections.evm = false;
   CHECK(has(weeklyHtml(p.report(o)), "出す項目が選ばれていません"));
 }
 
@@ -1138,6 +1139,77 @@ TEST_CASE("weekly: 課題がないプロジェクトでも、所感を出す項�
   CHECK_FALSE(has(weeklyHtml(off), "来週は設計を始める"));
 }
 
+// ---------------------------------------------------------------- EVM（Issue #65）
+TEST_CASE("weekly: 「EVM（出来高管理）」の節は、ベースラインがあるときだけ、SPI・ES の遅れ・SV を出す") {
+  CHECK(WeeklySections{}.evm);
+  Proj a = Proj::make(basic());
+  auto b = captureBaseline(a.issues, a.comp, "キッ<b>クオフ", "2026-10-19T09:30");
+  REQUIRE(b.ok());
+  Baseline bl = b.value();
+  bl.id = "b1";
+  // 計画のあとに、F（7）の期間を延ばして完了を遅らせる。基準日は 10/21
+  WeeklyInput in = a.input();
+  in.evmBaseline = &bl;
+  const WeeklyReport r = buildWeeklyReport(in, WeeklyOptions{});
+  REQUIRE(r.evm.available);
+  REQUIRE(r.evm.report.ok());
+  CHECK(r.evm.report.baselineName == "キッ<b>クオフ");
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "## EVM（出来高管理）"));
+  CHECK(has(md, "SPI"));
+  CHECK(has(md, "SV"));
+  CHECK(has(md, "ES"));
+  CHECK(has(md, "BAC"));
+  CHECK(has(md, "営業日"));
+  CHECK_FALSE(has(md, "キッ<b>"));  // ベースライン名の < は打ち消す
+  const std::string html = weeklyHtml(r);
+  CHECK(has(html, "EVM（出来高管理）"));
+  CHECK(has(html, "SPI（EV ÷ PV）"));
+  CHECK_FALSE(has(html, "キッ<b>"));
+  CHECK(has(html, "&lt;b&gt;"));
+
+  // オフ・ベースラインなしでは出さない
+  WeeklyOptions off;
+  off.sections.evm = false;
+  CHECK_FALSE(has(weeklyMarkdown(buildWeeklyReport(in, off)), "EVM"));
+  CHECK_FALSE(has(weeklyHtml(buildWeeklyReport(in, off)), "EVM"));
+  const WeeklyReport none = buildWeeklyReport(a.input(), WeeklyOptions{});
+  CHECK_FALSE(none.evm.available);
+  CHECK_FALSE(has(weeklyMarkdown(none), "EVM"));
+  CHECK_FALSE(has(weeklyHtml(none), "EVM"));
+  // 項目の一つとして数える
+  WeeklySections only;
+  only.summary = only.done = only.progress = only.next = only.risks = only.milestones = only.assignees = only.changes = only.notes = only.baseline = false;
+  only.evm = false;
+  CHECK_FALSE(only.any());
+  only.evm = true;
+  CHECK(only.any());
+}
+
+TEST_CASE("weekly: EVM の節は、指標を出せないとき（保存日より前）は案内を出す。課題がないときも落ちない") {
+  Proj a = Proj::make(basic());
+  auto b = captureBaseline(a.issues, a.comp, "後の計画", "2026-10-28T09:30");  // 基準日 10/21 より後に保存
+  REQUIRE(b.ok());
+  Baseline bl = b.value();
+  bl.id = "b1";
+  WeeklyInput in = a.input();
+  in.evmBaseline = &bl;
+  const WeeklyReport r = buildWeeklyReport(in, WeeklyOptions{});
+  REQUIRE(r.evm.available);
+  CHECK_FALSE(r.evm.report.ok());
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "## EVM（出来高管理）"));
+  CHECK(has(md, "より前なので、指標は出せません"));
+  CHECK(has(weeklyHtml(r), "より前なので、指標は出せません"));
+  // 課題が 0 件
+  Proj e = Proj::make({});
+  WeeklyInput ie = e.input();
+  ie.evmBaseline = &bl;
+  const WeeklyReport re = buildWeeklyReport(ie, WeeklyOptions{});
+  CHECK(re.empty);
+  CHECK_FALSE(has(weeklyMarkdown(re), "SPI"));
+}
+
 // ---------------------------------------------------------------- ベースラインとの差（Issue #53）
 TEST_CASE("weekly: 「ベースラインとの差」の節はオプション（既定オフ）で、遅れ・早まり・計画になかった・消えた課題を出す") {
   CHECK_FALSE(WeeklySections{}.baseline);
@@ -1196,6 +1268,7 @@ TEST_CASE("weekly: 「ベースラインとの差」の節はオプション（�
   // 項目の一つとして数える（ほかを全部オフにしても、これだけオンなら出す項目がある）
   WeeklySections only;
   only.summary = only.done = only.progress = only.next = only.risks = only.milestones = only.assignees = only.changes = only.notes = false;
+  only.evm = false;
   CHECK_FALSE(only.any());
   only.baseline = true;
   CHECK(only.any());

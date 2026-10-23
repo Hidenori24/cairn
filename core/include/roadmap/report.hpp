@@ -11,6 +11,7 @@
 #include "roadmap/calendar.hpp"
 #include "roadmap/clock.hpp"
 #include "roadmap/engine.hpp"
+#include "roadmap/evm_settings.hpp"
 #include "roadmap/filestore.hpp"
 #include "roadmap/filter.hpp"
 #include "roadmap/history.hpp"
@@ -46,6 +47,7 @@ struct ExportOptions {
   ReportScope scope = ReportScope::All;
   bool showDeps = true;              // ガントに依存の矢印を出す
   bool baseline = true;              // 表示するベースラインがあれば、ガントに計画のバーを、統計に「計画との差」の節を出す
+  bool evm = true;                   // EVM に使うベースラインがあれば、統計に「EVM（出来高管理）」の節を出す（Issue #65）
   std::size_t maxGanttRows = kReportMaxGanttRows;  // テストで小さくできる
 };
 
@@ -70,6 +72,9 @@ struct ExportInput {
   // 表示するベースラインとの比較（Session::baselineCompare()。null = 出さない）。ガントに計画のバーと差、統計に「計画との差」の節を出す。
   // 課題の数が合わないものは使わない
   const BaselineCompare* baseline = nullptr;
+  // EVM（Issue #65）の計画にするベースライン（evmPickBaseline で選んだもの。null = 節を出さない）と設定。参照は呼び出しの間だけ使う
+  const Baseline* evmBaseline = nullptr;
+  EvmSettings evm;
   // 状況の件数の履歴（Session::history()。null = 出さない）。統計の「推移」に累積フロー図を出す（Issue #64）
   const History* history = nullptr;
 };

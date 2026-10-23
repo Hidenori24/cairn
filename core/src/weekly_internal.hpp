@@ -57,5 +57,11 @@ std::string baselineRemovedText(const WeeklyBaselineRow& r);
 std::string baselineCountsText(const BaselineSummary& s);
 // 営業日の差が 0 なのに完了日が違う課題があるときの注記（なければ空）
 std::string baselineSameDayNote(const BaselineSummary& s);
+// EVM の節に出す指標の行（ok() のときだけ。出せないときは空）。bad = 警告の色・印をつける
+struct EvmRow {
+  std::string label, value;
+  bool bad = false;
+};
+std::vector<EvmRow> evmRows(const EvmReport& r);
 
 }  // namespace roadmap::weeklyfmt

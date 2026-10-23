@@ -48,6 +48,7 @@ const Sample kSamples[] = {
     {"v0.7", "pcompat07c3", "expense-v07/project.csv", "expense-v07/project.settings.json", false, "Sprint", 125},
     {"v0.9", "pcompat09d4", "manual-v09/project.csv", "manual-v09/project.settings.json", false, "Attachment", 100},
     {"v0.9.1", "pcompat091e5", "inventory-v091/project.csv", "inventory-v091/project.settings.json", false, "Created", 100},
+    {"v0.10", "pcompat010f6", "inventory-v010/project.csv", "inventory-v010/project.settings.json", false, "Created", 100},
 };
 
 const Json kMarker = Json{{"n", 1}, {"s", "x"}};  // 「今の版が知らない」キーの値
@@ -185,6 +186,16 @@ TEST_CASE("compat: その版が書いたキーが、今の版で読める値に�
     CHECK(st.history.points.size() == 1);
     CHECK(st.weeklyAuto.snaps.size() == 1);  // 開いたときに自動で取る週の頭のスナップショット（#70）
     CHECK(st.weekly.empty());
+    CHECK(st.evm.isDefault());  // evm は 0.10.0 から
+  }
+  {  // 0.10.0: EVM（出来高管理）の設定 "evm"（Issue #65）
+    Opened o(kSamples[5]);
+    const ProjectSettings& st = o.entry().rec.settings;
+    CHECK(st.evm.progress == EvmProgress::FiftyFifty);
+    CHECK(st.evm.spiWarn == 0.8);
+    CHECK(st.weeklyAuto.snaps.size() == 1);
+    CHECK(st.links.size() == 1);
+    CHECK_FALSE(st.unknown.contains("evm"));  // 既知のキーとして読む（未知のキーとして持たない）
   }
 }
 
@@ -252,6 +263,7 @@ std::optional<std::string> pointerFor(const std::string& kind, const Json& j) {
   else if (kind == "baselines.item") p = "/baselines/list/0";
   else if (kind == "history") p = "/history";
   else if (kind == "history.point") p = "/history/points/0";
+  else if (kind == "evm") p = "/evm";
   if (p.empty() || !has(p)) return std::nullopt;
   return p;
 }
@@ -310,9 +322,9 @@ bool allKept(const std::vector<std::string>& kinds, int& n) {
 
 }  // namespace
 
-TEST_CASE("compat: 未知のキーが消えない（設定のトップレベル・ui・関連リンクの項目・週次レポートのスナップショット）") {
+TEST_CASE("compat: 未知のキーが消えない（設定のトップレベル・ui・関連リンクの項目・週次レポートのスナップショット・EVM の設定）") {
   int n = 0;
-  CHECK(allKept({"top", "ui", "ui.cols", "links", "weekly.snap", "weeklyAuto", "weeklyAuto.snap"}, n));
+  CHECK(allKept({"top", "ui", "ui.cols", "links", "weekly.snap", "weeklyAuto", "weeklyAuto.snap", "evm"}, n));
   CHECK(n >= 5 * 3);  // 見本が減ってもテストが空にならないこと
 }
 

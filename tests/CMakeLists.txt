@@ -19,6 +19,7 @@ add_executable(roadmap_unit_tests
   unit/test_stats.cpp
   unit/test_load.cpp
   unit/test_trends.cpp
+  unit/test_evm.cpp
   unit/test_today.cpp
   unit/test_stamps.cpp
   unit/test_link_candidates.cpp

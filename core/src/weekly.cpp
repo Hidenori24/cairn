@@ -402,6 +402,15 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
     }
   }
 
+  // ---- EVM（出来高管理） ----
+  if (opt.sections.evm && in.evmBaseline) {
+    auto ev = computeEvm(T, in.issues, in.rows, cal, in.base, in.evmBaseline, in.evm);
+    if (ev.ok()) {
+      r.evm.available = true;
+      r.evm.report = std::move(ev).value();
+    }
+  }
+
   // ---- ベースラインとの差 ----
   if (opt.sections.baseline && in.baseline && in.baseline->entries.size() == n) {
     const BaselineCompare& bc = *in.baseline;
@@ -667,6 +676,19 @@ std::string baselineCountsText(const BaselineSummary& s) {
 std::string baselineSameDayNote(const BaselineSummary& s) {
   if (s.sameDayDiffers <= 0) return {};
   return "営業日の差が 0 でも完了日が違う課題が " + std::to_string(s.sameDayDiffers) + " 件あります（休業日・土日をまたいだ日付の違い）。";
+}
+
+std::vector<EvmRow> evmRows(const EvmReport& r) {
+  std::vector<EvmRow> v;
+  if (!r.ok()) return v;
+  const std::string mark = r.warn ? "! " : "";
+  v.push_back({"SPI（EV ÷ PV）", mark + evmSpiText(r), r.warn});
+  v.push_back({"SV（EV − PV）", (r.warn && r.sv < 0 ? mark : std::string()) + evmSignedAmountText(r.sv) + "（EV " + evmAmountText(r.ev) + " − PV " +
+                                    evmAmountText(r.pv) + "）",
+               r.warn});
+  v.push_back({"ES の遅れ（+ は遅れ）", (r.warn && r.esDelta > 0 ? mark : std::string()) + evmEsDeltaText(r) + " 営業日", r.warn});
+  v.push_back({"BAC（総計画量）", evmAmountText(r.bac) + "（" + evmAmountSourceText(r) + "）", false});
+  return v;
 }
 
 }  // namespace weeklyfmt
