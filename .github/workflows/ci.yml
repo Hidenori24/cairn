@@ -273,6 +273,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
       - uses: actions/download-artifact@v7
         with:
           name: Cairn-windows
@@ -283,8 +286,16 @@ jobs:
           zip -r -X Cairn-windows-x64.zip Cairn
           sha256sum Cairn-windows-x64.zip Cairn/*.exe Cairn-Setup-*.exe > SHA256SUMS.txt
           cat SHA256SUMS.txt
+      - name: リリースノート
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          sh tools/release_notes.sh "$ver" docs/CHANGELOG.md > dist/notes.md
+          printf '\n---\nポータブル版: zip を展開して Cairn.exe を実行（インストール不要）。\n' >> dist/notes.md
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: dist/notes.md
           # タグに「-」を含む（v1.0.0-rc.1 など）ときは pre-release にして「最新」にしない
           prerelease: ${{ contains(github.ref_name, '-') }}
           make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
