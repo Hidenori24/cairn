@@ -1402,6 +1402,36 @@ int main(int argc, char** argv) {
       u.dlg = ui::Dlg::None;
       frames(2);
     }
+    // 今週触った課題（Issue #71）: 作成日・更新日の列つきの CSV（架空のデータ）
+    {
+      const std::string csv =
+          "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Resolved,Duration (weeks),Created,Updated,Comment\n"
+          "1,Epic,認証基盤の刷新,,,To Do,High,,,2026-09-01,2026-10-20,\n"
+          "2,Story,ログイン画面,1,,To Do,High,,,2026-09-01,2026-10-20,\n"
+          "3,Task,画面の設計,2,田中,In Progress,High,,2,2026-09-02,2026-10-21,\"2026-10-20T10:00;田中;レビュー依頼\"\n"
+          "4,Task,入力チェックの実装,2,鈴木,In Progress,High,,2,2026-10-20,2026-10-21,\n"
+          "5,Task,テスト仕様書,2,鈴木,To Do,Medium,,1,2026-09-03,2026-10-08,\n"
+          "6,Story,セッション管理,1,,To Do,Medium,,,2026-09-01,2026-10-19,\n"
+          "7,Task,有効期限の見直し,6,佐藤,To Do,Medium,,1,2026-09-05,2026-10-22,\n"
+          "8,Task,完了した作業,6,佐藤,Done,Medium,2026-10-19,1,2026-09-05,2026-10-19,\n"
+          "9,Task,単独の調査,,高橋,To Do,Low,,1,2026-10-22,,\n"
+          "10,Task,更新日のない作業,,高橋,To Do,Low,,1,,,\n";
+      c.importText(csv, "触った課題（架空）", app::ImportMode::New);
+      Session* ts = c.session();
+      ts->setBaseDate("2026-10-21");
+      c.afterEdit();
+      WeeklyOptions to;
+      dumpWeekly("weekly_touched", to);
+      u.dlg = ui::Dlg::Weekly;
+      u.dlgOpening = true;
+      frames(2);
+      WeeklySections secs;  // 完了と触った課題だけ（プレビューの先頭に出して見えるようにする）
+      secs.summary = secs.progress = secs.next = secs.risks = secs.milestones = secs.assignees = secs.changes = secs.notes = false;
+      u.wk.sections = secs;
+      shot("63d_weekly_dialog_touched");
+      u.dlg = ui::Dlg::None;
+      frames(2);
+    }
     // 組込みの雛形
     c.createProject(app::SampleKind::EmbeddedSw, "組込みソフトウェア開発", "DEV");
     WeeklyOptions emb;

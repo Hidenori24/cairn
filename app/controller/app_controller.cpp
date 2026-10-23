@@ -1061,6 +1061,7 @@ Result<WeeklyReport> AppController::buildWeekly(const WeeklyOptions& opt) const 
   in.memo = &s->weekly();  // 比べる元は期間に合わせて選ぶ（手動と自動。weeklyChooseCompare）
   in.autos = &s->weeklyAuto();
   in.baseline = s->baselineCompare();
+  in.meta = &s->meta();  // 作成日・更新日の列（今週触った課題。Issue #71）
   return buildWeeklyReport(in, opt);
 }
 
