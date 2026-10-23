@@ -4648,6 +4648,29 @@ int main() {
       h.frame(3);
       check(!ev.assumpOpen, "もう一度押すと閉じる");
     }
+    // SPI のしきい値: ドラッグ中の値が次のフレームで捨てられず、離したあとも残る（Copilot の指摘 #93）
+    scrollTo([&] { return ev.spiA.y > 130 && ev.spiB.y < 800; }, "SPI のしきい値の入力欄が見える位置までスクロールできる");
+    if (ev.spiA.y > 130 && ev.spiB.y < 800) {
+      const float cx = (ev.spiA.x + ev.spiB.x) / 2, cy = (ev.spiA.y + ev.spiB.y) / 2;
+      const double before = s->evmSettings().spiWarn;
+      io.AddMousePosEvent(cx, cy);
+      h.frame(2);
+      io.AddMouseButtonEvent(0, true);
+      h.frame(2);
+      for (int k = 1; k <= 8; ++k) {
+        io.AddMousePosEvent(cx - 4.f * static_cast<float>(k), cy);
+        h.frame(2);
+      }
+      const double during = s->evmSettings().spiWarn;
+      check(during < before - 0.05, "ドラッグ中に、しきい値が設定へ反映され続ける");
+      io.AddMouseButtonEvent(0, false);
+      h.frame(3);
+      check(std::abs(s->evmSettings().spiWarn - during) < 1e-6, "ドラッグを離しても、変えた値が残る（元に戻らない）");
+      EvmSettings back = s->evmSettings();
+      back.spiWarn = before;
+      h.c.setEvmSettings(back);
+      h.frame(2);
+    }
     // 進行中の扱い: 50/50 に変える（プロジェクトの設定に残る）
     scrollTo([&] { return ev.progA.y > 130 && ev.progB.y < 800; }, "進行中の扱いの選択欄が見える位置までスクロールできる");
     if (ev.progA.y > 130 && ev.progB.y < 800) {

@@ -1325,11 +1325,14 @@ void drawEvm(Frame& f, Session& s, const Tree& T, const std::vector<ScheduleRow>
     ImGui::SameLine();
     float thr = static_cast<float>(es.spiWarn);
     ImGui::SetNextItemWidth(u.m.s(90));
-    ImGui::DragFloat("##evmSpi", &thr, 0.01f, static_cast<float>(kEvmSpiWarnMin), static_cast<float>(kEvmSpiWarnMax), "%.2f 未満");
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
+    // 毎フレーム設定から読み直すので、ドラッグ中の値を捨てないよう、変わるたびに設定へ入れる（保存は遅らせて 1 回にまとまる）
+    if (ImGui::DragFloat("##evmSpi", &thr, 0.01f, static_cast<float>(kEvmSpiWarnMin), static_cast<float>(kEvmSpiWarnMax), "%.2f 未満",
+                         ImGuiSliderFlags_AlwaysClamp)) {
       es.spiWarn = static_cast<double>(thr);
       f.c.setEvmSettings(es);
     }
+    st.spiA = ImGui::GetItemRectMin();
+    st.spiB = ImGui::GetItemRectMax();
     ImGui::EndDisabled();
   }
   drawFilterCombos(f, s, T, {st.who, st.name, st.standalone, st.rootId, st.whoA, st.whoB, st.rootA, st.rootB}, "##evmWho", "##evmRoot");

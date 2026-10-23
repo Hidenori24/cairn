@@ -495,9 +495,10 @@ void dlgWeekly(Frame& f) {
     else ImGui::TextDisabled("（「ベースラインの管理…」で表示するものを選ぶと使えます）");
     if (!bl) sec.baseline = false;
   }
+  const Baseline* const evmBl = evmPickBaseline(s->baselines(), std::string());
   {
     // EVM に使うベースライン（表示中のもの、なければ一番新しいもの）があるときだけ選べる（既定はオン）
-    const Baseline* eb = evmPickBaseline(s->baselines(), std::string());
+    const Baseline* eb = evmBl;
     ImGui::BeginDisabled(eb == nullptr);
     ImGui::Checkbox("EVM（SPI・ES の遅れ・SV）", &sec.evm);
     ImGui::EndDisabled();
@@ -505,7 +506,10 @@ void dlgWeekly(Frame& f) {
     if (eb) ImGui::TextDisabled("（ベースライン「%s」の日程と比べます）", eb->name.c_str());
     else ImGui::TextDisabled("（ベースラインを保存すると使えます）");
   }
-  const bool any = sec.any();
+  // 使えない項目（ベースラインがない EVM）は、選ばれていても数えない（ほかを全部オフにしたら、コピー・保存を使えなくする）。チェックの値は残す
+  WeeklySections effective = sec;
+  if (!evmBl) effective.evm = false;
+  const bool any = effective.any();
 
   if (sec.notes) {
     ImGui::SeparatorText("所感・課題・お願い（自由に書きます。プロジェクトに覚え、次回の下書きに残ります）");

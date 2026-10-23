@@ -410,6 +410,7 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
       r.evm.report = std::move(ev).value();
     }
   }
+  if (!r.evm.available) r.sections.evm = false;  // 出せない項目は「選ばれている項目」に数えない（全部オフのとき「選ばれていません」を出す）
 
   // ---- ベースラインとの差 ----
   if (opt.sections.baseline && in.baseline && in.baseline->entries.size() == n) {

@@ -372,10 +372,15 @@ Result<EvmReport> computeEvm(const Tree& T, const std::vector<Issue>& issues, co
         fc.reason = EvmForecastReason::TooFar;
       } else {
         const long long w = std::max(static_cast<long long>(std::ceil(wf - 1e-9)), wNow);
-        fc.ok = true;
-        fc.reason = EvmForecastReason::None;
         fc.finish = std::max(dateOfWorkday(w), base);
         fc.finishWeek = weekStart(fc.finish);
+        if (fc.finishWeek - weekStart(base) > 7 * (kEvmMaxWeeks - 1)) {  // S カーブの週の数の上限に収まらない（休業日が極端に多いなど）
+          fc = EvmForecast{};
+          fc.reason = EvmForecastReason::TooFar;
+        } else {
+          fc.ok = true;
+          fc.reason = EvmForecastReason::None;
+        }
       }
     }
   }
@@ -384,7 +389,8 @@ Result<EvmReport> computeEvm(const Tree& T, const std::vector<Issue>& issues, co
   {
     Day first = out.hasFrom ? out.from : minStart;
     if (base < first) first = base;
-    const Day firstAllowed = weekStart(base) - 7 * (kEvmMaxWeeks - 1);
+    // 週の数の上限の窓は、基準日と完了予測の日の両方を含める（予測が窓の外に出て、図からはみ出さないように）
+    const Day firstAllowed = weekStart(out.forecast.ok ? std::max(base, out.forecast.finish) : base) - 7 * (kEvmMaxWeeks - 1);
     if (first < firstAllowed) {
       first = firstAllowed;
       out.curveClipped = true;

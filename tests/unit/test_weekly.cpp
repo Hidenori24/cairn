@@ -1186,6 +1186,18 @@ TEST_CASE("weekly: 「EVM（出来高管理）」の節は、ベースライン�
   CHECK(only.any());
 }
 
+TEST_CASE("weekly: EVM だけがオンでベースラインがないときは、「選ばれていません」になる（Copilot の指摘 #93）") {
+  Proj a = Proj::make(basic());
+  WeeklyOptions o;
+  o.sections.summary = o.sections.done = o.sections.progress = o.sections.next = o.sections.risks = false;
+  o.sections.milestones = o.sections.assignees = o.sections.changes = o.sections.notes = o.sections.baseline = false;
+  o.sections.evm = true;
+  const WeeklyReport r = buildWeeklyReport(a.input(), o);  // ベースラインなし
+  CHECK_FALSE(r.evm.available);
+  CHECK_FALSE(r.sections.any());
+  CHECK(has(weeklyHtml(r), "出す項目が選ばれていません"));
+}
+
 TEST_CASE("weekly: EVM の節は、指標を出せないとき（保存日より前）は案内を出す。課題がないときも落ちない") {
   Proj a = Proj::make(basic());
   auto b = captureBaseline(a.issues, a.comp, "後の計画", "2026-10-28T09:30");  // 基準日 10/21 より後に保存

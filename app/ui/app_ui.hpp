@@ -415,6 +415,7 @@ struct UiState {
     std::vector<ImVec2> pvPts, evPts; // 線の頂点（画面の座標。煙テストが形を確かめる）
     ImVec2 whoA{0, 0}, whoB{0, 0}, rootA{0, 0}, rootB{0, 0};   // 担当者・ルート課題の選択欄
     ImVec2 baseA{0, 0}, baseB{0, 0}, progA{0, 0}, progB{0, 0}; // ベースライン・進行中の扱いの選択欄
+    ImVec2 spiA{0, 0}, spiB{0, 0};                             // SPI の警告のしきい値の入力欄
     ImVec2 saveA{0, 0}, saveB{0, 0};                           // 案内の「ベースラインを保存…」
     ImVec2 assumpA{0, 0}, assumpB{0, 0};                       // 「計算の前提」の見出し
     bool assumpOpen = false;

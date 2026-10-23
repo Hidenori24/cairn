@@ -631,6 +631,29 @@ TEST_CASE("evm: 計画の終わりが極端に先でも、S カーブは週の�
   CHECK(clipNote);
 }
 
+TEST_CASE("evm: 古いベースラインで予測が窓の外に出るときは、窓をずらして予測を図に入れる（Copilot の指摘 #93）") {
+  // 4 件（各 1 週）がどれも 2023-10-23〜2027-10-22 の計画。3 件は完了、基準日は 2026-10-23、保存日は 2023-10-23。休業日なし
+  Spec a{"1"}, b{"2"}, c{"3"}, d{"4"};
+  for (Spec* x : {&a, &b, &c}) {
+    x->status = "Done";
+    x->resolved = "2026-10-01";
+  }
+  Proj p = Proj::make({a, b, c, d}, "2026-10-23");
+  p.bl.at = "2023-10-23T09:00";
+  p.bl.items = {bi("1", 't', "2023-10-23", "2027-10-22"), bi("2", 't', "2023-10-23", "2027-10-22"), bi("3", 't', "2023-10-23", "2027-10-22"),
+                bi("4", 't', "2023-10-23", "2027-10-22")};
+  const EvmReport r = p.ok();
+  REQUIRE(r.ok());
+  REQUIRE(r.forecast.ok);
+  CHECK(r.forecast.finish > r.curve.back().date - 7);
+  CHECK(r.curve.back().date >= r.forecast.finish);  // 予測の日が図の右端を超えない
+  CHECK(r.curve.size() <= static_cast<std::size_t>(kEvmMaxWeeks + 2));
+  REQUIRE(r.nowIndex >= 0);
+  CHECK(r.curve[static_cast<std::size_t>(r.nowIndex)].date == p.base);  // 基準日も窓に入っている
+  CHECK(r.curveClipped);
+  for (std::size_t k = 1; k < r.curve.size(); ++k) CHECK(r.curve[k].date > r.curve[k - 1].date);
+}
+
 TEST_CASE("evm: 基準日が計画よりずっと先でも、基準日を含む S カーブにする") {
   Spec a{"1"};
   Proj p = Proj::make({a}, "2030-01-07");
