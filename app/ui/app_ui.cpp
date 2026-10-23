@@ -619,7 +619,8 @@ void drawTopBar(Frame& f) {
       ImGui::SetKeyboardFocusHere();
       u.focusSearch = false;
     }
-    ImGui::SetNextItemWidth(w);
+    const float clearButtonW = c.filter().q.empty() ? 0.f : u.m.s(28);
+    ImGui::SetNextItemWidth(w - clearButtonW);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(u.m.s(26), u.m.s(5)));
     ImGui::InputTextWithHint("##q", S::kSearchHint, &c.filter().q);
     ImGui::PopStyleVar();
@@ -630,7 +631,7 @@ void drawTopBar(Frame& f) {
     drawIcon(dl, "search", ImVec2(q.x + u.m.s(6), q.y + u.m.s(6)), u.m.s(14), u.t->muted);
     if (!c.filter().q.empty()) {
       ImGui::SameLine(0, 0);
-      ImGui::SetCursorScreenPos(ImVec2(q.x + w - u.m.s(24), q.y + u.m.s(2)));
+      ImGui::SetCursorScreenPos(ImVec2(q.x + w - clearButtonW, q.y + u.m.s(2)));
       if (iconButton(u, "clrq", "x", "消す")) c.filter().q.clear();
     }
   }

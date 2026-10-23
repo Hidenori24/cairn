@@ -2,6 +2,9 @@
 
 ## 1.0.0-rc.1（2026-10-23）
 
+### 検索欄
+- 検索欄の「消す」ボタンが入力欄に重なり、クリックできない問題を修正しました。
+
 ### 名前を Cairn にした
 - **アプリの名前を「Cairn」（ケルン。登山道で道しるべに石を積んだもの）にした**（#82）。ウィンドウの題名・設定ダイアログのバージョン表示・バージョン情報（`app.rc` の ProductName・FileDescription・InternalName・OriginalFilename・著作権表示 `Copyright (c) 2026 Hidenori24`）・インストーラの表示名とショートカット名・書き出す HTML のフッタを Cairn に。実行ファイルは **`Cairn.exe`**（以前は `ProjectRoadmap.exe`）。アイコンは、石を三つ積んだ図案に替えた（`tools/make_icon.py`。16〜256 px。青い角丸の地なのでライト・ダークどちらの背景でも見える）。
 - **配布物の名前**: `Cairn-windows-x64.zip`（中のフォルダも `Cairn/`）・`Cairn-Setup-<版>.exe`・`SHA256SUMS.txt`。インストーラのスクリプトは `packaging/installer/Cairn.iss`。公開済みの版のリリースの配布物には触れていない。
