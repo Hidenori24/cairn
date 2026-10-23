@@ -4,7 +4,7 @@
 
 *A signpost for your schedule — an offline, JIRA-compatible Gantt chart and scheduler for Windows.*
 
-![ガント（週）。営業日ベースの日程と余裕を計算して表示します](docs/images/gantt.png)
+![ガント。営業日ベースの日程と余裕を計算して表示します（同梱のサンプル）](docs/images/gantt.png)
 
 [日本語](#日本語) ・ [English](#english)
 
@@ -52,9 +52,9 @@ JIRA 互換の CSV を原本に、課題の階層・依存関係・期間から 
 |---|---|
 | ![ボード](docs/images/board.png) | ![リスト](docs/images/list.png) |
 
-| ギャップ | 統計 |
+| 詳細パネル | 統計 |
 |---|---|
-| ![ギャップ](docs/images/goals.png) | ![統計](docs/images/stats.png) |
+| ![詳細パネル](docs/images/detail.png) | ![統計](docs/images/stats.png) |
 
 （画面の画像は、同梱のサンプル（架空のデータ）を、`roadmap_ui_screens`（Linux のヘッドレス描画）で出したものです。Windows の実際の見た目とは細部が違います。）
 
