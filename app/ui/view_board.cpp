@@ -58,7 +58,7 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, const 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) rowClick(f, sid);
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) openContext(f, sid);
     if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) openDetail(f, sid, 0);
-    if (!u.linkPick.active && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 5.f))
+    if (!u.ro && !u.linkPick.active && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 5.f))
       gCardDrag = {sid, true};
   }
   dl->AddRectFilled(p, q, sel ? u.t->accentBg : u.t->surface, u.m.s(6));

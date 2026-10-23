@@ -79,9 +79,10 @@ void issuePill(Frame& f, int id, const std::function<void()>& onRemove) {
   const std::string l = T.did[id] + "  " + T.name[id];
   if (ImGui::Selectable(ellipsize(l, ImGui::GetContentRegionAvail().x - u.m.s(36)).c_str(), false, 0,
                         ImVec2(ImGui::GetContentRegionAvail().x - u.m.s(32), 0)))
-    f.c.select(T.ids[id]);
+    f.c.select(T.ids[id]);  // 課題をたどる操作は、読み取り専用でも使える
+  u.issuePills.push_back({ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), T.ids[id]});
   ImGui::SameLine();
-  if (iconButton(u, "rm", "x", "外す")) onRemove();
+  if (iconButton(u, "rm", "x", "外す", !f.c.readOnly())) onRemove();
   ImGui::PopID();
 }
 
@@ -148,6 +149,7 @@ void detailTab(Frame& f, int i) {
       ImGui::PopID();
     }
   }
+  ImGui::BeginDisabled(c.readOnly());  // 読み取り専用では、項目を直せない（パンくずでの移動と閲覧はできる）
   ImGui::PushFont(u.fontLarge);
   field(f, id, "name", T.name[i], W, applier(f, id, [](AC&, Session& ss, const std::string& k, const std::string& v) {
           if (!text::trim(v).empty()) ss.setName(k, text::trim(v));
@@ -326,6 +328,7 @@ void detailTab(Frame& f, int i) {
         true);
   ImGui::TextDisabled("%s（%d階層目） ／ Issue Id %s%s", generationName(T.depth[i]).c_str(), T.depth[i] + 1, o.id.c_str(),
                       o.key.empty() ? "" : (" ／ " + o.key).c_str());
+  ImGui::EndDisabled();
 }
 
 // 依存の相手の入力欄: 入力すると候補（表示ID・件名の部分一致）が出て、クリックか ↑↓ + Enter で選ぶ。
@@ -505,13 +508,14 @@ void otherLinksSection(Frame& f, int i) {
         ImGui::SameLine();
         ImGui::TextDisabled("（このプロジェクトにない課題）");
         ImGui::SameLine();
-        if (iconButton(u, "rm", "x", "外す")) remove();
+        if (iconButton(u, "rm", "x", "外す", !c.readOnly())) remove();
       }
       ImGui::PopID();
     }
   }
   // 追加
   ImGui::PushID("otherlink");
+  ImGui::BeginDisabled(c.readOnly());  // 読み取り専用では、リンクを足せない
   ImGui::Spacing();
   const float spacing = ImGui::GetStyle().ItemSpacing.x;
   const float pickW = ImGui::CalcTextSize("候補").x + u.m.s(20);
@@ -553,6 +557,7 @@ void otherLinksSection(Frame& f, int i) {
       f.c.afterEdit();
     });
   }
+  ImGui::EndDisabled();
   ImGui::PushTextWrapPos(0);
   ImGui::TextDisabled("ここに入れたリンクは日程の計算に使いません。CSV には元の列名（Outward issue link (Relates) など）で書き出します。");
   ImGui::PopTextWrapPos();
@@ -577,13 +582,17 @@ void linksTab(Frame& f, int i) {
     s->removeLink(I[k].id, id);
     c.afterEdit();
   });
+  ImGui::BeginDisabled(c.readOnly());  // 読み取り専用では、つなぎを足せない
   linkAdder(f, i, LinkDir::AddPred, addPred);
+  ImGui::EndDisabled();
   ImGui::SeparatorText("後続（これが終わるのを待つ）");
   for (int k : succs) issuePill(f, k, [&, k] {
     s->removeLink(id, I[k].id);
     c.afterEdit();
   });
+  ImGui::BeginDisabled(c.readOnly());  // 読み取り専用では、つなぎを足せない
   linkAdder(f, i, LinkDir::AddSucc, addSucc);
+  ImGui::EndDisabled();
   // 親の依存を含む実効の先行が直接の先行と違うとき
   if (T.isLeaf(i)) {
     std::vector<int> eff = T.preds[i];
@@ -669,6 +678,7 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
     return;
   }
   flushPending(T.ids[i], false);
+  u.issuePills.clear();
   ImGui::PushID(T.ids[i].c_str());
   // パネル全体が、開いている課題へのファイルのドロップ先
   registerDropTarget(f, T.ids[i], ImGui::GetWindowPos(),
@@ -683,7 +693,7 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
   ImGui::PopFont();
   ImGui::SameLine();
   if (T.isLeaf(i)) {
-    if (statusPill(u, "st", o.status, true)) openStatusMenu(f, o.id);
+    if (statusPill(u, "st", o.status, !c.readOnly())) openStatusMenu(f, o.id);
     ImGui::SameLine();
   }
   floatChip(u, r);
@@ -691,6 +701,7 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
   if (iconButton(u, "ops", "more", "操作")) ImGui::OpenPopup("##dops");
   if (ImGui::BeginPopup("##dops")) {
     const std::string id = o.id;
+    ImGui::BeginDisabled(c.readOnly());
     if (ImGui::MenuItem("子を追加")) {
       const auto nid = c.createIssue(id, "");
       if (!nid.empty()) c.select(nid);
@@ -705,6 +716,7 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
     if (ImGui::MenuItem("下へ")) s->moveIssue(id, 1), c.afterEdit();
     ImGui::Separator();
     if (ImGui::MenuItem("削除")) requestDelete(f, {id});
+    ImGui::EndDisabled();
     ImGui::EndPopup();
   }
   ImGui::SameLine();
@@ -728,13 +740,15 @@ void drawDetailPanel(Frame& f, ImVec2 size) {
     }
     if (ImGui::BeginTabItem(tLinks.c_str(), nullptr, u.detailTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
       ImGui::BeginChild("##lt", ImVec2(0, 0));
-      linksTab(f, i);
+      linksTab(f, i);  // 変更する部品だけを読み取り専用で無効にしている（先行・後続をたどる選択は使える）
       ImGui::EndChild();
       ImGui::EndTabItem();
     }
     if (ImGui::BeginTabItem(tCom.c_str(), nullptr, u.detailTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
       ImGui::BeginChild("##ct", ImVec2(0, 0));
+      ImGui::BeginDisabled(c.readOnly());
       commentsTab(f, i);
+      ImGui::EndDisabled();
       ImGui::EndChild();
       ImGui::EndTabItem();
     }

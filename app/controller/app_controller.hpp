@@ -15,6 +15,7 @@
 #include "roadmap/attachments.hpp"
 #include "roadmap/github_ref.hpp"
 #include "roadmap/links.hpp"
+#include "roadmap/lock.hpp"
 #include "roadmap/commands.hpp"
 #include "roadmap/report.hpp"
 #include "roadmap/store.hpp"
@@ -61,6 +62,43 @@ class AppController {
   bool flushNow();              // 終了時など、すぐに書く
   bool hasUnsaved() const;
   bool firstRun() const { return firstRun_; }
+
+  // ---- 編集中のロック（SPEC 8.5。Issue #62）----
+  // 開いているプロジェクトのフォルダに .roadmap.lock を作り、他の人のロックがあれば読み取り専用で開く。
+  // 窓口（ILockStore）を渡さなければロックは使わない（今まで通り）。rng を渡さなければ OS の乱数を使う。machine はロックに入るマシン名
+  enum class LockKind {
+    None,    // ロックなし（使わない設定・窓口がない・平置き・まだフォルダがない）。編集できる
+    Mine,    // 自分のロックを持っている。編集できる
+    Other,   // 他の人のロックがある。読み取り専用
+    Failed,  // ロックを作れない（権限なし・読み取り専用のフォルダ）。読み取り専用
+    Lost     // 自分のロックを失った（引き継がれた・消された）。読み取り専用
+  };
+  struct LockStatus {
+    LockKind kind = LockKind::None;
+    std::string user, machine;       // Other・Lost: 持ち主（分かるとき）。画面にだけ出す（ログには出さない）
+    std::int64_t openedAt = 0;       // 持ち主が開いた時刻（UTC のミリ秒）。0 = 不明
+    std::int64_t heartbeatAt = 0;    // 持ち主の最後の更新（UTC のミリ秒）
+    bool stale = false;              // Other: 古い（持ち主がいないようだ）。壊れたロックを含む
+    bool broken = false;             // ロックのファイルの中身が読めない
+    bool free = false;               // Other・Lost: ロックが解けている（「再確認」で編集できる）
+    std::string reason;              // Failed・Lost: 理由
+  };
+  void setLockStore(ILockStore* store, IRandom* rng, std::string machine);
+  bool lockEnabled() const { return lockStore_ != nullptr && prefs_.useLock; }
+  const LockStatus& lockStatus() const { return lock_.status; }
+  // 読み取り専用で開いているか。編集系の入口（コマンド・設定の変更・添付・リンク・履歴/スナップショットの記録・削除・置き換えの取り込み）は
+  // すべて、これが真のあいだ何もせず断る。ファイルへも書かない（Session・Workspace でも断る）
+  bool readOnly() const;
+  // 画面上部の帯の文言（読み取り専用でなければ空）
+  std::string readOnlyBand() const;
+  // 持ち主が開いた時刻の表示（今日なら "14:05"、そうでなければ "10/18 14:05"。時間帯は setUtcOffsetFn の差）
+  std::string lockSinceLabel() const;
+  // 「再確認」: フォルダの変更を読み込み、ロックが解けていれば取って編集できる状態にする
+  void recheckLock();
+  // 「編集を引き継ぐ」: 他の人（古いものを含む）のロックを自分のものにする。相手の未保存の変更は失われる。成功したら true
+  bool takeOverLock();
+  // アプリの設定「ロックを使う」。切り替えると、開いているプロジェクトのロックを作る・外す
+  void setUseLock(bool on);
 
   // ---- プロジェクト ----
   Session* session() { return session_.get(); }
@@ -317,6 +355,8 @@ class AppController {
 
   // 編集の後に呼ぶ（UI は操作のたびに呼ばなくてもよい。tick でも拾う）
   void afterEdit();
+  // 読み取り専用のときに編集系の入口が呼ぶ。読み取り専用なら理由を通知して false（announce が false なら通知しない）
+  bool canEdit(bool announce = true);
   // フレームの終わりに呼ぶ。描画中に差し替えたプロジェクト・計算結果をここで捨てる
   // （それまでは古いものを残し、描画中の参照が壊れないようにする）
   void releaseFrame();
@@ -326,6 +366,27 @@ class AppController {
   void applyAutoBaseDate();  // アプリの設定「開いたら基準日を今日に」（利用者が開いたときだけ）
   void scheduleSave();
   void absorbNotices();
+  // ---- ロック ----
+  std::string lockPath(const std::string& id) const;  // 平置き・まだ書いていないときは空
+  LockWho lockWho() const;
+  IRandom& lockRandom();
+  void enterLock();                                    // currentId_ のロックを取る（読み取り専用になることもある）
+  void leaveLock();                                    // いまのロックを外す（自分のものなら、未保存を書いてから消す）
+  void tryAcquire(const std::string& path);
+  void setHolder(const LockInfo& info);
+  void applyReadOnly();                                // Session と Workspace に読み取り専用を伝える
+  void loseLock(const OwnershipResult& o, bool afterWrite = false);  // 保存の前の検査・ハートビートで失ったとき
+  void tickLock();
+  Status lockGate();                                   // 書く前の検査。失ったら読み取り専用に切り替える。確かめられなければエラー
+  bool verifyLockBeforeWrite();                        // 添付の本体・フォルダの移動など、dirty に依存しない書き込みの前に所有権を確かめる
+  bool writeAllowed(const ProjectEntry& e);            // Workspace が各ファイルを書く直前に呼ぶ検査
+  bool handleGuardLoss();                              // 書き込みの直前の検査で失ったと分かったとき、読み取り専用に切り替える
+  std::string preserveUnsaved(const std::string& id);  // 未保存の編集を「（未保存の編集）」として残し、元のプロジェクトの未保存を捨てる
+  void installWriteGuard();
+  Status flushGuarded();                               // ロックの検査と、フォルダ側の変更の検査を通してから書く
+  void runSync(bool manual, bool announce);
+  void toastLong(const std::string& text);
+
   std::int64_t now() const { return clock_.monotonicMs(); }
 
   IFileStore& fs_;
@@ -359,6 +420,22 @@ class AppController {
   std::int64_t lastSync_ = 0;
 
   std::optional<ParsedBackup> pendingJson_;
+
+  // ---- 編集中のロック（Issue #62）----
+  struct LockState {
+    LockStatus status;
+    std::string projectId;     // どのプロジェクトのロックか
+    LockInfo mine;             // kind == Mine のとき自分のロック
+    bool pending = false;      // まだフォルダがない新しいプロジェクト（最初の保存のあとで取る）
+    std::int64_t lastCheck = 0;  // 最後にハートビート（または持ち主の確認）をした時刻（monotonic）
+    bool beatWarned = false;
+  };
+  ILockStore* lockStore_ = nullptr;
+  IRandom* lockRng_ = nullptr;
+  std::unique_ptr<IRandom> ownRng_;
+  std::string machine_;
+  LockState lock_;
+  std::optional<OwnershipResult> guardLost_;  // 書き込みの直前の検査で、自分のロックでないと分かった結果
 
   // ---- GitHub の状態の確認（メモリ上のみ）----
   struct RemoteEntry {

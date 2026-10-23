@@ -59,6 +59,7 @@ const std::map<std::string, const char*>& paths() {
       {"gitpr", "M21 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM9 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM13 6h3a2 2 0 0 1 2 2v7M6 9v12"},
       {"gitissue", "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 12h.01"},
       {"image", "M3 3h18v18H3zM8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM21 15l-5-5L5 21"},
+      {"lock", "M4 11h16v10H4zM8 11V7a4 4 0 0 1 8 0v4"},
   };
   return m;
 }

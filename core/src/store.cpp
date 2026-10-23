@@ -212,7 +212,7 @@ std::string Workspace::add(ProjectRecord rec, bool dirty) {
 
 void Workspace::update(const std::string& id, ProjectRecord rec) {
   ProjectEntry* e = find(id);
-  if (!e) return;
+  if (!e || frozen_.count(id)) return;
   const bool changed = signature(rec) != signature(e->rec);
   e->rec = std::move(rec);
   if (changed) e->dirty = true;
@@ -220,7 +220,7 @@ void Workspace::update(const std::string& id, ProjectRecord rec) {
 
 void Workspace::updateSettings(const std::string& id, ProjectSettings settings) {
   ProjectEntry* e = find(id);
-  if (!e) return;
+  if (!e || frozen_.count(id)) return;
   ProjectRecord next = e->rec;  // csv も写るが、ここでは変えない
   next.settings = std::move(settings);
   const bool changed = settingsToJson(next) != settingsToJson(e->rec);
@@ -230,6 +230,31 @@ void Workspace::updateSettings(const std::string& id, ProjectSettings settings) 
 
 bool Workspace::hasDirty() const {
   return std::any_of(entries_.begin(), entries_.end(), [](const ProjectEntry& e) { return e.dirty || e.settingsDirty; });
+}
+
+void Workspace::setFrozen(const std::string& id, bool frozen) {
+  if (frozen) frozen_.insert(id);
+  else frozen_.erase(id);
+}
+
+void Workspace::discardUnsaved(const std::string& id) {
+  ProjectEntry* e = find(id);
+  if (!e) return;
+  e->dirty = false;
+  e->settingsDirty = false;
+  e->mtime = 0;  // フォルダのファイルの方が新しい扱いにして、次の sync() で読み直す
+}
+
+std::vector<std::string> Workspace::externallyChangedDirty() {
+  std::vector<std::string> out;
+  for (const auto& e : entries_) {
+    if ((!e.dirty && !e.settingsDirty) || e.stem.empty() || frozen_.count(e.id())) continue;
+    std::int64_t m = 0;
+    if (auto a = fs_.stat(csvPathOf(e))) m = std::max(m, a->mtime);
+    if (auto b = fs_.stat(settingsPathOf(e))) m = std::max(m, b->mtime);
+    if (m > e.mtime) out.push_back(e.id());
+  }
+  return out;
 }
 
 std::string Workspace::signature(const ProjectRecord& rec) const { return rec.csv + "\n" + dumpJs(settingsToJson(rec)); }
@@ -298,6 +323,7 @@ void Workspace::pruneBackups(const std::string& bdir) {
 }
 
 Status Workspace::writeEntry(ProjectEntry& e) {
+  if (frozen_.count(e.id())) return Error{"読み取り専用で開いているため、書き込みません"};
   if (e.stem.empty()) {
     e.stem = freeStem(e.rec.settings.name, e.id());
     e.layout = Layout::Folder;  // 新しく書くものはフォルダ構成
@@ -305,7 +331,9 @@ Status Workspace::writeEntry(ProjectEntry& e) {
   if (auto s = fs_.makeDirs(e.layout == Layout::Folder ? projectDir(e) : dir_); !s) return s;
   if (auto s = backupOnce(e); !s) return s;
   const std::string sig = signature(e.rec);
+  if (writeGuard_ && !writeGuard_(e)) return Error{"ロックを確かめられないため、書き込みを見合わせました"};
   if (auto s = fs_.writeAtomic(csvPathOf(e), e.rec.csv); !s) return s;
+  if (writeGuard_ && !writeGuard_(e)) return Error{"ロックを確かめられないため、書き込みを見合わせました"};  // CSV を書いたあとにも確かめる
   if (auto s = fs_.writeAtomic(settingsPathOf(e), dumpJs(settingsToJson(e.rec))); !s) return s;
   std::int64_t m = 0;
   if (auto a = fs_.stat(csvPathOf(e))) m = std::max(m, a->mtime);
@@ -319,8 +347,10 @@ Status Workspace::writeEntry(ProjectEntry& e) {
 }
 
 Status Workspace::writeSettingsOnly(ProjectEntry& e) {
+  if (frozen_.count(e.id())) return Error{"読み取り専用で開いているため、書き込みません"};
   if (e.stem.empty()) return writeEntry(e);  // まだ書いていない（CSV もない）ものは全部書く
   const std::string sig = signature(e.rec);
+  if (writeGuard_ && !writeGuard_(e)) return Error{"ロックを確かめられないため、書き込みを見合わせました"};
   if (auto s = fs_.writeAtomic(settingsPathOf(e), dumpJs(settingsToJson(e.rec))); !s) return s;
   std::int64_t m = 0;
   if (auto a = fs_.stat(csvPathOf(e))) m = std::max(m, a->mtime);
@@ -334,6 +364,7 @@ Status Workspace::writeSettingsOnly(ProjectEntry& e) {
 Status Workspace::flush() {
   for (auto& e : entries_) {
     if (!e.dirty && !e.settingsDirty) continue;
+    if (frozen_.count(e.id())) continue;
     if (!e.stem.empty() && e.lastSig == signature(e.rec)) {
       e.dirty = false;  // 内容が変わっていなければ書かない
       e.settingsDirty = false;
@@ -504,7 +535,7 @@ Result<SyncReport> Workspace::sync() {
   }
   // 4) 手元にだけあるものはフォルダへ書き出す
   for (auto& e : entries_)
-    if (!paired.count(e.id())) toWrite.push_back(e.id());
+    if (!paired.count(e.id()) && !frozen_.count(e.id())) toWrite.push_back(e.id());  // 読み取り専用のものは、フォルダから消えていても書き戻さない
   for (const auto& id : toWrite) {
     ProjectEntry* e = find(id);
     if (!e) continue;
@@ -517,12 +548,15 @@ Result<SyncReport> Workspace::sync() {
 Status Workspace::remove(const std::string& id) {
   auto it = std::find_if(entries_.begin(), entries_.end(), [&](const ProjectEntry& e) { return e.id() == id; });
   if (it == entries_.end()) return Error{"プロジェクトが見つかりません"};
+  if (frozen_.count(id)) return Error{"読み取り専用で開いているため、削除できません"};
   if (!it->stem.empty()) {
     const std::string ddir = joinPath(dir_, kDeletedDir);
     const std::string t = clock_.stamp();
     if (it->layout == Layout::Folder) {
       // フォルダごと（添付も）移す。同じ日時のものがあれば -2 …
       if (fs_.stat(projectDir(*it))) {
+        // 編集中のロックはプロジェクトの中身ではない。削除済みのフォルダに持ち込まない
+        (void)fs_.remove(lockPathIn(projectDir(*it)));
         if (auto s = fs_.makeDirs(ddir); !s) return s;
         std::string name = it->stem + "." + t;
         for (int n = 2; fs_.stat(joinPath(ddir, name)); ++n) name = it->stem + "." + t + "-" + std::to_string(n);

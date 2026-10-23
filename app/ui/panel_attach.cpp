@@ -424,6 +424,7 @@ void drawAttachSection(Frame& f, int i) {
     return;
   }
   const float W = ImGui::GetContentRegionAvail().x;
+  const bool ro = c.readOnly();  // 読み取り専用では、添付の追加・外す・移動はできない（開く・フォルダを開くはできる）
   // ドロップの案内（ここだけでなく、行・カード・この詳細パネルのどこへドロップしても付く）
   {
     const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -431,9 +432,9 @@ void drawAttachSection(Frame& f, int i) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(p, ImVec2(p.x + W, p.y + h), u.t->surface2, u.m.s(6));
     dl->AddRect(p, ImVec2(p.x + W, p.y + h), u.t->line2, u.m.s(6));
-    const char* l1 = "ここにファイルをドロップして添付";
-    const char* l2 = "画像・PDF など何でも／フォルダは中のファイルを全部";
-    const char* l3 = "コピーした画像は、課題を選んで Ctrl+V でも付きます";
+    const char* l1 = ro ? "読み取り専用で開いているため、添付の追加・外す・移動はできません" : "ここにファイルをドロップして添付";
+    const char* l2 = ro ? "画面上部の「再確認」「編集を引き継ぐ」で、編集できる状態にできます" : "画像・PDF など何でも／フォルダは中のファイルを全部";
+    const char* l3 = ro ? "" : "コピーした画像は、課題を選んで Ctrl+V でも付きます";
     const ImVec2 s1 = ImGui::CalcTextSize(l1), s2 = ImGui::CalcTextSize(l2), s3 = ImGui::CalcTextSize(l3);
     drawIcon(dl, "paperclip", ImVec2(p.x + (W - s1.x) / 2 - u.m.s(20), p.y + u.m.s(10)), u.m.s(14), u.t->muted);
     dl->AddText(ImVec2(p.x + (W - s1.x) / 2, p.y + u.m.s(9)), u.t->ink, l1);
@@ -451,12 +452,14 @@ void drawAttachSection(Frame& f, int i) {
   ImGui::PopTextWrapPos();
   ImGui::Spacing();
   // 「ファイルを選んで追加」: ダイアログを開く間に描画中の参照が壊れないよう、フレームの終わりに行う
+  ImGui::BeginDisabled(ro);
   if (ImGui::Button("ファイルを選んで追加")) {
     deferAfterFrame(f, [&f, id] {
       const std::vector<std::string> picked = f.p.pickOpenFiles("添付するファイルを選ぶ");
       if (!picked.empty() && f.c.session() && f.c.session()->issue(id)) f.c.attachFiles(id, picked);
     });
   }
+  ImGui::EndDisabled();
   u.attachPickBtn = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
   if (list.empty()) {
     ImGui::Spacing();
@@ -535,7 +538,7 @@ void drawAttachSection(Frame& f, int i) {
       const ImU32 col = risky ? u.t->tight : (img && img->failed ? u.t->late : u.t->muted);
       drawIcon(dl, icon, ImVec2(b0.x + (box - u.m.s(18)) / 2, b0.y + (box - u.m.s(18)) / 2), u.m.s(18), col);
     }
-    if (grabbed && !u.attachDrag.active && !u.attachDragCancelled && ImGui::IsMouseDragging(ImGuiMouseButton_Left, dragPx)) {
+    if (grabbed && !u.ro && !u.attachDrag.active && !u.attachDragCancelled && ImGui::IsMouseDragging(ImGuiMouseButton_Left, dragPx)) {
       u.attachDrag.active = true;
       u.attachDrag.issueId = id;
       u.attachDrag.index = k;
@@ -567,7 +570,7 @@ void drawAttachSection(Frame& f, int i) {
     if (ImGui::SmallButton("開く")) open = k;
     if (risky) tip("実行ファイルやスクリプトです。開く前に確認します");
     ImGui::SameLine();
-    if (iconButton(u, "del", "trash", "外す（ファイルは「_削除済み」フォルダへ移します）")) del = k;
+    if (iconButton(u, "del", "trash", "外す（ファイルは「_削除済み」フォルダへ移します）", !u.ro)) del = k;
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + rowH));
     ImGui::Separator();
     ImGui::PopID();

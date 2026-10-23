@@ -26,6 +26,7 @@ add_library(roadmap_core STATIC
   src/project_io.cpp
   src/filestore.cpp
   src/store.cpp
+  src/lock.cpp
   src/sha256.cpp
   src/attachments.cpp
   src/jira_check.cpp

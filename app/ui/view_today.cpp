@@ -65,7 +65,7 @@ bool overRect(const std::pair<ImVec2, ImVec2>& r) { return ImGui::IsMouseHoverin
 void requestComplete(Frame& f, const std::string& sid) {
   deferAfterFrame(f, [&f, sid] {
     Session* s = f.c.session();
-    if (!s || !s->tree()) return;
+    if (!s || !s->tree() || !f.c.canEdit()) return;  // 読み取り専用では完了にしない（Issue #62）
     const int i = s->tree()->find(sid);
     if (i < 0) return;
     const std::string name = clip(s->tree()->name[static_cast<std::size_t>(i)], 24);
@@ -77,7 +77,7 @@ void requestComplete(Frame& f, const std::string& sid) {
 void requestShift(Frame& f, const std::string& sid, ShiftTo to) {
   deferAfterFrame(f, [&f, sid, to] {
     Session* s = f.c.session();
-    if (!s) return;
+    if (!s || !f.c.canEdit()) return;  // 読み取り専用では日程を動かさない（Issue #62）
     shiftIssue(*s, sid, to, f.c.clock().today());  // 通知（Undo つき）は Session が出す
     f.c.afterEdit();
   });
@@ -431,7 +431,7 @@ HeaderOut drawHeader(Frame& f, ImVec2 size, Day today, const TodayReport& rep, D
     ImGui::SetCursorScreenPos(ImVec2(q.x + w - btnW - u.m.s(12), q.y + u.m.s(3)));
     if (iconTextButton(u, "baseToday", nullptr, "基準日を今日にする")) {
       deferAfterFrame(f, [&f] {
-        if (!f.c.session()) return;
+        if (!f.c.session() || !f.c.canEdit()) return;
         f.c.session()->setBaseDate(f.c.clock().todayIso());
         f.c.afterEdit();
       });

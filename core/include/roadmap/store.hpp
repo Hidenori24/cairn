@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <set>
 #include <string>
@@ -12,6 +13,7 @@
 
 #include "roadmap/clock.hpp"
 #include "roadmap/filestore.hpp"
+#include "roadmap/lock.hpp"
 #include "roadmap/project_io.hpp"
 
 namespace roadmap {
@@ -99,6 +101,20 @@ class Workspace {
   // 課題を編集していない間の設定の変更（履歴の記録・表示状態など）で、元の CSV を再エクスポートして書き換えないために使う
   void updateSettings(const std::string& id, ProjectSettings settings);
   bool hasDirty() const;
+  // 読み取り専用にするプロジェクト（他の人のロックなど。Issue #62）。立っている間は、そのプロジェクトのファイルを一切書かない
+  // （update・updateSettings は何もせず、flush・sync も書かない。sync の「手元にだけあるものを書き出す」でも書かない）。
+  // 読み直し（フォルダの版を採る）は今まで通り
+  void setFrozen(const std::string& id, bool frozen);
+  bool isFrozen(const std::string& id) const { return frozen_.count(id) > 0; }
+  // 未保存の編集を捨て、次の sync() でフォルダの版を読み直させる（ロックを失ったとき。手元の内容は呼び出し側が別に残す）
+  void discardUnsaved(const std::string& id);
+  // 未保存の編集があり、しかもフォルダのファイルが自分の記録（mtime）より新しいプロジェクトの id。
+  // そのまま書くと、他の人が書いた版を上書きしてしまう。sync() に回すと「両方変わっている」の扱い（別プロジェクトとして残す）になる
+  std::vector<std::string> externallyChangedDirty();
+  // ファイルを書く直前（CSV の前・設定の前）に呼ぶ検査。false を返すと、そのプロジェクトは書かずにエラーを返す
+  // （保存の前のロックの検査から実際の書き込みまでの窓を縮めるため。Issue #62）。なければ何も検査しない
+  using WriteGuard = std::function<bool(const ProjectEntry&)>;
+  void setWriteGuard(WriteGuard g) { writeGuard_ = std::move(g); }
 
   // 未保存のものを書く。内容が前回と同じなら書かない
   Status flush();
@@ -153,6 +169,8 @@ class Workspace {
   std::vector<ProjectEntry> entries_;
   std::set<std::string> fileStems_;  // フォルダにある stem（小文字。平置きもフォルダ構成も）
   std::set<std::string> backedUp_;   // このプロセスでバックアップ済みの CSV のパス
+  std::set<std::string> frozen_;     // 読み取り専用のプロジェクトの id
+  WriteGuard writeGuard_;
 };
 
 // データフォルダの決定（8.1）: --data > ROADMAP_DATA > アプリの設定で選んだ場所 > <exe>/data/projects

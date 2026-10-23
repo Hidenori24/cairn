@@ -83,7 +83,7 @@ class IPlatform {
 enum class Dlg {
   None, NewProject, EditProject, ConfirmDelete, Import, Export, Folder, Settings, Workload, Warnings, Shortcuts,
   TplApply, TplSave, Conflict, ConfirmQuit, AppSettings, ConfirmIssueDelete, PasteChildren, AttachOpenWarn, AttachPreview,
-  ExportHtml, Weekly, BaselineSave, BaselineManage, ConfirmBaselineDelete, LinkOpenWarn
+  ExportHtml, Weekly, BaselineSave, BaselineManage, ConfirmBaselineDelete, LinkOpenWarn, ConfirmTakeOver
 };
 
 enum class EditField { None, Name, Assignee, Dur, Pred };
@@ -213,6 +213,21 @@ struct UiState {
   std::string previewIssue;       // プレビュー中の添付（Dlg::AttachPreview）
   std::size_t previewIndex = 0;
   float previewZoom = 0;          // 0 = 全体に合わせる
+
+  // 読み取り専用（他の人が編集中など。Issue #62）。drawApp が毎フレームの先頭で設定する。ドラッグを始めない判断に使う
+  bool ro = false;
+  // 詳細パネルの依存タブの課題の行（先行・後続・関連。前のフレームの範囲と課題 id。煙テストが、読み取り専用でもたどれることを確かめる）
+  struct IssuePill {
+    ImVec2 a, b;
+    std::string id;
+  };
+  std::vector<IssuePill> issuePills;
+  // ダイアログの下端のボタンの範囲（最後に描いたもの。煙テストが押す位置を知る）
+  std::vector<std::pair<std::string, std::pair<ImVec2, ImVec2>>> dlgButtons;
+  // 読み取り専用の帯（Issue #62）: 前のフレームに帯を出したか、出した文言、ボタンの範囲（画面の座標。煙テストが押す位置を知る）
+  bool roBandShown = false;
+  std::string roBandText;
+  std::pair<ImVec2, ImVec2> roRecheckBtn{{0, 0}, {0, 0}}, roTakeoverBtn{{0, 0}, {0, 0}};
 
   // 依存の相手を画面（一覧・ガント・ボード）のクリックで選ぶモード（Esc で中止）
   struct LinkPick {

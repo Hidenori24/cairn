@@ -460,7 +460,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
     const Arrow& ar = arrows[static_cast<std::size_t>(hoverArrow)];
     u.arrowHoverFrom = T.ids[rows[ar.a].id];
     u.arrowHoverTo = T.ids[rows[ar.b].id];
-    hoverEditable = editableArrow(ar);
+    hoverEditable = editableArrow(ar) && !u.ro;
     // 矢印の上で押した: 動かしたらつなぎ替え（まだクリックでは何もしない。行の選択・バーのドラッグにもしない）
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
       u.arrowDrag = {};
@@ -574,7 +574,7 @@ void drawGanttView(Frame& f, ImVec2 size) {
       ImGui::InvisibleButton("##ms", ImVec2(u.m.s(16), u.m.s(16)));
       if (ImGui::IsItemHovered()) hoverTipId = T.ids[id];
     } else {
-      const bool movable = !r.done && !r.pinned && !u.linkPick.active;
+      const bool movable = !r.done && !r.pinned && !u.linkPick.active && !u.ro;
       Day s0 = r.asapStart, f0 = r.asapFinish;
       if (dragIdx == id) {
         if (u.barDrag.resize) f0 = std::max(s0, u.barDrag.origFinish + dragDelta);

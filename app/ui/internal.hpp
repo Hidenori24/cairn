@@ -25,6 +25,8 @@ void drawDetailPanel(Frame& f, ImVec2 size);
 // 詳細パネルの「添付」タブ（i = 課題の添字）
 void drawAttachTab(Frame& f, int i);
 void drawPalette(Frame& f);
+// コマンドパレットに並ぶコマンドの名前（煙テストが、読み取り専用で変更するコマンドが並ばないことを確かめる）
+std::vector<std::string> paletteTitles(Frame& f);
 void drawDialogs(Frame& f);
 void drawGoalPopover(Frame& f);
 
