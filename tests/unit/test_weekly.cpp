@@ -1180,7 +1180,7 @@ TEST_CASE("weekly: 「EVM（出来高管理）」の節は、ベースライン�
   // 項目の一つとして数える
   WeeklySections only;
   only.summary = only.done = only.progress = only.next = only.risks = only.milestones = only.assignees = only.changes = only.notes = only.baseline = false;
-  only.evm = false;
+  only.evm = only.touched = false;
   CHECK_FALSE(only.any());
   only.evm = true;
   CHECK(only.any());
