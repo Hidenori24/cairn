@@ -55,9 +55,9 @@ TEST_CASE("check-jira: 既知の追加列は警告して成功扱いにする") 
   const auto r = checkJiraCsv(csv);
   CHECK(r.ok);
   CHECK(r.errors.empty());
-  CHECK(r.warnings.size() == 5);
-  CHECK(r.report("x")[0] == "x: 1件 / 列 9 / OK（警告 5件）");
-  CHECK(r.report("x").size() == 6);
+  CHECK(r.warnings.size() == 6);
+  CHECK(r.report("x")[0] == "x: 1件 / 列 9 / OK（警告 6件）");
+  CHECK(r.report("x").size() == 7);
   for (const auto& warning : r.warnings) CHECK(warning.find("JIRA が無視する可能性があります") != std::string::npos);
 }
 
