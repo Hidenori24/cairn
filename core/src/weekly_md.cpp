@@ -305,6 +305,28 @@ void renderBaseline(Md& m, const WeeklyReport& r) {
   rows("消えた課題", b.removed, baselineRemovedText);
 }
 
+void renderEvm(Md& m, const WeeklyReport& r) {
+  const EvmReport& e = r.evm.report;
+  m.heading(2, "EVM（出来高管理）");
+  if (!e.ok()) {
+    m.line(escapeMarkdown(evmReasonText(e)));
+    m.blank();
+    for (const std::string& s : evmNotes(e)) m.line("- " + escapeMarkdown(s));
+    m.blank();
+    return;
+  }
+  const std::string at = baselineAtText(e.baselineAt);
+  m.line("ベースライン「" + escapeMarkdown(e.baselineName) + "」" + (at.empty() ? std::string() : "（保存 " + at + "）") + "の日程と比べた、基準日（" +
+         fmtShort(e.base) + "）の終わりの時点の指標です。SV・ES は + が進み／遅れの向きに注意（SV は + が進み、ES の遅れは + が遅れ）。");
+  m.blank();
+  for (const weeklyfmt::EvmRow& row : weeklyfmt::evmRows(e)) m.line("- " + escapeMarkdown(row.label + ": " + row.value));
+  m.blank();
+  m.line(escapeMarkdown(evmEsSentence(e)));
+  m.line(escapeMarkdown(evmForecastText(e)));
+  for (const std::string& s : evmNotes(e)) m.line("- " + escapeMarkdown(s));
+  m.blank();
+}
+
 }  // namespace
 
 std::string weeklyMarkdown(const WeeklyReport& r) {
@@ -336,6 +358,7 @@ std::string weeklyMarkdown(const WeeklyReport& r) {
   if (s.assignees) renderAssignees(m, r);
   if (s.changes && r.changes.available) renderChanges(m, r);
   if (s.baseline && r.baseline.available) renderBaseline(m, r);
+  if (s.evm && r.evm.available) renderEvm(m, r);
   if (s.notes) notes();
   // 末尾は改行 1 つ
   while (m.o.size() >= 2 && m.o[m.o.size() - 1] == '\n' && m.o[m.o.size() - 2] == '\n') m.o.pop_back();

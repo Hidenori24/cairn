@@ -13,6 +13,7 @@
 
 #include "roadmap/calendar.hpp"
 #include "roadmap/baseline.hpp"
+#include "roadmap/evm_settings.hpp"
 #include "roadmap/history.hpp"
 #include "roadmap/links.hpp"
 #include "roadmap/weekly_state.hpp"
@@ -134,6 +135,7 @@ struct ProjectSettings {
   AttachmentMap attachments;      // 添付のメタ情報（空なら settings.json に書かない）
   LinkMap links;                  // 関連リンク（URL・社内のファイル・フォルダ。空なら settings.json に書かない。共有・バックアップには入れない。Issue #60）
   BaselineSet baselines;          // ベースライン（計画の日程の保存。空なら settings.json に書かない。共有・バックアップには入れない。Issue #53）
+  EvmSettings evm;                // EVM（出来高管理）の設定（"evm"。既定なら settings.json に書かない。共有・バックアップには入れない。Issue #65）
   History history;                // 状況の件数の履歴（週に 1 回まで。空なら settings.json に書かない。共有・バックアップには入れない。Issue #64）
   WeeklyMemo weekly;              // 週次レポートの所感とスナップショット（空なら settings.json に書かない。Issue #43）
   WeeklyAuto weeklyAuto;          // 開いたときに自動で取る週の頭のスナップショット（"weeklyAuto"。空なら書かない。共有・バックアップには入れない。Issue #70）

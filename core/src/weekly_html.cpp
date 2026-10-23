@@ -368,6 +368,25 @@ std::string notesHtml(const WeeklyReport& r) {
   return section("所感・課題・お願い", b);
 }
 
+std::string evmHtml(const WeeklyReport& r) {
+  const EvmReport& e = r.evm.report;
+  std::string b;
+  if (!e.ok()) {
+    b += "<p class=\"warn\">" + E(evmReasonText(e)) + "</p>\n";
+    for (const std::string& s : evmNotes(e)) b += "<p class=\"sub\">・" + E(s) + "</p>\n";
+    return section("EVM（出来高管理）", b);
+  }
+  const std::string at = baselineAtText(e.baselineAt);
+  b += "<p class=\"sub\">ベースライン「" + E(e.baselineName) + "」" + (at.empty() ? std::string() : "（保存 " + E(at) + "）") + "の日程と比べた、基準日（" +
+       E(fmtShort(e.base)) + "）の終わりの時点の指標です。SV は + が進み、ES の遅れは + が遅れです。</p>\n<div class=\"tiles\">\n";
+  for (const weeklyfmt::EvmRow& row : weeklyfmt::evmRows(e)) b += tile(row.label, row.value, std::string(), row.bad ? "rk-late" : "");
+  b += "</div>\n<p>" + E(evmEsSentence(e)) + "</p>\n";
+  const std::string ft = evmForecastText(e);
+  b += std::string(!e.forecast.ok && !ft.empty() && ft[0] == '!' ? "<p class=\"warn\">" : "<p>") + E(ft) + "</p>\n";
+  for (const std::string& s : evmNotes(e)) b += "<p class=\"sub\">・" + E(s) + "</p>\n";
+  return section("EVM（出来高管理）", b);
+}
+
 }  // namespace
 
 std::string weeklyHtml(const WeeklyReport& r, const IClock* clock) {
@@ -401,6 +420,7 @@ std::string weeklyHtml(const WeeklyReport& r, const IClock* clock) {
     if (s.assignees) h += assigneesHtml(r);
     if (s.changes && r.changes.available) h += changesHtml(r);
     if (s.baseline && r.baseline.available) h += baselineHtml(r);
+    if (s.evm && r.evm.available) h += evmHtml(r);
     if (s.notes) h += notesHtml(r);
   }
   h += "</main>\n<footer>このアプリで出力（プロジェクト管理）</footer>\n</div>\n</body>\n</html>\n";

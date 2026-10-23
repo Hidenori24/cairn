@@ -2,6 +2,7 @@
 #include "roadmap/other_links.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -324,6 +325,16 @@ bool Session::showBaseline(const std::string& id) {
   ++baselineRev_;
   persist();
   return true;
+}
+
+void Session::setEvmSettings(EvmSettings s) {
+  if (refuseReadOnly()) return;
+  if (!std::isfinite(s.spiWarn)) s.spiWarn = kEvmSpiWarnDefault;
+  s.spiWarn = std::clamp(s.spiWarn, kEvmSpiWarnMin, kEvmSpiWarnMax);
+  s.extra = P_.settings.evm.extra;  // 未知のキーは画面から変えない（書き戻すだけ）
+  if (P_.settings.evm == s) return;
+  P_.settings.evm = std::move(s);
+  persist();
 }
 
 const BaselineCompare* Session::baselineCompare() const {

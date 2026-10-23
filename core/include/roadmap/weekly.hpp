@@ -12,6 +12,7 @@
 #include "roadmap/calendar.hpp"
 #include "roadmap/clock.hpp"
 #include "roadmap/engine.hpp"
+#include "roadmap/evm.hpp"
 #include "roadmap/filestore.hpp"
 #include "roadmap/load.hpp"
 #include "roadmap/model.hpp"
@@ -57,8 +58,9 @@ struct WeeklySections {
   bool changes = true;      // 先週から変わったこと（スナップショットがあるときだけ出る）
   bool notes = true;        // 所感・課題・お願い
   bool baseline = false;    // ベースラインとの差（表示するベースラインがあるときだけ出る。既定オフ。Issue #53）
+  bool evm = true;          // EVM（出来高管理）の SPI・ES の遅れ・SV（EVM に使うベースラインがあるときだけ出る。Issue #65）
   bool any() const {
-    return summary || done || touched || progress || next || risks || milestones || assignees || changes || notes || baseline;
+    return summary || done || touched || progress || next || risks || milestones || assignees || changes || notes || baseline || evm;
   }
 };
 
@@ -92,6 +94,9 @@ struct WeeklyInput {
   const WeeklyMemo* memo = nullptr;       // 手動（コピー・保存したとき）のスナップショット
   const WeeklyAuto* autos = nullptr;      // 自動（週の頭）のスナップショット
   const BaselineCompare* baseline = nullptr;  // 表示するベースラインとの比較（なければ「ベースラインとの差」は出ない）
+  // EVM（Issue #65）の計画にするベースライン（evmPickBaseline で選んだもの。null = 節を出さない）と設定。参照は呼び出しの間だけ使う
+  const Baseline* evmBaseline = nullptr;
+  EvmSettings evm;
   // 作成日・更新日の列（Created・Updated。stamps.hpp）を探す元。issues[i].extra と同じ並び。
   // なければ「今週触った課題」は出ない（Issue #71）
   const ProjectMeta* meta = nullptr;
@@ -252,6 +257,12 @@ struct WeeklyBaseline {
   WeeklyBaselineList removed;  // 消えた
 };
 
+// EVM（出来高管理）の節。基準日の終わりの時点の指標（期間には依らない）
+struct WeeklyEvm {
+  bool available = false;  // 節を出す（ベースラインがある）
+  EvmReport report;        // ok() でないときは、reason の案内を出す
+};
+
 struct WeeklyReport {
   std::string projectName;
   Day base = 0;
@@ -274,6 +285,7 @@ struct WeeklyReport {
   int assigneesTotal = 0;
   WeeklyChanges changes;
   WeeklyBaseline baseline;
+  WeeklyEvm evm;
   std::string notes;      // 所感（そのまま）
   bool empty = false;     // 課題がない
 };
