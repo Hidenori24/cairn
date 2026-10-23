@@ -29,12 +29,14 @@ struct HistoryPoint {
   std::string weekStart;  // その週の月曜（ISO 日付 "YYYY-MM-DD"）
   int todo = 0, doing = 0, done = 0;
   int total = 0;  // todo + doing + done（マイルストーンを除く作業の数）
+  nlohmann::ordered_json extra = nlohmann::ordered_json::object();  // 履歴点内の未知のキー
   bool operator==(const HistoryPoint&) const = default;
 };
 
 struct History {
   std::vector<HistoryPoint> points;  // 週の昇順（同じ週は 1 つ）。最大 kHistoryMaxWeeks
-  bool empty() const { return points.empty(); }
+  nlohmann::ordered_json extra = nlohmann::ordered_json::object();  // history 直下の未知のキー
+  bool empty() const { return points.empty() && extra.empty(); }
   bool operator==(const History&) const = default;
 };
 

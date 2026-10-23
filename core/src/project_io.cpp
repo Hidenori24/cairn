@@ -76,7 +76,7 @@ std::string newProjectId(const IClock& clock) {
 }
 
 namespace {
-const char* const kKnownSettingsKeys[] = {"app", "version", "id", "name", "key", "base", "hol", "scn", "scenarios", "res", "ui", "attachments", "weekly", "weeklyAuto", "baselines", "history", "links", "evm"};
+const char* const kKnownSettingsKeys[] = {"app", "version", "id", "name", "key", "base", "hol", "scn", "scenarios", "res", "ui", "attachments", "weekly", "weeklyAuto", "baselines", "history", "links", "evm", "v", "csv"};
 bool isKnownKey(const std::string& k) {
   for (const char* x : kKnownSettingsKeys)
     if (k == x) return true;
@@ -87,12 +87,21 @@ std::string str(const Json& j, const char* k) {
   return "";
 }
 bool hasStr(const Json& j, const char* k) { return j.is_object() && j.contains(k) && j[k].is_string(); }
-Json resJson(const ResourceLimit& r) { return Json{{"on", r.on}, {"cap", r.cap}}; }
+Json resJson(const ResourceLimit& r) {
+  Json j = r.extra.is_object() ? r.extra : Json::object();
+  j.erase("on");
+  j.erase("cap");
+  j["on"] = r.on;
+  j["cap"] = r.cap;
+  return j;
+}
 ResourceLimit resFrom(const Json& j) {
   ResourceLimit r;
   if (!j.is_object()) return r;
   if (j.contains("on") && j["on"].is_boolean()) r.on = j["on"].get<bool>();
   if (j.contains("cap") && j["cap"].is_number()) r.cap = std::max(1, static_cast<int>(j["cap"].get<double>()));
+  for (auto it = j.begin(); it != j.end(); ++it)
+    if (it.key() != "on" && it.key() != "cap") r.extra[it.key()] = it.value();
   return r;
 }
 }  // namespace
@@ -283,6 +292,9 @@ Prefs prefsFromJson(const Json& j) {
     gi("w", p.window.w);
     gi("h", p.window.h);
     if (w.contains("maximized") && w["maximized"].is_boolean()) p.window.maximized = w["maximized"].get<bool>();
+    for (auto it = w.begin(); it != w.end(); ++it)
+      if (it.key() != "x" && it.key() != "y" && it.key() != "w" && it.key() != "h" && it.key() != "maximized")
+        p.window.extra[it.key()] = it.value();
   }
   if (j.contains("hintDismissed") && j["hintDismissed"].is_boolean()) p.hintDismissed = j["hintDismissed"].get<bool>();
   if (hasStr(j, "dataDir")) p.dataDir = j["dataDir"].get<std::string>();
@@ -310,6 +322,10 @@ Prefs prefsFromJson(const Json& j) {
     gb("deadline", p.inherit.deadline);
     gb("type", p.inherit.type);
     gb("duration", p.inherit.duration);
+    for (auto it = h.begin(); it != h.end(); ++it)
+      if (it.key() != "on" && it.key() != "assignee" && it.key() != "prio" && it.key() != "labels" && it.key() != "deadline" &&
+          it.key() != "type" && it.key() != "duration")
+        p.inherit.extra[it.key()] = it.value();
   }
   static const char* const known[] = {"theme",   "density", "me",         "currentProject", "templates",    "window",
                                       "hintDismissed", "dataDir", "uiScale", "dimPercent", "mtaLateDays", "confirmDelete",
@@ -328,7 +344,14 @@ Json prefsToJson(const Prefs& p) {
   j["me"] = p.me;
   j["currentProject"] = p.currentProject;
   j["templates"] = templatesToJson(p.templates);
-  j["window"] = Json{{"x", p.window.x}, {"y", p.window.y}, {"w", p.window.w}, {"h", p.window.h}, {"maximized", p.window.maximized}};
+  Json window = p.window.extra.is_object() ? p.window.extra : Json::object();
+  for (const char* k : {"x", "y", "w", "h", "maximized"}) window.erase(k);
+  window["x"] = p.window.x;
+  window["y"] = p.window.y;
+  window["w"] = p.window.w;
+  window["h"] = p.window.h;
+  window["maximized"] = p.window.maximized;
+  j["window"] = std::move(window);
   j["hintDismissed"] = p.hintDismissed;
   j["dataDir"] = p.dataDir;
   j["uiScale"] = p.uiScale;
@@ -340,9 +363,16 @@ Json prefsToJson(const Prefs& p) {
   j["useLock"] = p.useLock;
   j["newNameFormat"] = p.newNameFormat;
   j["newNameCustom"] = p.newNameCustom;
-  j["inherit"] = Json{{"on", p.inherit.on},         {"assignee", p.inherit.assignee}, {"prio", p.inherit.prio},
-                      {"labels", p.inherit.labels}, {"deadline", p.inherit.deadline}, {"type", p.inherit.type},
-                      {"duration", p.inherit.duration}};
+  Json inherit = p.inherit.extra.is_object() ? p.inherit.extra : Json::object();
+  for (const char* k : {"on", "assignee", "prio", "labels", "deadline", "type", "duration"}) inherit.erase(k);
+  inherit["on"] = p.inherit.on;
+  inherit["assignee"] = p.inherit.assignee;
+  inherit["prio"] = p.inherit.prio;
+  inherit["labels"] = p.inherit.labels;
+  inherit["deadline"] = p.inherit.deadline;
+  inherit["type"] = p.inherit.type;
+  inherit["duration"] = p.inherit.duration;
+  j["inherit"] = std::move(inherit);
   if (p.unknown.is_object())
     for (auto it = p.unknown.begin(); it != p.unknown.end(); ++it) j[it.key()] = it.value();
   return j;

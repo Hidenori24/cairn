@@ -67,6 +67,7 @@ Result<ParsedBackup> parseBackup(const std::string& text, const IClock& clock);
 struct WindowPlacement {
   int x = 100, y = 100, w = 1440, h = 900;
   bool maximized = false;
+  Json extra = Json::object();
 };
 struct Prefs {
   std::string theme = "auto";     // auto / light / dark

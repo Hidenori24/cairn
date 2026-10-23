@@ -1395,15 +1395,17 @@ JS版の挙動のうち、見落としやすいもの。**意図的な仕様と�
 
 ## 付録E. `rmcli check-jira` の規則
 
-JIRAの標準のCSV取り込みで問題になる点を機械的に検査する。入力 = 「JIRA用」で書き出したCSV（または、アプリのCSVを読んで内部で書き出したもの）。出力は1ファイルにつき1行「`名前: N件 / 列 M / OK`」または「`NG K件`」と、続けて問題点（最大12件）。全ファイルがOKなら終了コード 0。
+JIRAの標準のCSV取り込みで問題になる点を機械的に検査する。入力 = 「JIRA用」で書き出したCSV（または、アプリのCSVを読んで内部で書き出したもの）。出力は1ファイルにつき1行「`名前: N件 / 列 M / OK`」「警告があるときは `OK（警告 N件）`」または「`NG K件`」と、続けて問題点（最大12件）。エラーがなければ、警告があっても終了コード 0。
 
 - **標準列**: `Issue Id` `Issue key` `Issue Type` `Summary` `Parent` `Epic Name` `Epic Link` `Priority` `Status` `Assignee` `Start date` `Due date` `Resolved` `Original estimate` `Labels` `Description` `Outward issue link (Blocks)` `Comment`。
 - **アプリ独自列**: `Earliest start` `Deadline` `Remaining (weeks)` `Duration (weeks)` `Duration (weeks) @…`。
+- **既知の追加列（警告のみ）**: `Created` `Updated` `Sprint` `Attachment` `Relates` `Outward issue link (Relates)`。JIRA の環境によっては取り込まれない可能性があるため、警告に表示する。
 
 | 検査 | エラーにする条件 |
 |---|---|
 | 列の並び | 標準列が、最初のアプリ独自列より**後ろ**にある |
-| 不明な列 | 標準列でもアプリ独自列でもない |
+| 既知の追加列 | 上記の列は警告にする（エラーにせず JIRA に取り込まれない可能性を知らせる） |
+| 不明な列 | 標準列・アプリ独自列・既知の追加列のいずれでもない |
 | Issue Id | 重複 |
 | Epic Name | Epic どうしで重複 |
 | 種別 | `Epic` `Task` `Sub-task` `Story` `Bug` 以外 |

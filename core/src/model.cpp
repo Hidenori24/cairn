@@ -13,7 +13,12 @@ Json attachmentsToJson(const AttachmentMap& m) {
     if (list.empty()) continue;
     Json a = Json::array();
     for (const auto& x : list) {
-      Json e = Json{{"name", x.name}, {"size", x.size}, {"at", x.at}, {"who", x.who}};
+      Json e = x.extra.is_object() ? x.extra : Json::object();
+      for (const char* k : {"name", "size", "at", "who", "sha256"}) e.erase(k);
+      e["name"] = x.name;
+      e["size"] = x.size;
+      e["at"] = x.at;
+      e["who"] = x.who;
       if (isSha256Hex(x.sha256)) e["sha256"] = x.sha256;  // 空（古いメタ情報）なら出さない = 既存の設定ファイルは変わらない
       a.push_back(std::move(e));
     }
@@ -52,6 +57,9 @@ AttachmentMap attachmentsFromJson(const Json& j) {
       // 16進小文字 64 文字だけ読む（長さ・文字・型が壊れていれば空 = 不明のまま。項目は消さない）
       if (x.contains("sha256") && x["sha256"].is_string() && isSha256Hex(x["sha256"].get_ref<const std::string&>()))
         a.sha256 = x["sha256"].get<std::string>();
+      for (auto field = x.begin(); field != x.end(); ++field)
+        if (field.key() != "name" && field.key() != "size" && field.key() != "at" && field.key() != "who" && field.key() != "sha256")
+          a.extra[field.key()] = field.value();
       m[it.key()].push_back(std::move(a));
     }
   }

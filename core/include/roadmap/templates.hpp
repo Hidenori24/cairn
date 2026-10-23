@@ -18,6 +18,7 @@ struct TemplateItem {
   std::string t;                 // 種別（省略可）
   std::vector<std::string> lab;  // ラベル
   std::string d;                 // 説明
+  Json extra = Json::object();   // テンプレート項目内の未知のキー
 };
 
 struct Template {
@@ -26,6 +27,7 @@ struct Template {
   std::string name;
   std::string desc;
   std::vector<TemplateItem> items;
+  Json extra = Json::object();  // テンプレート内の未知のキー
 };
 
 const std::vector<Template>& builtinTemplates();

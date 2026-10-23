@@ -70,6 +70,9 @@ bool pointFromJson(const Json& j, HistoryPoint& out) {
   p.done = static_cast<int>(done);
   p.total = static_cast<int>(total);
   if (!validPoint(p)) return false;  // 日付・月曜・合計の一致
+  for (auto it = j.begin(); it != j.end(); ++it)
+    if (it.key() != "week" && it.key() != "todo" && it.key() != "doing" && it.key() != "done" && it.key() != "total")
+      p.extra[it.key()] = it.value();
   out = std::move(p);
   return true;
 }
@@ -108,7 +111,8 @@ bool historyHasWeek(const History& h, Day d) {
 Json historyToJson(const History& h) {
   Json pts = Json::array();
   for (const HistoryPoint& p : h.points) {
-    Json o = Json::object();
+    Json o = p.extra.is_object() ? p.extra : Json::object();
+    for (const char* k : {"week", "todo", "doing", "done", "total"}) o.erase(k);
     o["week"] = p.weekStart;
     o["todo"] = p.todo;
     o["doing"] = p.doing;
@@ -116,14 +120,18 @@ Json historyToJson(const History& h) {
     o["total"] = p.total;
     pts.push_back(std::move(o));
   }
-  Json j = Json::object();
+  Json j = h.extra.is_object() ? h.extra : Json::object();
+  j.erase("points");
   j["points"] = std::move(pts);
   return j;
 }
 
 History historyFromJson(const Json& j) {
   History h;
-  if (!j.is_object() || !j.contains("points") || !j["points"].is_array()) return h;
+  if (!j.is_object()) return h;
+  for (auto it = j.begin(); it != j.end(); ++it)
+    if (it.key() != "points") h.extra[it.key()] = it.value();
+  if (!j.contains("points") || !j["points"].is_array()) return h;
   for (const Json& x : j["points"]) {
     HistoryPoint p;
     if (!pointFromJson(x, p)) continue;  // 壊れた点は読み飛ばす

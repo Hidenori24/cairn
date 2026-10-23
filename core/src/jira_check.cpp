@@ -16,6 +16,7 @@ const std::set<std::string> kStdCols{"Issue Id", "Issue key", "Issue Type", "Sum
                                      "Resolved", "Original estimate", "Labels", "Description",
                                      "Outward issue link (Blocks)", "Comment"};
 const std::set<std::string> kAppCols{"Earliest start", "Deadline", "Remaining (weeks)", "Duration (weeks)"};
+const std::set<std::string> kWarnCols{"Created", "Updated", "Sprint", "Attachment", "Relates", "Outward issue link (Relates)"};
 const std::set<std::string> kPrio{"Highest", "High", "Medium", "Low", "Lowest"};
 
 bool isAppCol(const std::string& c) { return kAppCols.count(c) || c.rfind("Duration (weeks) @", 0) == 0; }
@@ -61,8 +62,10 @@ bool hasSpace(const std::string& s) {
 std::vector<std::string> JiraCheckResult::report(const std::string& name) const {
   std::vector<std::string> out;
   out.push_back(name + ": " + std::to_string(rows) + "件 / 列 " + std::to_string(cols) + " / " +
-                (ok ? std::string("OK") : "NG " + std::to_string(errors.size()) + "件"));
+                (ok ? (warnings.empty() ? std::string("OK") : "OK（警告 " + std::to_string(warnings.size()) + "件）")
+                    : "NG " + std::to_string(errors.size()) + "件"));
   for (std::size_t i = 0; i < errors.size() && i < 12; ++i) out.push_back("   - " + errors[i]);
+  for (std::size_t i = 0; i < warnings.size() && out.size() < 13; ++i) out.push_back("   注意: " + warnings[i]);
   return out;
 }
 
@@ -72,6 +75,7 @@ JiraCheckResult checkJiraCsv(const std::string& csvText) {
   const auto& h = t.header;
   const auto& body = t.rows;
   auto& errs = res.errors;
+  auto& warns = res.warnings;
   const auto idx = [&](const std::string& c) -> int {
     auto it = std::find(h.begin(), h.end(), c);
     return it == h.end() ? -1 : static_cast<int>(it - h.begin());
@@ -95,7 +99,10 @@ JiraCheckResult checkJiraCsv(const std::string& csvText) {
   for (std::size_t i = 0; i < h.size(); ++i) {
     const std::string& c = h[i];
     if (kStdCols.count(c) && i > firstApp) errs.push_back("標準列 " + c + " がアプリ独自列より後ろ");
-    if (!kStdCols.count(c) && !isAppCol(c)) errs.push_back("不明な列 " + c);
+    if (!kStdCols.count(c) && !isAppCol(c)) {
+      if (kWarnCols.count(c)) warns.push_back("アプリ独自の列 " + c + "。JIRA が無視する可能性があります");
+      else errs.push_back("不明な列 " + c);
+    }
   }
   std::vector<std::string> ids;
   std::set<std::string> idset;

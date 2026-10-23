@@ -94,6 +94,7 @@ struct ProjectMeta {
 struct ResourceLimit {
   bool on = false;
   int cap = 1;
+  Json extra = Json::object();  // res 内の未知のキー
   bool operator==(const ResourceLimit&) const = default;
 };
 
@@ -103,6 +104,7 @@ struct InheritSpec {
   bool on = false;
   bool assignee = true, prio = true, labels = true, deadline = true;
   bool type = true, duration = true;  // 直前の兄弟からだけ
+  Json extra = Json::object();  // inherit 内の未知のキー
   bool operator==(const InheritSpec&) const = default;
 };
 
@@ -113,6 +115,7 @@ struct Attachment {
   std::string at;           // 付けた日時 "YYYY-MM-DDTHH:MM"
   std::string who;          // 付けた人
   std::string sha256;       // 本体の SHA-256（16進小文字 64 文字。古いメタ情報は空 = 不明）。追加（ドロップ・選択・貼り付け・コピー）時に計算し、移動は引き継ぐ
+  Json extra = Json::object();  // 添付項目内の未知のキー
   bool operator==(const Attachment&) const = default;
 };
 // Issue Id → 添付（付けた順）。CSV の Issue Id で引く（表示 ID は階層で変わるため使わない）

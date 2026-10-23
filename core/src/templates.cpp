@@ -35,14 +35,16 @@ Json numJson(double v) {
 }  // namespace
 
 Json templateToJson(const Template& t) {
-  Json j = Json::object();
+  Json j = t.extra.is_object() ? t.extra : Json::object();
+  for (const char* k : {"id", "builtin", "name", "desc", "items"}) j.erase(k);
   j["id"] = t.id;
   if (t.builtin) j["builtin"] = true;
   j["name"] = t.name;
   j["desc"] = t.desc;
   Json items = Json::array();
   for (const auto& it : t.items) {
-    Json x = Json::object();
+    Json x = it.extra.is_object() ? it.extra : Json::object();
+    for (const char* k : {"n", "w", "lv", "after", "lab", "t", "d"}) x.erase(k);
     x["n"] = it.n;
     x["w"] = it.w ? numJson(*it.w) : Json(nullptr);
     x["lv"] = it.lv;
@@ -66,6 +68,9 @@ std::optional<Template> templateFromJson(const Json& j) {
   t.builtin = j.value("builtin", false);
   t.name = j["name"].get<std::string>();
   if (j.contains("desc") && j["desc"].is_string()) t.desc = j["desc"].get<std::string>();
+  for (auto field = j.begin(); field != j.end(); ++field)
+    if (field.key() != "id" && field.key() != "builtin" && field.key() != "name" && field.key() != "desc" && field.key() != "items")
+      t.extra[field.key()] = field.value();
   for (const auto& x : j["items"]) {
     if (!x.is_object()) continue;
     TemplateItem it;
@@ -80,6 +85,10 @@ std::optional<Template> templateFromJson(const Json& j) {
       for (const auto& l : x["lab"])
         if (l.is_string()) it.lab.push_back(l.get<std::string>());
     if (x.contains("d") && x["d"].is_string()) it.d = x["d"].get<std::string>();
+    for (auto field = x.begin(); field != x.end(); ++field)
+      if (field.key() != "n" && field.key() != "w" && field.key() != "lv" && field.key() != "after" && field.key() != "t" &&
+          field.key() != "lab" && field.key() != "d")
+        it.extra[field.key()] = field.value();
     t.items.push_back(std::move(it));
   }
   return t;
