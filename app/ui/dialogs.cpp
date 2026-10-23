@@ -467,6 +467,8 @@ void dlgWeekly(Frame& f) {
   ImGui::SameLine(0, u.m.s(16));
   ImGui::Checkbox("完了", &sec.done);
   ImGui::SameLine(0, u.m.s(16));
+  ImGui::Checkbox("触った課題", &sec.touched);
+  ImGui::SameLine(0, u.m.s(16));
   ImGui::Checkbox("進行中", &sec.progress);
   ImGui::SameLine(0, u.m.s(16));
   ImGui::Checkbox("次の予定", &sec.next);
@@ -505,7 +507,7 @@ void dlgWeekly(Frame& f) {
 
   // プレビュー（条件が変わったときだけ作り直す）
   std::string key = std::to_string(s->version()) + "|" + std::to_string(u.wkPeriod) + "|" + std::to_string(o.from) + "|" + std::to_string(o.to) + "|";
-  for (bool b : {sec.summary, sec.done, sec.progress, sec.next, sec.risks, sec.milestones, sec.assignees, sec.changes, sec.notes, sec.baseline}) key += b ? '1' : '0';
+  for (bool b : {sec.summary, sec.done, sec.touched, sec.progress, sec.next, sec.risks, sec.milestones, sec.assignees, sec.changes, sec.notes, sec.baseline}) key += b ? '1' : '0';
   key += "|" + o.notes;
   if (key != u.wkPreviewKey) {
     const auto r = c.renderWeekly(o, false);
