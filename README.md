@@ -21,7 +21,7 @@ JIRA 互換の CSV を原本に、課題の階層・依存関係・期間から 
 
 ### ダウンロード
 
-[Releases](https://github.com/Hidenori24/task_management_tool/releases) から取ります（リポジトリ名の変更後も、古い URL は自動で転送されます）。
+[Releases](https://github.com/Hidenori24/cairn/releases) から取ります（以前の URL `task_management_tool` も自動で転送されます）。
 
 | 配布物 | 中身 |
 |---|---|
@@ -185,7 +185,7 @@ Cairn（Copyright (c) 2026 Hidenori24）は [MIT ライセンス](LICENSE) で�
 
 ### Download
 
-Get a build from [Releases](https://github.com/Hidenori24/task_management_tool/releases) (the old URL is redirected after the repository is renamed).
+Get a build from [Releases](https://github.com/Hidenori24/cairn/releases) (the old `task_management_tool` URL is redirected).
 
 | File | What it is |
 |---|---|
