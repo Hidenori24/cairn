@@ -9,7 +9,9 @@
 
 #include <cmath>
 
+#include "roadmap/csv.hpp"
 #include "roadmap/report.hpp"
+#include "roadmap/stamps.hpp"
 #include "roadmap/text.hpp"
 #include "weekly_internal.hpp"
 
@@ -37,6 +39,12 @@ int countWorkdays(const Calendar& cal, const WeeklyRange& r) {
   for (Day d = r.from; d <= r.to; ++d)
     if (cal.isWork(d)) ++n;
   return n;
+}
+
+// Created・Updated の列の値を日付にする（列がない・読めないときは nullopt。時刻つき・JIRA の書式も読む）
+OptDay stampDay(const Issue& o, int col) {
+  if (col < 0 || static_cast<std::size_t>(col) >= o.extra.size()) return std::nullopt;
+  return csv::parseDate(o.extra[static_cast<std::size_t>(col)]);
 }
 
 // 並べ替えの鍵つきの添字
@@ -278,6 +286,9 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
     static const WeeklyAuto kNoAuto;
     cmp = weeklyChooseCompare(in.memo ? *in.memo : kNoMemo, in.autos ? *in.autos : kNoAuto, in.base, opt.period, r.range);
   }
+  // スナップショットの課題（Issue Id → 項目）。「先週から変わったこと」と「今週触った課題」が使う
+  std::unordered_map<std::string, const WeeklySnapItem*> before;
+  std::unordered_map<std::string, const WeeklySnapItem*> after;  // 比べる終わりがスナップショットのときだけ
   if (const WeeklySnapshot* prev = cmp.from) {
     const WeeklySnapshot* until = cmp.to;  // 比べる終わりのスナップショット（nullptr = いま）
     WeeklyChanges& ch = r.changes;
@@ -302,10 +313,8 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
       }
     }
 
-    std::unordered_map<std::string, const WeeklySnapItem*> before;
     before.reserve(prev->items.size());
     for (const WeeklySnapItem& it : prev->items) before.emplace(it.id, &it);
-    std::unordered_map<std::string, const WeeklySnapItem*> after;  // 比べる終わりがスナップショットのときだけ
     if (until) {
       after.reserve(until->items.size());
       for (const WeeklySnapItem& it : until->items) after.emplace(it.id, &it);
@@ -411,6 +420,128 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
     }
   }
   if (!r.evm.available) r.sections.evm = false;  // 出せない項目は「選ばれている項目」に数えない（全部オフのとき「選ばれていません」を出す）
+  // ---- 今週触った課題（Issue #71）----
+  // 期間内に Updated（なければ Created）が入る未完了の作業。完了した作業は「完了」に出るので含めない。
+  // 親のまとまりごと（直接の親）に並べる。上限を超えたら、新しく触った順に残す
+  if (opt.sections.touched && in.meta) {
+    WeeklyTouched& tc = r.touched;
+    tc.available = true;
+    const int createdCol = findStampColumn(*in.meta, StampKind::Created);
+    const int updatedCol = findStampColumn(*in.meta, StampKind::Updated);
+    tc.hasColumn = createdCol >= 0 || updatedCol >= 0;
+    if (const WeeklySnapshot* prev = cmp.from) {
+      tc.hasBasis = true;
+      tc.since = prev->base;
+      tc.sinceAuto = cmp.fromAuto;
+      tc.hasUntil = cmp.to != nullptr;
+      tc.until = cmp.to ? cmp.to->base : 0;
+      tc.truncated = prev->truncated || (cmp.to && cmp.to->truncated);
+    }
+    if (tc.hasColumn) {
+      struct Hit {
+        int idx;
+        Day on;
+        bool byCreated, created;
+      };
+      std::vector<Hit> hits;
+      for (int i : T.dfs) {
+        if (!inTree(i)) continue;
+        const std::size_t k = static_cast<std::size_t>(i);
+        if (!T.kids[k].empty() || T.kind[k] == Kind::Ms || in.rows[k].done) continue;  // 作業（葉）の未完了だけ
+        const OptDay upd = stampDay(in.issues[k], updatedCol), cr = stampDay(in.issues[k], createdCol);
+        const bool crIn = cr && inRange(*cr, r.range);
+        if (upd && inRange(*upd, r.range)) hits.push_back({i, *upd, false, crIn});
+        else if (crIn) hits.push_back({i, *cr, true, true});  // 更新日が期間にない（なし）が、作った日が期間内
+        else if (!upd) ++tc.noStamp;
+      }
+      tc.total = static_cast<int>(hits.size());
+      const std::size_t tcap = std::min(cap, kWeeklyMaxTouched);
+      if (hits.size() > tcap) {
+        // 新しく触った順（同じ日は Tree の順）に tcap 件を残し、表示は Tree の順に戻す
+        std::stable_sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) { return a.on > b.on; });
+        hits.resize(tcap);
+        std::stable_sort(hits.begin(), hits.end(), [&](const Hit& a, const Hit& b) {
+          return T.dfsPos[static_cast<std::size_t>(a.idx)] < T.dfsPos[static_cast<std::size_t>(b.idx)];
+        });
+      }
+      // 親のまとまり（出てきた順。親のない課題は最後）
+      const auto parentOfIdx = [&](int i) {
+        const std::size_t k = static_cast<std::size_t>(i);
+        return k < T.parentOf.size() && inTree(T.parentOf[k]) ? T.parentOf[k] : -1;
+      };
+      const auto pathOf = [&](int parent) {
+        std::string path;
+        int p = parent;
+        for (std::size_t guard = 0; p >= 0 && guard <= n; ++guard) {
+          const std::size_t pk = static_cast<std::size_t>(p);
+          const std::string part = weeklyfmt::title(cleanText(T.did[pk]), cleanText(T.name[pk]));
+          path = path.empty() ? part : part + " / " + path;
+          p = parentOfIdx(p);
+        }
+        return path;
+      };
+      std::map<int, std::size_t> groupAt;  // 親の添字 → groups の位置
+      for (const Hit& h : hits) {
+        const int parent = parentOfIdx(h.idx);
+        auto g = groupAt.find(parent);
+        if (g == groupAt.end()) {
+          g = groupAt.emplace(parent, tc.groups.size()).first;
+          WeeklyTouchedGroup grp;
+          grp.parent = parent;
+          grp.path = parent >= 0 ? pathOf(parent) : std::string();
+          tc.groups.push_back(std::move(grp));
+        }
+        const std::size_t k = static_cast<std::size_t>(h.idx);
+        const ScheduleRow& row = in.rows[k];
+        WeeklyTouchedItem ti;
+        ti.item = makeItem(h.idx);
+        ti.on = h.on;
+        ti.byCreated = h.byCreated;
+        ti.created = h.created;
+        for (const Comment& c : in.issues[k].comments) {
+          if (c.at.size() < 10) continue;
+          const OptDay d = parseIso(c.at.substr(0, 10));
+          if (d && inRange(*d, r.range)) {
+            ti.commented = true;
+            break;
+          }
+        }
+        // 状況・日程の差: 比べるスナップショットに載っている課題だけ（なければ「更新」とだけ出す）
+        if (cmp.from) {
+          const auto f = before.find(T.ids[k]);
+          if (f != before.end()) {
+            char nowSt = row.done ? 'd' : row.prog ? 'p' : 't';
+            OptDay nowFinish = row.asapFinish;
+            bool known = true;
+            if (cmp.to) {
+              const auto a = after.find(T.ids[k]);
+              if (a == after.end()) known = false;
+              else {
+                nowSt = a->second->st;
+                nowFinish = a->second->finish;
+              }
+            }
+            const WeeklySnapItem& was = *f->second;
+            if (known && was.st != nowSt) {
+              ti.statusChanged = true;
+              ti.statusFrom = was.st;
+              ti.statusTo = nowSt;
+            }
+            if (known && was.st != 'd' && nowSt != 'd' && was.finish && nowFinish && *was.finish != *nowFinish) {
+              ti.finishMoved = true;
+              ti.finishFrom = *was.finish;
+              ti.finishTo = *nowFinish;
+              ti.shiftDays = cal.floatDays(*was.finish, *nowFinish);
+            }
+          }
+        }
+        tc.groups[g->second].items.push_back(std::move(ti));
+      }
+      // 親のない課題のまとまりは最後
+      const auto lone = std::find_if(tc.groups.begin(), tc.groups.end(), [](const WeeklyTouchedGroup& g) { return g.parent < 0; });
+      if (lone != tc.groups.end()) std::rotate(lone, lone + 1, tc.groups.end());
+    }
+  }
 
   // ---- ベースラインとの差 ----
   if (opt.sections.baseline && in.baseline && in.baseline->entries.size() == n) {
@@ -567,6 +698,57 @@ std::string nextTitle(const WeeklyReport& r) {
   }
   return "次の7日間の予定";
 }
+
+std::string touchedTitle(const WeeklyReport& r) {
+  switch (r.period) {
+    case WeeklyPeriod::ThisWeek: return "今週触った課題";
+    case WeeklyPeriod::LastWeek: return "先週触った課題";
+    case WeeklyPeriod::Custom: break;
+  }
+  return "期間内に触った課題";
+}
+
+std::string statusName(char st) {
+  switch (st) {
+    case 'd': return "完了";
+    case 'p': return "進行中";
+    default: break;
+  }
+  return "未着手";
+}
+
+std::string statusName(const WeeklyItem& it) { return statusName(it.done ? 'd' : it.prog ? 'p' : 't'); }
+
+std::string touchedOnText(const WeeklyTouchedItem& it) { return std::string(it.byCreated ? "作成日 " : "更新日 ") + fmtMd(it.on); }
+
+std::string touchedChangeText(const WeeklyTouchedItem& it) {
+  std::vector<std::string> parts;
+  if (it.created) parts.push_back("新規作成");
+  if (it.statusChanged) parts.push_back("状況 " + statusName(it.statusFrom) + " → " + statusName(it.statusTo));
+  if (it.finishMoved)
+    parts.push_back("完了見込み " + fmtMd(it.finishFrom) + " → " + fmtMd(it.finishTo) + "（" + shiftText(it.shiftDays) + "）");
+  if (parts.empty()) parts.push_back("更新");  // 分かることがなければ「更新」とだけ
+  if (it.commented) parts.push_back("コメントあり");
+  std::string out;
+  for (const std::string& p : parts) out += (out.empty() ? "" : "・") + p;
+  return out;
+}
+
+std::string touchedBasisText(const WeeklyTouched& t) {
+  if (!t.hasBasis) return "比べるスナップショットがないので、状況・日程の変化は分かりません（「更新」とだけ出します）。";
+  std::string s = "状況・日程の変化は、" + snapshotBasisText(t.sinceAuto, t.since);
+  s += t.hasUntil ? "から、" + snapshotBasisText(true, t.until) + "までの変化です。" : "との比較です。";
+  if (t.truncated) s += "（比べた相手は課題が多かったため、一部の課題だけです）";
+  return s;
+}
+
+std::string touchedNoStampText(int n) { return "更新日のない " + std::to_string(n) + " 件は数えていません。"; }
+
+std::string touchedNoColumnText() {
+  return "CSV に Updated（更新日）・Created（作成日）の列がないので、触った課題は出せません。";
+}
+
+std::string touchedNoParentText() { return "親のない課題"; }
 
 std::string loadTitle(const WeeklyReport& r) {
   switch (r.period) {

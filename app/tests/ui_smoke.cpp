@@ -4126,6 +4126,40 @@ int main() {
         check(h.c.session()->weeklyAuto().snaps.size() == 1, "元に戻しても自動のスナップショットは残る（取り消しの対象外）");
       }
     }
+    {
+      // 今週触った課題（Issue #71）: 更新日の列がないうちは理由だけ。編集すると更新日が付いて、節に出る
+      const auto at = [&](const char* needle) { return h.u.wkPreview.find(needle); };
+      check(at("## 今週触った課題") != std::string::npos && at("Updated（更新日）") != std::string::npos, "更新日の列がないCSVでは、節に出せない理由を書く");
+      Session* ws = h.c.session();
+      std::string pick;
+      for (int id : ws->tree()->leafOrder) {
+        const std::size_t k = static_cast<std::size_t>(id);
+        if (ws->tree()->kind[k] == Kind::Ms || ws->rows()->at(k).done) continue;
+        pick = ws->tree()->ids[k];
+        break;
+      }
+      check(!pick.empty(), "未完了の作業がある（触った課題）");
+      if (!pick.empty()) {
+        ws->setField(pick, [&](Issue& is) { is.assignee = "触った太郎"; });
+        h.c.afterEdit();
+        h.frame(2);
+        check(at("## 今週触った課題（1 件）") != std::string::npos, "編集した未完了の課題が「今週触った課題」に出る");
+        check(at("触った太郎") != std::string::npos && at("・更新日 ") != std::string::npos, "担当と触った日が出る");
+        check(at("## 今週の完了") < at("## 今週触った課題") && at("## 今週触った課題") < at("## 進行中"), "節の順は 完了 → 触った課題 → 進行中");
+        h.u.wk.sections.touched = false;
+        h.frame(2);
+        check(at("今週触った課題") == std::string::npos, "項目をオフにすると出ない");
+        h.u.wk.sections.touched = true;
+        h.frame(2);
+        const WeeklyOptions wo;
+        const auto html = h.c.renderWeekly(wo, true);
+        check(html.ok() && html.value().find("今週触った課題") != std::string::npos && html.value().find("触った太郎") != std::string::npos, "HTML にも出る");
+        ws->undo();
+        h.c.afterEdit();
+        h.frame(2);
+        check(at("今週触った課題（") == std::string::npos, "元に戻すと件数の節は出ない（更新日の列も戻る）");
+      }
+    }
     // 期間の切り替え
     h.u.wkPeriod = 1;
     h.frame(2);
@@ -4239,7 +4273,7 @@ int main() {
       check(!h.c.toasts().empty() && h.c.toasts().back().text.find("コピーできませんでした") != std::string::npos, "コピー失敗の通知");
       // 項目が全部オフならコピーしない
       h.u.wk.sections = WeeklySections{};
-      h.u.wk.sections.summary = h.u.wk.sections.done = h.u.wk.sections.progress = h.u.wk.sections.next = h.u.wk.sections.risks = false;
+      h.u.wk.sections.summary = h.u.wk.sections.done = h.u.wk.sections.touched = h.u.wk.sections.progress = h.u.wk.sections.next = h.u.wk.sections.risks = false;
       h.u.wk.sections.milestones = h.u.wk.sections.assignees = h.u.wk.sections.changes = h.u.wk.sections.notes = h.u.wk.sections.evm = false;
       h.frame(2);
       h.click(w->Pos.x + w->Size.x - 45, w->Pos.y + w->Size.y - rowDy);  // 所感の欄が消えて窓が縮むので、下端からの位置で押す

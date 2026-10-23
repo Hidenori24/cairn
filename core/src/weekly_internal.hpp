@@ -44,6 +44,24 @@ std::string loadText(int percent);
 std::string snapshotBasisText(bool automatic, Day d);
 // 「先週から変わったこと」の見出しの下の 1 文（「…との比較です。」。終わりもスナップショットなら「…から…までの変化です。」）
 std::string changesLeadText(const WeeklyChanges& c);
+// 今週触った課題（Issue #71）
+std::string touchedTitle(const WeeklyReport& r);
+// 状況の名前 "未着手" "進行中" "完了"（スナップショットの 't' 'p' 'd' も）
+std::string statusName(const WeeklyItem& it);
+std::string statusName(char st);
+// 触った日 "更新日 10/21" / "作成日 10/21"（Updated が期間にないとき）
+std::string touchedOnText(const WeeklyTouchedItem& it);
+// 何が変わったか "新規作成・状況 未着手 → 進行中・完了見込み 10/23 → 10/30（3 営業日遅くなった）・コメントあり"。
+// 分かることがなければ "更新"（コメントだけなら "更新・コメントあり"）
+std::string touchedChangeText(const WeeklyTouchedItem& it);
+// 状況・日程の変化の比べた相手の説明（比べる相手がなければ、その旨）
+std::string touchedBasisText(const WeeklyTouched& t);
+// 「更新日のない N 件は数えていません。」
+std::string touchedNoStampText(int n);
+// Created・Updated の列がないとき
+std::string touchedNoColumnText();
+// 親のない課題のまとまりの見出し
+std::string touchedNoParentText();
 // 「ほか N 件」
 std::string moreText(int omitted);
 // ベースラインの保存日時 "YYYY-MM-DDTHH:MM" → "2026/10/19 09:30"（分からなければ空）

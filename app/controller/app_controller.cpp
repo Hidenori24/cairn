@@ -1065,6 +1065,7 @@ Result<WeeklyReport> AppController::buildWeekly(const WeeklyOptions& opt) const 
   in.baseline = s->baselineCompare();
   in.evmBaseline = evmPickBaseline(s->baselines(), std::string());
   in.evm = s->evmSettings();
+  in.meta = &s->meta();  // 作成日・更新日の列（今週触った課題。Issue #71）
   return buildWeeklyReport(in, opt);
 }
 

@@ -106,6 +106,30 @@ std::string doneHtml(const WeeklyReport& r) {
   return section(doneTitle(r), b, std::to_string(r.done.total) + " 件");
 }
 
+std::string touchedHtml(const WeeklyReport& r) {
+  const WeeklyTouched& t = r.touched;
+  if (!t.hasColumn) return section(touchedTitle(r), "<p class=\"none\">" + E(touchedNoColumnText()) + "</p>\n");
+  std::string b = "<p class=\"sub\">期間内に更新日（Updated）か作成日（Created）が入る、完了していない作業です。完了した作業は「" + E(doneTitle(r)) +
+                  "」に出ます。</p>\n";
+  if (t.groups.empty()) b += noneP();
+  for (const WeeklyTouchedGroup& g : t.groups) {
+    b += "<h3>" + E(g.path.empty() ? touchedNoParentText() : g.path) + "</h3>\n";
+    Tbl tb;
+    tb.head({{"課題", false}, {"状況", false}, {"担当", false}, {"触った日", false}, {"何が変わったか", false}});
+    for (const WeeklyTouchedItem& it : g.items)
+      tb.row({{title(it.item.did, it.item.name), false, "nm"},
+              {statusName(it.item), false, ""},
+              {who(it.item.assignee), false, ""},
+              {touchedOnText(it), false, ""},
+              {touchedChangeText(it), false, "nm"}});
+    b += tb.close();
+  }
+  b += moreP(t.omitted());
+  if (t.total > 0) b += "<p class=\"sub\">" + E(touchedBasisText(t)) + "</p>\n";
+  if (t.noStamp > 0) b += "<p class=\"sub\">" + E(touchedNoStampText(t.noStamp)) + "</p>\n";
+  return section(touchedTitle(r), b, std::to_string(t.total) + " 件");
+}
+
 std::string progressHtml(const WeeklyReport& r) {
   std::string b;
   if (r.progress.items.empty()) {
@@ -388,6 +412,7 @@ std::string weeklyHtml(const WeeklyReport& r, const IClock* clock) {
     if (!s.any()) h += "<p class=\"empty\">出す項目が選ばれていません。</p>\n";
     if (s.summary) h += summaryHtml(r);
     if (s.done) h += doneHtml(r);
+    if (s.touched && r.touched.available) h += touchedHtml(r);
     if (s.progress) h += progressHtml(r);
     if (s.next) h += nextHtml(r);
     if (s.risks) h += risksHtml(r);

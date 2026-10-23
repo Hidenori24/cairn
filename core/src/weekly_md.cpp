@@ -140,6 +140,34 @@ void renderDone(Md& m, const WeeklyReport& r) {
   listMore(m, r.done);
 }
 
+void renderTouched(Md& m, const WeeklyReport& r) {
+  const WeeklyTouched& t = r.touched;
+  if (!t.hasColumn) {
+    m.heading(2, touchedTitle(r));
+    m.line(touchedNoColumnText());
+    return;
+  }
+  m.heading(2, touchedTitle(r) + "（" + std::to_string(t.total) + " 件）");
+  m.line("期間内に更新日（Updated）か作成日（Created）が入る、完了していない作業です。完了した作業は「" + doneTitle(r) + "」に出ます。");
+  m.blank();
+  if (t.groups.empty()) m.line("- なし");
+  for (const WeeklyTouchedGroup& g : t.groups) {
+    m.heading(3, g.path.empty() ? touchedNoParentText() : escapeMarkdown(g.path));
+    for (const WeeklyTouchedItem& it : g.items)
+      m.line("- " + escapeMarkdown(title(it.item.did, it.item.name)) + "（" + statusName(it.item) + "・担当: " + who2(it.item.assignee) + "・" +
+             touchedOnText(it) + "・" + touchedChangeText(it) + "）");
+  }
+  if (t.omitted() > 0) m.line("- " + moreText(t.omitted()));
+  if (t.total > 0) {
+    m.blank();
+    m.line(touchedBasisText(t));
+  }
+  if (t.noStamp > 0) {
+    m.blank();
+    m.line(touchedNoStampText(t.noStamp));
+  }
+}
+
 void renderProgress(Md& m, const WeeklyReport& r) {
   m.heading(2, "進行中（" + std::to_string(r.progress.total) + " 件）");
   if (r.progress.items.empty()) m.line("- なし");
@@ -322,6 +350,7 @@ std::string weeklyMarkdown(const WeeklyReport& r) {
   }
   if (s.summary) renderSummary(m, r);
   if (s.done) renderDone(m, r);
+  if (s.touched && r.touched.available) renderTouched(m, r);
   if (s.progress) renderProgress(m, r);
   if (s.next) renderNext(m, r);
   if (s.risks) renderRisks(m, r);
