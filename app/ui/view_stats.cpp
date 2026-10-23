@@ -1391,6 +1391,8 @@ void drawMta(Frame& f, const Result<MtaReport>& res, const Tree& T, float W) {
   ImGui::Dummy(ImVec2(0, u.m.s(8)));
   ImGui::Text("週ごとの予測日（すべてのマイルストーン。名前の行を押すと詳細を開きます）");
   drawMtaTable(f, rep, W);
+}
+
 // 担当者・ルート課題の選択欄（推移と EVM の節が共有する。選択は節ごとに持つ）
 struct FilterSel {
   TrendFilter::Who& who;
