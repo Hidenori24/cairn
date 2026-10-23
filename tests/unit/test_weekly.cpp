@@ -1190,7 +1190,7 @@ TEST_CASE("weekly: EVM だけがオンでベースラインがないときは、
   Proj a = Proj::make(basic());
   WeeklyOptions o;
   o.sections.summary = o.sections.done = o.sections.progress = o.sections.next = o.sections.risks = false;
-  o.sections.milestones = o.sections.assignees = o.sections.changes = o.sections.notes = o.sections.baseline = false;
+  o.sections.milestones = o.sections.assignees = o.sections.changes = o.sections.notes = o.sections.baseline = o.sections.touched = false;
   o.sections.evm = true;
   const WeeklyReport r = buildWeeklyReport(a.input(), o);  // ベースラインなし
   CHECK_FALSE(r.evm.available);
@@ -1543,7 +1543,7 @@ TEST_CASE("weekly touched: 項目は既定でオン。any() に入る") {
   CHECK(WeeklySections{}.touched);
   WeeklySections only;
   only.summary = only.done = only.progress = only.next = only.risks = only.milestones = only.assignees = only.changes = only.notes = false;
-  only.baseline = false;
+  only.baseline = only.evm = false;
   only.touched = false;
   CHECK_FALSE(only.any());
   only.touched = true;
