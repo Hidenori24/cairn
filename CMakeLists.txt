@@ -43,6 +43,10 @@ endif()
 
 if(ROADMAP_BUILD_TESTS)
   add_subdirectory(tests)
+  if(UNIX)
+    # リリースノートを CHANGELOG から作るスクリプト（「## 1.0.0-rc.1」のような見出しでも別の節を拾わない）
+    add_test(NAME release_notes COMMAND sh ${PROJECT_SOURCE_DIR}/tests/release_notes_test.sh ${PROJECT_SOURCE_DIR}/tools/release_notes.sh)
+  endif()
 endif()
 
 # ポータブル版のフォルダ構成（cmake --install <build> --component portable --prefix <出力先>）

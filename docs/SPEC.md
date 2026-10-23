@@ -1,4 +1,6 @@
-# プロジェクト管理ツール（C++版）仕様書
+# Cairn 仕様書（C++版）
+
+- 名前: **Cairn**（ケルン。登山道で道しるべに石を積んだもの）。0.10.0 で、それまでの「プロジェクト管理ツール」「Project Roadmap」から改名した（Issue #82）。実行ファイルは `Cairn.exe`。**内部のターゲット名（`roadmap_*`）・名前空間（`roadmap::`）・CLI（`rmcli`）・設定ファイル（`roadmap_prefs.json`）・データの場所と名前（`data/projects/`・`project.settings.json`）・`%LOCALAPPDATA%\ProjectRoadmap`（保存先を書き込めないときの退避先）・インストーラの AppId は、互換のため変えていない**。この文書の過去の経緯の記述に出る旧称はそのまま
 
 - 版: 1.0（2026-10-19）
 - 対象読者: この仕様をもとにゼロから実装する開発者（Claude Code を含む）
@@ -86,7 +88,7 @@ JIRA互換のCSVを原本に、課題の階層・依存関係・期間から、*
 
 ### 2.2 構成要素
 ```
-project-roadmap/
+cairn/
 ├─ CMakeLists.txt
 ├─ vcpkg.json
 ├─ CLAUDE.md                 （付録C）
@@ -1343,7 +1345,7 @@ JS版は使わなくなったため、JS版との互換は求めない（形式�
 リポジトリ直下に置く。Claude Code が毎回読むので、短く保つ。
 
 ```markdown
-# Project Roadmap (C++)
+# Cairn (C++)
 
 JIRA CSVを読み、営業日でスケジュールを計算し、ガント・ボード・リスト・ギャップで見せるデスクトップアプリ。
 仕様は docs/SPEC.md、正解データは golden/。

@@ -305,7 +305,7 @@ int cmdValidate(const Args& a) {
 }
 
 const char* const kHelp =
-    "rmcli — プロジェクト管理ツール（C++版）のコマンドライン\n"
+    "rmcli — Cairn のコマンドライン版\n"
     "使い方: rmcli <コマンド> [引数] [--verbose]\n"
     "コマンド:\n"
     "  schedule       CSV からスケジュールを計算して JSON を出す\n"

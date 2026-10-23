@@ -1,4 +1,4 @@
-# Project Roadmap (C++)
+# Cairn (C++)
 
 JIRA CSVを読み、営業日でスケジュールを計算し、ガント・ボード・リスト・ギャップで見せるデスクトップアプリ。
 仕様は docs/SPEC.md、正解データは golden/。

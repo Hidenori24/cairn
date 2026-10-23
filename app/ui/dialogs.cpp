@@ -1068,7 +1068,7 @@ void dlgAppSettings(Frame& f) {
   ImGui::PopFont();
   if (ImGui::Button("設定ファイルのフォルダを開く")) f.p.openFolder(parentDir(c.prefsPath()));
   ImGui::SameLine();
-  ImGui::TextDisabled("バージョン %s", ROADMAP_VERSION);
+  ImGui::TextDisabled("Cairn  バージョン %s", ROADMAP_VERSION);
   if (buttons(f, {"閉じる"}) == 0) close(f);
 }
 

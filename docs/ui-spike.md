@@ -25,7 +25,7 @@
 ## Windows 実機での確認手順
 
 1. `cmake --preset windows-release && cmake --build --preset windows-release`
-2. `build/windows-release/app/ProjectRoadmap.exe --data %TEMP%\roadmap-test` を起動し、SPEC 12.5 のチェックリストを上から確かめる
+2. `build/windows-release/app/Cairn.exe --data %TEMP%\roadmap-test` を起動し、SPEC 12.5 のチェックリストを上から確かめる
 3. 特に: 件名をダブルクリック → 日本語を変換 → Enter で確定（行が増えたり編集が終わったりしない）→ もう一度 Enter で編集終了
 4. 表示スケールを 150%・200% にし、ウィンドウを別のモニターへ動かしても文字がにじまないこと
 5. `rmcli gen --count 5000 -o big.csv` を取り込み、ガントのスクロール・バーのドラッグが重くないこと

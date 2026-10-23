@@ -1,12 +1,12 @@
-Project Roadmap（ポータブル版）
+Cairn（ポータブル版）— オフラインで動く、JIRA 互換のガント／スケジューラ
 
 ■ 使い方
-  ProjectRoadmap.exe をダブルクリックで起動します。
+  Cairn.exe をダブルクリックで起動します。
   インストールは不要で、レジストリにも書き込みません。ネットワークにもつなぎません。
   このフォルダごと USB メモリや別の PC に移せば、データも設定もそのまま使えます。
 
 ■ フォルダ構成
-  ProjectRoadmap.exe    アプリ本体（これ1つで動きます。追加の DLL は不要）
+  Cairn.exe             アプリ本体（これ1つで動きます。追加の DLL は不要）
   rmcli.exe             コマンドライン版（日程の計算・CSV の変換・JIRA 用 CSV の検査）
   roadmap_prefs.json    アプリの設定（テーマ・文字の大きさ・保存先など）。初回の起動で作られます
   data\
@@ -29,15 +29,20 @@ Project Roadmap（ポータブル版）
 
   data\ が無くなっても、起動時に作り直します。
 
+■ 以前の版（名前が Project Roadmap だった版）から
+  名前を Cairn に変えました。設定・データの名前と場所は変わりません（roadmap_prefs.json・data\projects\・
+  project.settings.json はそのまま使えます）。新しい zip を同じフォルダに展開した場合は、古い ProjectRoadmap.exe は
+  要らないので消してください（インストーラ版は上書きの更新で自動的に消します）。
+
 ■ 保存先を変えたいとき
   画面右上の「…」→「アプリの設定」（Ctrl+,）の「保存先」で、別のフォルダを選べます。
   今のプロジェクトを新しい場所にコピーするかも選べます（元の場所のファイルは残ります）。
   このフォルダの中を選んだときは相対パスで覚えるので、フォルダごと移しても壊れません。
   次の指定は、アプリの設定より優先します（そのときは画面からは変えられません）。
-  起動引数:    ProjectRoadmap.exe --data "D:\共有\projects"
+  起動引数:    Cairn.exe --data "D:\共有\projects"
   環境変数:    ROADMAP_DATA=D:\共有\projects
   書き込めない場所（Program Files など）に置いたときは、
-  %LOCALAPPDATA%\ProjectRoadmap\ に保存し、画面右上の保存状態のチップに保存先を出します。
+  %LOCALAPPDATA%\ProjectRoadmap\ に保存し（改名前からの互換のため、この名前のままです）、画面右上の保存状態のチップに保存先を出します。
 
 ■ rmcli の例（このフォルダでコマンドプロンプトを開いて）
   rmcli schedule samples\hierarchy_demo.csv

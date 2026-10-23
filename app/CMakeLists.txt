@@ -67,7 +67,8 @@ if(ROADMAP_BUILD_APP AND WIN32)
   if(MSVC)
     target_link_options(roadmap_app PRIVATE /MANIFEST:NO)  # マニフェストは app.rc に入れている
   endif()
-  set_target_properties(roadmap_app PROPERTIES OUTPUT_NAME "ProjectRoadmap")
+  # 実行ファイル名だけ Cairn（内部のターゲット名 roadmap_app・名前空間 roadmap:: は変えない。Issue #82）
+  set_target_properties(roadmap_app PROPERTIES OUTPUT_NAME "Cairn")
 endif()
 
 if(ROADMAP_UI_TESTS)
