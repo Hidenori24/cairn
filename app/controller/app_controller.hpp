@@ -170,6 +170,9 @@ class AppController {
   bool deleteBaseline(const std::string& id);
   // 表示するベースライン（空 = 表示しない）
   void showBaseline(const std::string& id);
+  // EVM（出来高管理）の設定（進行中の扱い・SPI の警告のしきい値。Issue #65。取り消しの対象外で、project.settings.json に保存する）。
+  // 読み取り専用のあいだは変えない
+  void setEvmSettings(const EvmSettings& s);
 
   // ---- 表示状態（settings.ui。取り消しの対象外）----
   View view() const;

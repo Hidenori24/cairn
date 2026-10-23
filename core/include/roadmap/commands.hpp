@@ -214,6 +214,10 @@ class Session {
   const BaselineCompare* baselineCompare() const;
   // 列「計画との差」の絞り込みに使う値を入れた絞り込み（表示するベースラインがなければ planValues は空）
   ColumnFilter withPlanValues(const ColumnFilter& cf) const;
+  // EVM（出来高管理）の設定（進行中の扱い・SPI のしきい値。取り消しの対象外で、保存はする。Issue #65）。しきい値は範囲に丸める。
+  // 読み取り専用のときは断る。同じ値なら保存を予約しない
+  const EvmSettings& evmSettings() const { return P_.settings.evm; }
+  void setEvmSettings(EvmSettings s);
   // 置き換えの取り込み（Undo で戻せる）
   void replaceIssues(std::vector<Issue> issues, ProjectMeta meta, std::vector<std::string> warns);
 

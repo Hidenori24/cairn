@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "roadmap/baseline.hpp"
 #include "roadmap/clock.hpp"
 #include "roadmap/filestore.hpp"
 #include "roadmap/load.hpp"
@@ -602,7 +603,7 @@ TEST_CASE("weekly: 項目ごとのオン・オフ") {
   CHECK_FALSE(has(one, "## 進行中"));
   CHECK(WeeklySections{}.any());
   WeeklySections off;
-  off.summary = off.done = off.progress = off.next = off.risks = off.milestones = off.assignees = off.changes = off.notes = false;
+  off.summary = off.done = off.touched = off.progress = off.next = off.risks = off.milestones = off.assignees = off.changes = off.notes = off.evm = false;
   CHECK_FALSE(off.any());
   // 期間によって見出しが変わる
   o = WeeklyOptions{};
@@ -692,8 +693,8 @@ TEST_CASE("weekly: HTML の項目ごとのオン・オフと、期間・営業�
   CHECK(has(h2, "<h2>進行中"));
   // 全部オフ
   o.sections = WeeklySections{};
-  o.sections.summary = o.sections.done = o.sections.progress = o.sections.next = o.sections.risks = false;
-  o.sections.milestones = o.sections.assignees = o.sections.changes = o.sections.notes = false;
+  o.sections.summary = o.sections.done = o.sections.touched = o.sections.progress = o.sections.next = o.sections.risks = false;
+  o.sections.milestones = o.sections.assignees = o.sections.changes = o.sections.notes = o.sections.evm = false;
   CHECK(has(weeklyHtml(p.report(o)), "出す項目が選ばれていません"));
 }
 
@@ -1138,6 +1139,89 @@ TEST_CASE("weekly: 課題がないプロジェクトでも、所感を出す項�
   CHECK_FALSE(has(weeklyHtml(off), "来週は設計を始める"));
 }
 
+// ---------------------------------------------------------------- EVM（Issue #65）
+TEST_CASE("weekly: 「EVM（出来高管理）」の節は、ベースラインがあるときだけ、SPI・ES の遅れ・SV を出す") {
+  CHECK(WeeklySections{}.evm);
+  Proj a = Proj::make(basic());
+  auto b = captureBaseline(a.issues, a.comp, "キッ<b>クオフ", "2026-10-19T09:30");
+  REQUIRE(b.ok());
+  Baseline bl = b.value();
+  bl.id = "b1";
+  // 計画のあとに、F（7）の期間を延ばして完了を遅らせる。基準日は 10/21
+  WeeklyInput in = a.input();
+  in.evmBaseline = &bl;
+  const WeeklyReport r = buildWeeklyReport(in, WeeklyOptions{});
+  REQUIRE(r.evm.available);
+  REQUIRE(r.evm.report.ok());
+  CHECK(r.evm.report.baselineName == "キッ<b>クオフ");
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "## EVM（出来高管理）"));
+  CHECK(has(md, "SPI"));
+  CHECK(has(md, "SV"));
+  CHECK(has(md, "ES"));
+  CHECK(has(md, "BAC"));
+  CHECK(has(md, "営業日"));
+  CHECK_FALSE(has(md, "キッ<b>"));  // ベースライン名の < は打ち消す
+  const std::string html = weeklyHtml(r);
+  CHECK(has(html, "EVM（出来高管理）"));
+  CHECK(has(html, "SPI（EV ÷ PV）"));
+  CHECK_FALSE(has(html, "キッ<b>"));
+  CHECK(has(html, "&lt;b&gt;"));
+
+  // オフ・ベースラインなしでは出さない
+  WeeklyOptions off;
+  off.sections.evm = false;
+  CHECK_FALSE(has(weeklyMarkdown(buildWeeklyReport(in, off)), "EVM"));
+  CHECK_FALSE(has(weeklyHtml(buildWeeklyReport(in, off)), "EVM"));
+  const WeeklyReport none = buildWeeklyReport(a.input(), WeeklyOptions{});
+  CHECK_FALSE(none.evm.available);
+  CHECK_FALSE(has(weeklyMarkdown(none), "EVM"));
+  CHECK_FALSE(has(weeklyHtml(none), "EVM"));
+  // 項目の一つとして数える
+  WeeklySections only;
+  only.summary = only.done = only.progress = only.next = only.risks = only.milestones = only.assignees = only.changes = only.notes = only.baseline = false;
+  only.evm = false;
+  CHECK_FALSE(only.any());
+  only.evm = true;
+  CHECK(only.any());
+}
+
+TEST_CASE("weekly: EVM だけがオンでベースラインがないときは、「選ばれていません」になる（Copilot の指摘 #93）") {
+  Proj a = Proj::make(basic());
+  WeeklyOptions o;
+  o.sections.summary = o.sections.done = o.sections.progress = o.sections.next = o.sections.risks = false;
+  o.sections.milestones = o.sections.assignees = o.sections.changes = o.sections.notes = o.sections.baseline = false;
+  o.sections.evm = true;
+  const WeeklyReport r = buildWeeklyReport(a.input(), o);  // ベースラインなし
+  CHECK_FALSE(r.evm.available);
+  CHECK_FALSE(r.sections.any());
+  CHECK(has(weeklyHtml(r), "出す項目が選ばれていません"));
+}
+
+TEST_CASE("weekly: EVM の節は、指標を出せないとき（保存日より前）は案内を出す。課題がないときも落ちない") {
+  Proj a = Proj::make(basic());
+  auto b = captureBaseline(a.issues, a.comp, "後の計画", "2026-10-28T09:30");  // 基準日 10/21 より後に保存
+  REQUIRE(b.ok());
+  Baseline bl = b.value();
+  bl.id = "b1";
+  WeeklyInput in = a.input();
+  in.evmBaseline = &bl;
+  const WeeklyReport r = buildWeeklyReport(in, WeeklyOptions{});
+  REQUIRE(r.evm.available);
+  CHECK_FALSE(r.evm.report.ok());
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "## EVM（出来高管理）"));
+  CHECK(has(md, "より前なので、指標は出せません"));
+  CHECK(has(weeklyHtml(r), "より前なので、指標は出せません"));
+  // 課題が 0 件
+  Proj e = Proj::make({});
+  WeeklyInput ie = e.input();
+  ie.evmBaseline = &bl;
+  const WeeklyReport re = buildWeeklyReport(ie, WeeklyOptions{});
+  CHECK(re.empty);
+  CHECK_FALSE(has(weeklyMarkdown(re), "SPI"));
+}
+
 // ---------------------------------------------------------------- ベースラインとの差（Issue #53）
 TEST_CASE("weekly: 「ベースラインとの差」の節はオプション（既定オフ）で、遅れ・早まり・計画になかった・消えた課題を出す") {
   CHECK_FALSE(WeeklySections{}.baseline);
@@ -1195,7 +1279,8 @@ TEST_CASE("weekly: 「ベースラインとの差」の節はオプション（�
   CHECK_FALSE(has(weeklyHtml(noCmp), "ベースラインとの差"));
   // 項目の一つとして数える（ほかを全部オフにしても、これだけオンなら出す項目がある）
   WeeklySections only;
-  only.summary = only.done = only.progress = only.next = only.risks = only.milestones = only.assignees = only.changes = only.notes = false;
+  only.summary = only.done = only.touched = only.progress = only.next = only.risks = only.milestones = only.assignees = only.changes = only.notes = false;
+  only.evm = false;
   CHECK_FALSE(only.any());
   only.baseline = true;
   CHECK(only.any());
@@ -1288,4 +1373,454 @@ TEST_CASE("weekly: 保存後に全課題を削除しても、ベースライン�
   const WeeklyReport rb = buildWeeklyReport(bad, o);
   CHECK(rb.empty);
   CHECK_FALSE(rb.baseline.available);
+}
+
+// ---------------------------------------------------------------- 今週触った課題（Issue #71）
+namespace {
+
+// Created・Updated の列を持たせて、課題ごとの値を入れる（空文字 = 値なし）
+void stampIssue(Proj& p, const char* id, const char* created, const char* updated) {
+  if (p.meta.extraHeaders.empty()) p.meta.extraHeaders = {"Created", "Updated"};
+  for (Issue& o : p.issues) o.extra.resize(2);
+  for (Issue& o : p.issues)
+    if (o.id == id) {
+      o.extra[0] = created;
+      o.extra[1] = updated;
+    }
+}
+
+WeeklyInput touchedInput(const Proj& p, const WeeklySnapshot* prev = nullptr) {
+  WeeklyInput in = p.input(prev);
+  in.meta = &p.meta;
+  return in;
+}
+
+WeeklyReport touchedReport(const Proj& p, const WeeklyOptions& o = {}, const WeeklySnapshot* prev = nullptr) {
+  return buildWeeklyReport(touchedInput(p, prev), o);
+}
+
+std::vector<std::string> touchedNames(const Proj& p, const WeeklyTouched& t) {
+  std::vector<std::string> v;
+  for (const WeeklyTouchedGroup& g : t.groups)
+    for (const WeeklyTouchedItem& it : g.items) v.push_back(p.comp.T.name[static_cast<std::size_t>(it.item.index)]);
+  return v;
+}
+
+// Markdown の「- <ID> <件名>（…）」の行（件名で探す）
+std::string touchedLine(const std::string& md, const std::string& name) {
+  for (const std::string& l : lines(md))
+    if (l.rfind("- ", 0) == 0 && l.find(" " + name + "（") != std::string::npos) return l;
+  return {};
+}
+
+const WeeklyTouchedItem* touchedItem(const WeeklyReport& r, const std::string& name) {
+  for (const WeeklyTouchedGroup& g : r.touched.groups)
+    for (const WeeklyTouchedItem& it : g.items)
+      if (it.item.name == name) return &it;
+  return nullptr;
+}
+
+}  // namespace
+
+TEST_CASE("weekly touched: 期間の端を含み、完了・マイルストーン・親のまとまり自体は含めない") {
+  Proj p = Proj::make(basic());  // 今週 10/19(月)〜10/25(日)
+  stampIssue(p, "1", "", "2026-10-21");   // 親（Epic）: 数えない
+  stampIssue(p, "2", "", "2026-10-20");   // 完了: 「今週の完了」に出るので重複しない
+  stampIssue(p, "7", "", "2026-10-19");   // 期間の最初の日（含む）
+  stampIssue(p, "8", "", "2026-10-25");   // 期間の最後の日（含む）
+  stampIssue(p, "9", "", "2026-10-18");   // 前の週の日曜（含まない）
+  stampIssue(p, "10", "", "2026-10-26");  // 次の週の月曜（含まない）
+  stampIssue(p, "11", "", "2026-10-21");  // マイルストーン: 数えない
+  const WeeklyReport r = touchedReport(p);
+  REQUIRE(r.touched.available);
+  CHECK(r.touched.hasColumn);
+  CHECK(r.touched.total == 2);
+  CHECK(r.touched.omitted() == 0);
+  CHECK(touchedNames(p, r.touched) == std::vector<std::string>{"F", "G"});
+  // 未完了の作業は F・G・H・U。どれも日付は読める（期間外のものは数えない）ので、更新日のないものは 0 件
+  CHECK(r.touched.noStamp == 0);
+  const WeeklyTouchedItem* f = touchedItem(r, "F");
+  REQUIRE(f != nullptr);
+  CHECK(f->on == D("2026-10-19"));
+  CHECK_FALSE(f->byCreated);
+  CHECK(f->item.prog);
+  CHECK_FALSE(f->item.done);
+  // 完了した課題は「今週の完了」に出ていて、触った課題には出ない
+  CHECK(didsOf(p, r.done).size() == 2);
+  CHECK(touchedItem(r, "A") == nullptr);
+}
+
+TEST_CASE("weekly touched: 更新日のない（読めない）未完了の作業は数えず、件数を注記する") {
+  Proj p = Proj::make(basic());
+  stampIssue(p, "7", "", "2026-10-21");
+  stampIssue(p, "8", "", "");              // 空
+  stampIssue(p, "9", "", "いつか");        // 読めない
+  stampIssue(p, "10", "", "2026-10-01");   // 期間外（更新日はある）
+  stampIssue(p, "2", "", "");              // 完了は数えない
+  const WeeklyReport r = touchedReport(p);
+  CHECK(r.touched.total == 1);
+  CHECK(r.touched.noStamp == 2);
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "更新日のない 2 件は数えていません"));
+  CHECK(has(weeklyHtml(r), "更新日のない 2 件は数えていません"));
+  // 0 件なら注記を出さない
+  stampIssue(p, "8", "", "2026-10-02");
+  stampIssue(p, "9", "", "2026-10-02");
+  CHECK_FALSE(has(weeklyMarkdown(touchedReport(p)), "更新日のない"));
+}
+
+TEST_CASE("weekly touched: 年またぎ・JIRA の日時の書式・休業日（土日）の更新も期間に入る") {
+  std::vector<Spec> v;
+  v.push_back({"1", "全体", "", "To Do", "", "Epic", "", "", "", 1, {}});
+  v.push_back({"2", "大晦日", "田中", "In Progress", "1", "Task", "", "", "", 1, {}});
+  v.push_back({"3", "元日", "田中", "To Do", "1", "Task", "", "", "", 1, {}});
+  v.push_back({"4", "日曜", "鈴木", "To Do", "1", "Task", "", "", "", 1, {}});
+  v.push_back({"5", "月曜", "鈴木", "To Do", "1", "Task", "", "", "", 1, {}});
+  Proj p = Proj::make(v, "2027-01-06");  // 水曜。今週 2027-01-04〜01-10、先週 2026-12-28〜2027-01-03
+  stampIssue(p, "2", "", "31/Dec/26 11:30 PM");  // JIRA の日時の書式
+  stampIssue(p, "3", "", "2027-01-01");           // 元日（休業日）
+  stampIssue(p, "4", "", "2027-01-03");           // 日曜（先週の最後の日）
+  stampIssue(p, "5", "", "2027-01-04");           // 今週の最初の日
+  WeeklyOptions last;
+  last.period = WeeklyPeriod::LastWeek;
+  const WeeklyReport rl = touchedReport(p, last);
+  CHECK(rl.range.from == D("2026-12-28"));
+  CHECK(rl.range.to == D("2027-01-03"));
+  CHECK(touchedNames(p, rl.touched) == std::vector<std::string>{"大晦日", "元日", "日曜"});
+  const WeeklyReport rt = touchedReport(p);
+  CHECK(touchedNames(p, rt.touched) == std::vector<std::string>{"月曜"});
+  WeeklyOptions cu;
+  cu.period = WeeklyPeriod::Custom;
+  cu.from = D("2026-12-31");
+  cu.to = D("2027-01-01");
+  CHECK(touchedNames(p, touchedReport(p, cu).touched) == std::vector<std::string>{"大晦日", "元日"});
+}
+
+TEST_CASE("weekly touched: 空・列がない・meta がない・項目オフ") {
+  Proj p = Proj::make(basic());
+  // 列がない: 節は出るが、出せない理由を書く
+  const WeeklyReport none = touchedReport(p);
+  CHECK(none.touched.available);
+  CHECK_FALSE(none.touched.hasColumn);
+  CHECK(none.touched.total == 0);
+  const std::string md0 = weeklyMarkdown(none);
+  CHECK(has(md0, "## 今週触った課題"));
+  CHECK(has(md0, "Updated（更新日）"));
+  CHECK(has(weeklyHtml(none), "今週触った課題"));
+  // 列はあるが期間に入る課題がない
+  stampIssue(p, "7", "", "2026-09-01");
+  const WeeklyReport empty = touchedReport(p);
+  CHECK(empty.touched.hasColumn);
+  CHECK(empty.touched.total == 0);
+  CHECK(empty.touched.groups.empty());
+  const std::string md = weeklyMarkdown(empty);
+  CHECK(has(md, "## 今週触った課題（0 件）"));
+  CHECK(has(weeklyHtml(empty), "今週触った課題"));
+  // meta を渡さない（従来の呼び方）: 節は出ない
+  const WeeklyReport legacy = p.report();
+  CHECK_FALSE(legacy.touched.available);
+  CHECK_FALSE(has(weeklyMarkdown(legacy), "触った課題"));
+  CHECK_FALSE(has(weeklyHtml(legacy), "触った課題"));
+  // 項目をオフにしたら出ない（計算もしない）
+  WeeklyOptions off;
+  off.sections.touched = false;
+  const WeeklyReport o = touchedReport(p, off);
+  CHECK_FALSE(o.touched.available);
+  CHECK_FALSE(has(weeklyMarkdown(o), "触った課題"));
+  CHECK_FALSE(has(weeklyHtml(o), "触った課題"));
+  // 期間の言い方
+  WeeklyOptions lw;
+  lw.period = WeeklyPeriod::LastWeek;
+  CHECK(has(weeklyMarkdown(touchedReport(p, lw)), "## 先週触った課題"));
+  WeeklyOptions cu;
+  cu.period = WeeklyPeriod::Custom;
+  cu.from = D("2026-10-01");
+  cu.to = D("2026-10-07");
+  CHECK(has(weeklyMarkdown(touchedReport(p, cu)), "## 期間内に触った課題"));
+}
+
+TEST_CASE("weekly touched: 項目は既定でオン。any() に入る") {
+  CHECK(WeeklySections{}.touched);
+  WeeklySections only;
+  only.summary = only.done = only.progress = only.next = only.risks = only.milestones = only.assignees = only.changes = only.notes = false;
+  only.baseline = false;
+  only.touched = false;
+  CHECK_FALSE(only.any());
+  only.touched = true;
+  CHECK(only.any());
+}
+
+TEST_CASE("weekly touched: 親のまとまりごとに、ルート / 親の順で並べ、親のない課題は最後") {
+  std::vector<Spec> v;
+  v.push_back({"1", "ルートA", "", "To Do", "", "Epic", "", "", "", 1, {}});
+  v.push_back({"2", "親A1", "", "To Do", "1", "Story", "", "", "", 1, {}});
+  v.push_back({"3", "子A1a", "田中", "In Progress", "2", "Task", "", "", "", 1, {}});
+  v.push_back({"4", "単独", "鈴木", "To Do", "", "Task", "", "", "", 1, {}});
+  v.push_back({"5", "ルートB", "", "To Do", "", "Epic", "", "", "", 1, {}});
+  v.push_back({"6", "子Bb", "鈴木", "To Do", "5", "Task", "", "", "", 1, {}});
+  v.push_back({"7", "子A1b", "田中", "To Do", "2", "Task", "", "", "", 1, {}});
+  Proj p = Proj::make(v);
+  for (const char* id : {"3", "4", "6", "7"}) stampIssue(p, id, "", "2026-10-21");
+  const WeeklyReport r = touchedReport(p);
+  REQUIRE(r.touched.groups.size() == 3);
+  CHECK(r.touched.total == 4);
+  // ルートA / 親A1 の下に 2 件、ルートB の下に 1 件、最後に親のない課題
+  CHECK(has(r.touched.groups[0].path, "ルートA"));
+  CHECK(has(r.touched.groups[0].path, "親A1"));
+  CHECK(r.touched.groups[0].path.find("ルートA") < r.touched.groups[0].path.find("親A1"));
+  CHECK(r.touched.groups[0].items.size() == 2);
+  CHECK(has(r.touched.groups[1].path, "ルートB"));
+  CHECK_FALSE(has(r.touched.groups[1].path, "親A1"));
+  CHECK(r.touched.groups[1].items.size() == 1);
+  CHECK(r.touched.groups[2].parent == -1);
+  CHECK(r.touched.groups[2].path.empty());
+  CHECK(r.touched.groups[2].items[0].item.name == "単独");
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(md, "### "));
+  CHECK(has(md, "親のない課題"));
+  CHECK(md.find("ルートB") < md.find("親のない課題"));
+  const std::string html = weeklyHtml(r);
+  CHECK(has(html, "親のない課題"));
+}
+
+TEST_CASE("weekly touched: 上限を超えたら、新しく触った順に残し、ほか N 件を出す") {
+  std::vector<Spec> v;
+  v.push_back({"1", "全体", "", "To Do", "", "Epic", "", "", "", 1, {}});
+  for (int i = 2; i <= 6; ++i) v.push_back({std::to_string(i), "課題" + std::to_string(i), "田中", "To Do", "1", "Task", "", "", "", 1, {}});
+  Proj p = Proj::make(v);
+  stampIssue(p, "2", "", "2026-10-19");
+  stampIssue(p, "3", "", "2026-10-23");
+  stampIssue(p, "4", "", "2026-10-21");
+  stampIssue(p, "5", "", "2026-10-25");
+  stampIssue(p, "6", "", "2026-10-22");
+  WeeklyOptions o;
+  o.maxItems = 3;
+  const WeeklyReport r = touchedReport(p, o);
+  CHECK(r.touched.total == 5);
+  CHECK(r.touched.shown() == 3);
+  CHECK(r.touched.omitted() == 2);
+  // 一番新しい 3 件（10/25・10/23・10/22）。表示は Tree の順
+  CHECK(touchedNames(p, r.touched) == std::vector<std::string>{"課題3", "課題5", "課題6"});
+  CHECK(has(weeklyMarkdown(r), "- ほか 2 件"));
+  CHECK(has(weeklyHtml(r), "ほか 2 件"));
+  CHECK(has(weeklyMarkdown(r), "## 今週触った課題（5 件）"));
+  // 件数が収まるなら出さない
+  o.maxItems = 5;
+  CHECK_FALSE(has(weeklyMarkdown(touchedReport(p, o)), "ほか"));
+}
+
+TEST_CASE("weekly touched: 既定の上限は 50 件") {
+  std::vector<Spec> v;
+  v.push_back({"1", "全体", "", "To Do", "", "Epic", "", "", "", 1, {}});
+  for (int i = 2; i <= 61; ++i) v.push_back({std::to_string(i), "T" + std::to_string(i), "", "To Do", "1", "Task", "", "", "", 1, {}});
+  Proj p = Proj::make(v);
+  for (int i = 2; i <= 61; ++i) stampIssue(p, std::to_string(i).c_str(), "", "2026-10-20");
+  const WeeklyReport r = touchedReport(p);
+  CHECK(kWeeklyMaxTouched == 50);
+  CHECK(r.touched.total == 60);
+  CHECK(r.touched.shown() == 50);
+  CHECK(r.touched.omitted() == 10);
+  CHECK(has(weeklyMarkdown(r), "ほか 10 件"));
+  // 同じ日なら Tree の順で先に出る
+  CHECK(touchedItem(r, "T2") != nullptr);
+  CHECK(touchedItem(r, "T61") == nullptr);
+}
+
+TEST_CASE("weekly touched: 新しく作った課題（Created が期間内）。Updated がなくても Created が期間内なら入る") {
+  Proj p = Proj::make(basic());
+  stampIssue(p, "7", "2026-10-20", "2026-10-21");   // Updated も Created も期間内
+  stampIssue(p, "8", "2026-10-22", "");             // Created だけ（アプリで作った課題）
+  stampIssue(p, "9", "2026-10-01", "2026-10-21");   // 以前に作って、今週更新
+  stampIssue(p, "10", "2026-10-01", "");            // Created だけで期間外: 更新日がない
+  const WeeklyReport r = touchedReport(p);
+  CHECK(r.touched.total == 3);
+  CHECK(r.touched.noStamp == 1);
+  const WeeklyTouchedItem* f = touchedItem(r, "F");
+  const WeeklyTouchedItem* g = touchedItem(r, "G");
+  const WeeklyTouchedItem* h = touchedItem(r, "H");
+  REQUIRE((f && g && h));
+  CHECK(f->created);
+  CHECK(f->on == D("2026-10-21"));
+  CHECK_FALSE(f->byCreated);
+  CHECK(g->created);
+  CHECK(g->byCreated);
+  CHECK(g->on == D("2026-10-22"));
+  CHECK_FALSE(h->created);
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(touchedLine(md, "F"), "・更新日 10/21(水)・新規作成）"));
+  CHECK(has(touchedLine(md, "G"), "・作成日 10/22(木)・新規作成）"));  // 更新日がなく、作成日が期間内
+  CHECK(has(touchedLine(md, "H"), "・更新日 10/21(水)・更新）"));
+}
+
+TEST_CASE("weekly touched: 比べるスナップショットがなければ「更新」とだけ出す。コメントは日付が期間内のときだけ") {
+  Proj p = Proj::make(basic());
+  stampIssue(p, "7", "", "2026-10-21");
+  stampIssue(p, "8", "", "2026-10-22");
+  stampIssue(p, "9", "", "2026-10-23");
+  for (Issue& o : p.issues) {
+    if (o.id == "7") o.comments.push_back({"2026-10-20T09:00", "田中", "確認しました"});  // 期間内
+    if (o.id == "8") o.comments.push_back({"2026-10-12T09:00", "田中", "前の週"});         // 期間外
+    if (o.id == "9") o.comments.push_back({"", "田中", "日時なし"});                        // 日付なし
+  }
+  const WeeklyReport r = touchedReport(p);
+  REQUIRE(r.touched.total == 3);
+  CHECK_FALSE(r.touched.hasBasis);
+  const WeeklyTouchedItem* f = touchedItem(r, "F");
+  const WeeklyTouchedItem* g = touchedItem(r, "G");
+  const WeeklyTouchedItem* h = touchedItem(r, "H");
+  REQUIRE((f && g && h));
+  CHECK(f->commented);
+  CHECK_FALSE(g->commented);
+  CHECK_FALSE(h->commented);
+  for (const WeeklyTouchedItem* it : {f, g, h}) {
+    CHECK_FALSE(it->statusChanged);
+    CHECK_FALSE(it->finishMoved);
+  }
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(touchedLine(md, "G"), "・更新日 10/22(木)・更新）"));
+  CHECK(has(touchedLine(md, "F"), "・更新日 10/21(水)・更新・コメントあり）"));
+  CHECK(has(touchedLine(md, "H"), "・更新日 10/23(金)・更新）"));
+  CHECK(has(md, "比べるスナップショットがない"));
+  CHECK(has(md, "コメントあり"));
+  // 「コメントあり」は期間内のコメントがある 1 件だけ
+  std::size_t n = 0;
+  for (std::size_t at = md.find("コメントあり"); at != std::string::npos; at = md.find("コメントあり", at + 1)) ++n;
+  CHECK(n == 1);
+}
+
+TEST_CASE("weekly touched: スナップショットがあれば、状況と完了見込み日の差を添える") {
+  Proj p = Proj::make(basic());
+  stampIssue(p, "7", "", "2026-10-21");   // F: 先週は未着手 → いま進行中
+  stampIssue(p, "8", "", "2026-10-21");   // G: 見込みが動いた
+  stampIssue(p, "9", "", "2026-10-21");   // H: 変わっていない
+  stampIssue(p, "10", "", "2026-10-21");  // U: スナップショットにない課題
+  WeeklySnapshot s;
+  s.base = D("2026-10-19");
+  const auto fin = [&](const char* id) { return p.row(id).asapFinish; };
+  s.items.push_back({"7", 't', fin("7"), false});
+  s.items.push_back({"8", 't', fin("8") - 7, false});  // 1 週間前の見込み
+  s.items.push_back({"9", 't', fin("9"), false});
+  const WeeklyReport r = touchedReport(p, {}, &s);
+  REQUIRE(r.touched.total == 4);
+  CHECK(r.touched.hasBasis);
+  CHECK(r.touched.since == s.base);
+  CHECK_FALSE(r.touched.hasUntil);
+  const WeeklyTouchedItem* f = touchedItem(r, "F");
+  const WeeklyTouchedItem* g = touchedItem(r, "G");
+  const WeeklyTouchedItem* h = touchedItem(r, "H");
+  const WeeklyTouchedItem* u = touchedItem(r, "U");
+  REQUIRE((f && g && h && u));
+  CHECK(f->statusChanged);
+  CHECK(f->statusFrom == 't');
+  CHECK(f->statusTo == 'p');
+  CHECK_FALSE(f->finishMoved);
+  CHECK_FALSE(g->statusChanged);
+  CHECK(g->finishMoved);
+  CHECK(g->finishFrom == fin("8") - 7);
+  CHECK(g->finishTo == fin("8"));
+  CHECK(g->shiftDays > 0);  // 遅くなった
+  CHECK_FALSE(h->statusChanged);
+  CHECK_FALSE(h->finishMoved);
+  CHECK_FALSE(u->statusChanged);
+  CHECK_FALSE(u->finishMoved);
+  const std::string md = weeklyMarkdown(r);
+  CHECK(has(touchedLine(md, "F"), "・更新日 10/21(水)・状況 未着手 → 進行中）"));
+  CHECK(has(touchedLine(md, "G"), "・完了見込み "));
+  CHECK(has(touchedLine(md, "G"), "営業日遅くなった）"));
+  CHECK(has(touchedLine(md, "H"), "・更新日 10/21(水)・更新）"));
+  CHECK(has(touchedLine(md, "U"), "・更新日 10/21(水)・更新）"));
+  CHECK(has(md, "状況・日程の変化は、"));
+  CHECK(has(md, "2026/10/19(月) に書き出したときの状態との比較です"));
+  const std::string html = weeklyHtml(r);
+  CHECK(has(html, "状況 未着手 → 進行中"));
+  // 新規 + 状況の変化は並べて出す
+  stampIssue(p, "7", "2026-10-20", "2026-10-21");
+  const WeeklyReport r2 = touchedReport(p, {}, &s);
+  CHECK(has(touchedLine(weeklyMarkdown(r2), "F"), "・更新日 10/21(水)・新規作成・状況 未着手 → 進行中）"));
+}
+
+TEST_CASE("weekly touched: 自動のスナップショット（週の頭）があれば期間に合わせて比べる。先週は先週の頭から今週の頭まで") {
+  Proj p = Proj::make(basic());
+  stampIssue(p, "7", "", "2026-10-14");  // 先週に更新
+  WeeklySnapshot head;
+  head.base = D("2026-10-12");  // 先週の頭
+  head.items.push_back({"7", 't', p.row("7").asapFinish, false});
+  WeeklySnapshot cur;
+  cur.base = D("2026-10-19");  // 今週の頭
+  cur.items.push_back({"7", 'p', p.row("7").asapFinish, false});
+  WeeklyAuto autos;
+  autos.snaps = {head, cur};
+  WeeklyInput in = touchedInput(p);
+  in.autos = &autos;
+  WeeklyOptions lw;
+  lw.period = WeeklyPeriod::LastWeek;
+  const WeeklyReport r = buildWeeklyReport(in, lw);
+  REQUIRE(r.touched.total == 1);
+  CHECK(r.touched.hasBasis);
+  CHECK(r.touched.sinceAuto);
+  CHECK(r.touched.hasUntil);
+  CHECK(r.touched.until == cur.base);
+  const WeeklyTouchedItem* f = touchedItem(r, "F");
+  REQUIRE(f != nullptr);
+  CHECK(f->statusChanged);
+  CHECK(f->statusTo == 'p');
+  CHECK(has(weeklyMarkdown(r), "自動で記録した週の頭の状態"));
+}
+
+TEST_CASE("weekly touched: 件名・親・担当は Markdown と HTML でエスケープする") {
+  std::vector<Spec> v;
+  v.push_back({"1", "親 <b>[x]</b>", "", "To Do", "", "Epic", "", "", "", 1, {}});
+  v.push_back({"2", "# 見出し|表 <script>alert(1)</script> *強調*", "田中 <i>", "In Progress", "1", "Task", "", "", "", 1, {}});
+  Proj p = Proj::make(v);
+  stampIssue(p, "2", "", "2026-10-21");
+  const WeeklyReport r = touchedReport(p);
+  REQUIRE(r.touched.total == 1);
+  const std::string md = weeklyMarkdown(r);
+  CHECK(rawLt(md) == 0);
+  for (const std::string& l : lines(md))
+    if (has(l, "script")) CHECK(rawPipes(l) == 0);
+  CHECK(has(md, "\\<script\\>"));
+  CHECK(has(md, "\\*強調\\*"));
+  CHECK(has(md, "親 \\<b\\>\\[x\\]\\</b\\>"));
+  const std::string html = weeklyHtml(r);
+  CHECK_FALSE(has(html, "<script>alert"));
+  CHECK_FALSE(has(html, "<b>[x]"));
+  CHECK_FALSE(has(html, "<i>"));
+  CHECK(has(html, "&lt;script&gt;"));
+}
+
+TEST_CASE("weekly touched: 節の順は 完了 → 触った課題 → 進行中 → 来週の予定 → 遅れ") {
+  Proj p = Proj::make(basic());
+  stampIssue(p, "7", "", "2026-10-21");
+  const WeeklyReport r = touchedReport(p);
+  const std::string md = weeklyMarkdown(r);
+  const std::size_t a = md.find("## 今週の完了"), b = md.find("## 今週触った課題"), c = md.find("## 進行中"), d = md.find("## 来週の予定"),
+                    e = md.find("## 遅れ・余裕小");
+  REQUIRE((a != std::string::npos && b != std::string::npos && c != std::string::npos && d != std::string::npos && e != std::string::npos));
+  CHECK(a < b);
+  CHECK(b < c);
+  CHECK(c < d);
+  CHECK(d < e);
+  const std::string html = weeklyHtml(r);
+  const std::size_t ha = html.find("<h2>今週の完了"), hb = html.find("<h2>今週触った課題"), hc = html.find("<h2>進行中"), hd = html.find("<h2>来週の予定"),
+                    he = html.find("<h2>遅れ・余裕小");
+  REQUIRE((ha != std::string::npos && hb != std::string::npos && hc != std::string::npos && hd != std::string::npos && he != std::string::npos));
+  CHECK(ha < hb);
+  CHECK(hb < hc);
+  CHECK(hc < hd);
+  CHECK(hd < he);
+}
+
+TEST_CASE("weekly touched: 入力の食い違いは空のレポートのまま（節は出さない）") {
+  Proj p = Proj::make(basic());
+  stampIssue(p, "7", "", "2026-10-21");
+  std::vector<Issue> few(p.issues.begin(), p.issues.begin() + 2);
+  WeeklyInput bad(p.comp.T, few, p.comp.R, p.cal, p.stats, p.load);
+  bad.base = p.base;
+  bad.meta = &p.meta;
+  const WeeklyReport r = buildWeeklyReport(bad, WeeklyOptions{});
+  CHECK(r.empty);
+  CHECK_FALSE(r.touched.available);
+  CHECK_FALSE(has(weeklyMarkdown(r), "触った課題"));
+  CHECK_FALSE(has(weeklyHtml(r), "触った課題"));
 }

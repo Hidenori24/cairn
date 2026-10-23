@@ -1000,6 +1000,8 @@ Result<std::string> AppController::buildReport(const ExportOptions& opt) const {
   if (!s || !s->tree() || !s->rows()) return Error{"プロジェクトが開かれていません"};
   ExportInput in(*s->tree(), s->viewIssues(), *s->rows(), s->calendar());
   in.baseline = s->baselineCompare();
+  in.evmBaseline = evmPickBaseline(s->baselines(), std::string());  // 表示中のベースライン、なければ一番新しいもの（Issue #65）
+  in.evm = s->evmSettings();
   in.history = &s->history();
   in.weeklyAuto = &s->weeklyAuto();  // マイルストーンの予測の推移と遅れの警告（Issue #75）
   in.mtaLateDays = prefs_.mtaLateDays;
@@ -1064,6 +1066,9 @@ Result<WeeklyReport> AppController::buildWeekly(const WeeklyOptions& opt) const 
   in.autos = &s->weeklyAuto();
   in.mtaLateDays = prefs_.mtaLateDays;  // マイルストーンの予測の遅れの警告のしきい値（Issue #75）
   in.baseline = s->baselineCompare();
+  in.evmBaseline = evmPickBaseline(s->baselines(), std::string());
+  in.evm = s->evmSettings();
+  in.meta = &s->meta();  // 作成日・更新日の列（今週触った課題。Issue #71）
   return buildWeeklyReport(in, opt);
 }
 
@@ -1200,6 +1205,13 @@ bool AppController::deleteBaseline(const std::string& id) {
 void AppController::showBaseline(const std::string& id) {
   if (!session_) return;
   if (session_->showBaseline(id)) afterEdit();
+}
+
+void AppController::setEvmSettings(const EvmSettings& s) {
+  if (!session_ || readOnly()) return;
+  const EvmSettings before = session_->evmSettings();
+  session_->setEvmSettings(s);
+  if (!(session_->evmSettings() == before)) afterEdit();
 }
 
 // ---------------------------------------------------------------- 表示状態

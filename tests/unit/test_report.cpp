@@ -922,6 +922,80 @@ TEST_CASE("report: 長いガントは行ごとに区切った SVG になり、�
   CHECK(widths.size() == 1);
 }
 
+// ---------------------------------------------------------------- EVM（Issue #65）
+TEST_CASE("report: EVM の節は、ベースラインがあるときだけ、指標・S カーブ・前提を出す") {
+  Proj p = Proj::fromCsv(kBasic);
+  // 基準日を 1 週進めて、B（3）を完了にする。計画は 10/19 のもの
+  auto bl = captureBaseline(p.issues, p.comp, "キッ<b>クオフ", "2026-10-19T09:30");
+  REQUIRE(bl.ok());
+  Baseline b = bl.value();
+  b.id = "b1";
+  p.base = *parseIso("2026-10-27");
+  for (Issue& o : p.issues)
+    if (o.id == "3") {
+      o.status = "Done";
+      o.resolved = parseIso("2026-10-26");
+    }
+  p.compute();
+  ExportOptions o;
+  o.gantt = false;
+  o.list = false;
+  ExportInput in = p.input();
+  in.evmBaseline = &b;
+  const std::string h = exportHtml(in, o);
+  CHECK(contains(h, "EVM（出来高管理）"));
+  for (const char* t : {"BAC（総計画量）", "PV（計画価値）", "EV（出来高）", "SV（EV − PV）", "SPI（EV ÷ PV）", "ES の遅れ（営業日。+ は遅れ）", "計算の前提",
+                        "0/100", "見積りがあれば見積り、なければ期間", "PV と EV の累積（S カーブ）"})
+    CHECK_MESSAGE(contains(h, t), t);
+  CHECK(contains(h, "&lt;b&gt;"));         // ベースライン名は実体参照
+  CHECK_FALSE(contains(h, "キッ<b>"));
+  CHECK(contains(h, "<title>"));            // 点ごとの値（マウスを載せると出る）
+  CHECK(contains(h, "stroke-dasharray"));   // 基準日の線・完了予測は点線（色だけに頼らない）
+  CHECK(onlyKnownTags(h));
+  CHECK(text::isValidUtf8(h));
+  // ダークでも出る
+  o.dark = true;
+  CHECK(contains(exportHtml(in, o), "EVM（出来高管理）"));
+  o.dark = false;
+  // ベースラインがなければ節自体を出さない。オプションでオフにもできる
+  CHECK_FALSE(contains(exportHtml(p.input(), o), "EVM"));
+  o.evm = false;
+  CHECK_FALSE(contains(exportHtml(in, o), "EVM"));
+  // 統計をオフにしたら出ない
+  ExportOptions noStats;
+  noStats.stats = false;
+  CHECK_FALSE(contains(exportHtml(in, noStats), "EVM"));
+  // 50/50 の前提が書かれる
+  o.evm = true;
+  in.evm.progress = EvmProgress::FiftyFifty;
+  CHECK(contains(exportHtml(in, o), "50/50"));
+}
+
+TEST_CASE("report: EVM の節は、基準日がベースラインの保存日より前・対象がないときは案内だけを出す") {
+  Proj p = Proj::fromCsv(kBasic);
+  auto bl = captureBaseline(p.issues, p.comp, "キックオフ", "2026-10-26T09:30");
+  REQUIRE(bl.ok());
+  Baseline b = bl.value();
+  b.id = "b1";
+  ExportOptions o;
+  o.gantt = false;
+  o.list = false;
+  ExportInput in = p.input();  // 基準日 10/19 は保存日（10/26）より前
+  in.evmBaseline = &b;
+  const std::string h = exportHtml(in, o);
+  CHECK(contains(h, "EVM（出来高管理）"));
+  CHECK(contains(h, "より前なので、指標は出せません"));
+  CHECK_FALSE(contains(h, "BAC（総計画量）"));
+  CHECK(onlyKnownTags(h));
+  // 課題が 0 件のベースライン
+  Baseline empty;
+  empty.id = "b2";
+  empty.name = "空";
+  in.evmBaseline = &empty;
+  const std::string he = exportHtml(in, o);
+  CHECK(contains(he, "計測の対象になる課題がありません"));
+}
+
 // ---------------------------------------------------------------- ベースライン（Issue #53）
 TEST_CASE("report: ベースラインを選ぶと、ガントに計画のバーと差、統計に「計画との差」の節が出る") {
   Proj base = Proj::fromCsv(kBasic);

@@ -1079,6 +1079,110 @@ int main(int argc, char** argv) {
     u.t = &ui::lightTokens();
     ui::applyStyle(*u.t, u.m);
   }
+  // 統計ビューの「EVM（出来高管理）」（Issue #65）: 案内（ベースラインなし）・指標と S カーブ（ライト・ダーク）・50/50・前提を開いた状態・担当者で絞った状態
+  {
+    // 6 月〜の計画（1 本の流れ）。ベースラインを 9/14 に保存し、9/18・9/25・10/5 に 3 件を完了、基準日は 10/19
+    std::string t = "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Duration (weeks),Outward issue link (Blocks)\n";
+    t += "1,Epic,基盤の刷新,,,,High,,\n";
+    const char* const who[] = {"田中", "鈴木", "佐藤"};
+    const char* const names[] = {"要件の整理", "設計", "画面の試作", "API の実装", "データ移行", "結合テスト", "性能の確認", "利用者向けの手引き", "受け入れテスト", "リリース準備"};
+    for (int i = 0; i < 10; ++i)
+      t += std::to_string(i + 2) + ",Task," + names[i] + ",1," + who[i % 3] + ",To Do,Medium," + (i % 3 == 2 ? "1.5" : "1") + "," +
+           (i < 9 ? std::to_string(i + 3) : std::string()) + "\n";
+    t += "12,Task,並行の調査,1,鈴木,To Do,Low,2,\n";
+    const auto goTo = [&](int y, int m, int d) {
+      clk.set(LocalTime{y, m, d, 9, 0, 0});
+      c.session()->setBaseDate(clk.todayIso());
+      c.afterEdit();
+    };
+    const auto scrollTo = [&](const std::function<bool()>& reached) {
+      c.setView(app::View::Stats);
+      clk.advanceMs(15000);
+      frames(3);
+      ImGui::GetIO().AddMousePosEvent(700, 450);
+      for (int k = 0; k < 30; ++k) {
+        ImGui::GetIO().AddMouseWheelEvent(0, 20);
+        frames(1);
+      }
+      for (int k = 0; k < 200 && !reached(); ++k) {
+        ImGui::GetIO().AddMouseWheelEvent(0, -1);
+        frames(2);
+      }
+    };
+    const auto evmShots = [&](const std::string& name) {
+      scrollTo([&] { return u.statsEvm.drawn && (u.statsEvm.guide ? u.statsEvm.saveA.y < 200 : u.statsEvm.baseA.y < 200); });
+      ImGui::GetIO().AddMousePosEvent(5, 5);
+      frames(2);
+      shot(name);
+    };
+    clk.set(LocalTime{2026, 9, 14, 9, 0, 0});
+    c.importText(t, "EVM の確認", app::ImportMode::New);
+    goTo(2026, 9, 14);
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    evmShots("65_evm_guide_light");
+    (void)c.saveBaseline("9/14 の計画");
+    goTo(2026, 9, 18);
+    c.setStatusFor({"2"}, "Done");
+    goTo(2026, 9, 25);
+    c.setStatusFor({"3"}, "Done");
+    goTo(2026, 10, 5);
+    c.setStatusFor({"4"}, "Done");
+    c.setStatusFor({"5"}, "In Progress");
+    goTo(2026, 10, 19);
+    evmShots("66_evm_light");
+    // 前提を開く
+    {
+      scrollTo([&] { return u.statsEvm.assumpA.y > 0 && u.statsEvm.assumpA.y < 880 && u.statsEvm.assumpB.y < 880; });
+      const ImVec2 a2 = u.statsEvm.assumpA, b2 = u.statsEvm.assumpB;
+      ImGui::GetIO().AddMousePosEvent((a2.x + b2.x) / 2, (a2.y + b2.y) / 2);
+      frames(2);
+      ImGui::GetIO().AddMouseButtonEvent(0, true);
+      frames(1);
+      ImGui::GetIO().AddMouseButtonEvent(0, false);
+      frames(2);
+      for (int k = 0; k < 4; ++k) {
+        ImGui::GetIO().AddMouseWheelEvent(0, -3);
+        frames(2);
+      }
+      ImGui::GetIO().AddMousePosEvent(5, 5);
+      frames(2);
+      shot("67_evm_assumptions_light");
+    }
+    // 50/50
+    {
+      EvmSettings es = c.session()->evmSettings();
+      es.progress = EvmProgress::FiftyFifty;
+      c.setEvmSettings(es);
+      evmShots("68_evm_fifty_light");
+      es.progress = EvmProgress::ZeroHundred;
+      c.setEvmSettings(es);
+    }
+    // 担当者で絞る
+    u.statsEvm.who = TrendFilter::Who::Name;
+    u.statsEvm.name = "鈴木";
+    evmShots("69_evm_filtered_light");
+    u.statsEvm.who = TrendFilter::Who::All;
+    u.t = &ui::darkTokens();
+    ui::applyStyle(*u.t, u.m);
+    evmShots("70_evm_dark");
+    // 書き出した HTML（ライト・ダーク）
+    for (const bool dark : {false, true}) {
+      ExportOptions opt;
+      opt.gantt = opt.list = false;
+      opt.dark = dark;
+      const auto html = c.buildReport(opt);
+      if (html.ok()) {
+        const std::string file = dark ? "html_evm_dark.html" : "html_evm_light.html";
+        std::ofstream o(out + "/" + file, std::ios::binary);
+        o << html.value();
+        std::printf("wrote %s/%s (%zu KB)\n", out.c_str(), file.c_str(), html.value().size() / 1024);
+      }
+    }
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    c.deleteCurrentProject();
+  }
   // 統計ビューの「状況の件数の推移（累積フロー）」（Issue #64）: ライト・ダーク・記録なしの週あり・案内（記録 1 件）・狭い幅・ホバー
   {
     const auto goTo = [&](Day d) {
@@ -1550,6 +1654,36 @@ int main(int argc, char** argv) {
       secs.summary = secs.done = secs.progress = secs.next = secs.risks = secs.milestones = secs.assignees = secs.notes = false;
       u.wk.sections = secs;
       shot("63c_weekly_dialog_auto_only");
+      u.dlg = ui::Dlg::None;
+      frames(2);
+    }
+    // 今週触った課題（Issue #71）: 作成日・更新日の列つきの CSV（架空のデータ）
+    {
+      const std::string csv =
+          "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Resolved,Duration (weeks),Created,Updated,Comment\n"
+          "1,Epic,認証基盤の刷新,,,To Do,High,,,2026-09-01,2026-10-20,\n"
+          "2,Story,ログイン画面,1,,To Do,High,,,2026-09-01,2026-10-20,\n"
+          "3,Task,画面の設計,2,田中,In Progress,High,,2,2026-09-02,2026-10-21,\"2026-10-20T10:00;田中;レビュー依頼\"\n"
+          "4,Task,入力チェックの実装,2,鈴木,In Progress,High,,2,2026-10-20,2026-10-21,\n"
+          "5,Task,テスト仕様書,2,鈴木,To Do,Medium,,1,2026-09-03,2026-10-08,\n"
+          "6,Story,セッション管理,1,,To Do,Medium,,,2026-09-01,2026-10-19,\n"
+          "7,Task,有効期限の見直し,6,佐藤,To Do,Medium,,1,2026-09-05,2026-10-22,\n"
+          "8,Task,完了した作業,6,佐藤,Done,Medium,2026-10-19,1,2026-09-05,2026-10-19,\n"
+          "9,Task,単独の調査,,高橋,To Do,Low,,1,2026-10-22,,\n"
+          "10,Task,更新日のない作業,,高橋,To Do,Low,,1,,,\n";
+      c.importText(csv, "触った課題（架空）", app::ImportMode::New);
+      Session* ts = c.session();
+      ts->setBaseDate("2026-10-21");
+      c.afterEdit();
+      WeeklyOptions to;
+      dumpWeekly("weekly_touched", to);
+      u.dlg = ui::Dlg::Weekly;
+      u.dlgOpening = true;
+      frames(2);
+      WeeklySections secs;  // 完了と触った課題だけ（プレビューの先頭に出して見えるようにする）
+      secs.summary = secs.progress = secs.next = secs.risks = secs.milestones = secs.assignees = secs.changes = secs.notes = false;
+      u.wk.sections = secs;
+      shot("63d_weekly_dialog_touched");
       u.dlg = ui::Dlg::None;
       frames(2);
     }

@@ -363,6 +363,11 @@ void dlgExportHtml(Frame& f) {
     const std::string l = "ベースライン「" + bl->name + "」との差を入れる（ガントに計画のバー、統計に「計画との差」）";
     ImGui::Checkbox(l.c_str(), &r.baseline);
   }
+  if (const Baseline* eb = evmPickBaseline(s->baselines(), std::string()); eb && r.stats) {
+    ImGui::SeparatorText("EVM（出来高管理）");
+    const std::string l = "統計に「EVM（出来高管理）」の節を入れる（ベースライン「" + eb->name + "」の日程と比べた SPI・ES の遅れ・SV と S カーブ）";
+    ImGui::Checkbox(l.c_str(), &r.evm);
+  }
   ImGui::SeparatorText("色");
   if (ImGui::RadioButton("ライト（印刷向け・既定）", !r.dark)) r.dark = false;
   ImGui::SameLine(0, u.m.s(16));
@@ -468,6 +473,8 @@ void dlgWeekly(Frame& f) {
   ImGui::SameLine(0, u.m.s(16));
   ImGui::Checkbox("完了", &sec.done);
   ImGui::SameLine(0, u.m.s(16));
+  ImGui::Checkbox("触った課題", &sec.touched);
+  ImGui::SameLine(0, u.m.s(16));
   ImGui::Checkbox("進行中", &sec.progress);
   ImGui::SameLine(0, u.m.s(16));
   ImGui::Checkbox("次の予定", &sec.next);
@@ -491,7 +498,21 @@ void dlgWeekly(Frame& f) {
     else ImGui::TextDisabled("（「ベースラインの管理…」で表示するものを選ぶと使えます）");
     if (!bl) sec.baseline = false;
   }
-  const bool any = sec.any();
+  const Baseline* const evmBl = evmPickBaseline(s->baselines(), std::string());
+  {
+    // EVM に使うベースライン（表示中のもの、なければ一番新しいもの）があるときだけ選べる（既定はオン）
+    const Baseline* eb = evmBl;
+    ImGui::BeginDisabled(eb == nullptr);
+    ImGui::Checkbox("EVM（SPI・ES の遅れ・SV）", &sec.evm);
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (eb) ImGui::TextDisabled("（ベースライン「%s」の日程と比べます）", eb->name.c_str());
+    else ImGui::TextDisabled("（ベースラインを保存すると使えます）");
+  }
+  // 使えない項目（ベースラインがない EVM）は、選ばれていても数えない（ほかを全部オフにしたら、コピー・保存を使えなくする）。チェックの値は残す
+  WeeklySections effective = sec;
+  if (!evmBl) effective.evm = false;
+  const bool any = effective.any();
 
   if (sec.notes) {
     ImGui::SeparatorText("所感・課題・お願い（自由に書きます。プロジェクトに覚え、次回の下書きに残ります）");
@@ -506,7 +527,11 @@ void dlgWeekly(Frame& f) {
 
   // プレビュー（条件が変わったときだけ作り直す）
   std::string key = std::to_string(s->version()) + "|" + std::to_string(u.wkPeriod) + "|" + std::to_string(o.from) + "|" + std::to_string(o.to) + "|";
-  for (bool b : {sec.summary, sec.done, sec.progress, sec.next, sec.risks, sec.milestones, sec.assignees, sec.changes, sec.notes, sec.baseline}) key += b ? '1' : '0';
+  for (bool b : {sec.summary, sec.done, sec.touched, sec.progress, sec.next, sec.risks, sec.milestones, sec.assignees, sec.changes, sec.notes, sec.baseline, sec.evm}) key += b ? '1' : '0';
+  {
+    const Baseline* eb = evmPickBaseline(s->baselines(), std::string());
+    key += "|" + (eb ? eb->id : std::string()) + (s->evmSettings().progress == EvmProgress::FiftyFifty ? "h" : "z") + std::to_string(s->evmSettings().spiWarn);
+  }
   key += "|" + o.notes;
   if (key != u.wkPreviewKey) {
     const auto r = c.renderWeekly(o, false);

@@ -43,6 +43,7 @@ Issue #84 の方針を文書にしたもので、保存形式を変える変更�
 | `ui` の中（`ui.cols` の中も） | **残る** | `ui` は JSON のまま持つ |
 | `links` の各項目の中 | **残る** | `Link::extra` |
 | `weekly` のスナップショットの中・`weeklyAuto`（直下・スナップショットの中） | **残る** | `WeeklySnapshot::extra`・`WeeklyAuto::extra`（#70 で追加） |
+| `evm`（直下） | **残る** | `EvmSettings::extra`（#65 で追加） |
 | `res`・`attachments` の各項目・`weekly` の直下・`baselines`（直下・項目）・`history`（直下・点） | **消える**（読んだ値だけを書き直す） | 既知の穴。テストは `should_fail` で追跡 |
 | CSV の未知の列 | **残る** | 見出しと値をそのまま往復する（`Issue::extra`） |
 | `roadmap_prefs.json` のトップレベル | **残る** | `Prefs::unknown` |
@@ -135,6 +136,7 @@ CHANGELOG と、各版のタグ（`v0.5.0`・`v0.7.0`・`v0.9.0` など）のコ
 | `baselines`・`links`・`history` | 0.9.0〜 | |
 | `ui.cols.plan` | 0.9.0〜 | 「計画との差」の列 |
 | `weeklyAuto` | 0.9.1〜 | 開いたときに自動で取る週の頭のスナップショット（`snaps`）。`weekly` とは別のキー。CSV には `Created`・`Updated` の列も増える |
+| `evm` | 0.10.0〜 | EVM（出来高管理）の設定（`progress`・`spiWarn`）。既定のときは書かない。未知のキーは保持する |
 | `weeklyAuto.snaps[].ms` | 0.10.0〜 | スナップショットの中のマイルストーン（`Issue Id\t状況\t見込みの完了日\t遅れ` の配列。マイルストーンがなければ書かない。#75）。0.9.1 は未知のキーとして書き戻す（`weeklyAuto` の入れ子のうち、スナップショットの中の未知のキーは保持される） |
 
 ### `roadmap_prefs.json` のキー
@@ -172,6 +174,7 @@ CHANGELOG と、各版のタグ（`v0.5.0`・`v0.7.0`・`v0.9.0` など）のコ
 | `v0.7/` | 0.7.x | `ui.attachThumb`・`attachments[].sha256`（古い添付も混ぜる）。CSV に JIRA の日時の `Created`/`Updated` と `Sprint` |
 | `v0.9/` | 0.9.x | `baselines`・`links`・`history`・`ui.cols.plan`。CSV に `Attachment`・`Outward issue link (Relates)`・コメント |
 | `v0.9.1/` | 0.9.1 | `weeklyAuto`。CSV に `Created`/`Updated`（アプリが足す形） |
+| `v0.10/` | 0.10.0 | `evm`（50/50・しきい値 0.8）。そのほかは 0.9.1 と同じ |
 
 各フォルダに `data/…`（プロジェクト）、`roadmap_prefs.json`、`share.json`（共有 JSON）があります。**その版が書かなかったキーは書いていません。** 設定・prefs・共有 JSON の形は、その版のタグのコードを見て揃え、今の版が書き直したときに**1 バイトも変わらない**ことで確かめています（バイト比較は設定 JSON と共有 JSON だけ。`roadmap_prefs.json` は、新しい版がキーを足す〔`newNameFormat`・`autoCompleteGitHub` など〕ので値の比較です）。CSV は、`csv.cpp` が 0.1.0 から変わっていないので、今の `rmcli import-export` で作りました。`.gitattributes` で `tests/compat/**` は改行を変換しません（CRLF を含めてバイトで比べるため）。
 

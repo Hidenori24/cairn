@@ -140,6 +140,34 @@ void renderDone(Md& m, const WeeklyReport& r) {
   listMore(m, r.done);
 }
 
+void renderTouched(Md& m, const WeeklyReport& r) {
+  const WeeklyTouched& t = r.touched;
+  if (!t.hasColumn) {
+    m.heading(2, touchedTitle(r));
+    m.line(touchedNoColumnText());
+    return;
+  }
+  m.heading(2, touchedTitle(r) + "（" + std::to_string(t.total) + " 件）");
+  m.line("期間内に更新日（Updated）か作成日（Created）が入る、完了していない作業です。完了した作業は「" + doneTitle(r) + "」に出ます。");
+  m.blank();
+  if (t.groups.empty()) m.line("- なし");
+  for (const WeeklyTouchedGroup& g : t.groups) {
+    m.heading(3, g.path.empty() ? touchedNoParentText() : escapeMarkdown(g.path));
+    for (const WeeklyTouchedItem& it : g.items)
+      m.line("- " + escapeMarkdown(title(it.item.did, it.item.name)) + "（" + statusName(it.item) + "・担当: " + who2(it.item.assignee) + "・" +
+             touchedOnText(it) + "・" + touchedChangeText(it) + "）");
+  }
+  if (t.omitted() > 0) m.line("- " + moreText(t.omitted()));
+  if (t.total > 0) {
+    m.blank();
+    m.line(touchedBasisText(t));
+  }
+  if (t.noStamp > 0) {
+    m.blank();
+    m.line(touchedNoStampText(t.noStamp));
+  }
+}
+
 void renderProgress(Md& m, const WeeklyReport& r) {
   m.heading(2, "進行中（" + std::to_string(r.progress.total) + " 件）");
   if (r.progress.items.empty()) m.line("- なし");
@@ -314,6 +342,28 @@ void renderBaseline(Md& m, const WeeklyReport& r) {
   rows("消えた課題", b.removed, baselineRemovedText);
 }
 
+void renderEvm(Md& m, const WeeklyReport& r) {
+  const EvmReport& e = r.evm.report;
+  m.heading(2, "EVM（出来高管理）");
+  if (!e.ok()) {
+    m.line(escapeMarkdown(evmReasonText(e)));
+    m.blank();
+    for (const std::string& s : evmNotes(e)) m.line("- " + escapeMarkdown(s));
+    m.blank();
+    return;
+  }
+  const std::string at = baselineAtText(e.baselineAt);
+  m.line("ベースライン「" + escapeMarkdown(e.baselineName) + "」" + (at.empty() ? std::string() : "（保存 " + at + "）") + "の日程と比べた、基準日（" +
+         fmtShort(e.base) + "）の終わりの時点の指標です。SV・ES は + が進み／遅れの向きに注意（SV は + が進み、ES の遅れは + が遅れ）。");
+  m.blank();
+  for (const weeklyfmt::EvmRow& row : weeklyfmt::evmRows(e)) m.line("- " + escapeMarkdown(row.label + ": " + row.value));
+  m.blank();
+  m.line(escapeMarkdown(evmEsSentence(e)));
+  m.line(escapeMarkdown(evmForecastText(e)));
+  for (const std::string& s : evmNotes(e)) m.line("- " + escapeMarkdown(s));
+  m.blank();
+}
+
 }  // namespace
 
 std::string weeklyMarkdown(const WeeklyReport& r) {
@@ -341,6 +391,7 @@ std::string weeklyMarkdown(const WeeklyReport& r) {
   }
   if (s.summary) renderSummary(m, r);
   if (s.done) renderDone(m, r);
+  if (s.touched && r.touched.available) renderTouched(m, r);
   if (s.progress) renderProgress(m, r);
   if (s.next) renderNext(m, r);
   if (s.risks) renderRisks(m, r);
@@ -351,6 +402,7 @@ std::string weeklyMarkdown(const WeeklyReport& r) {
   if (s.assignees) renderAssignees(m, r);
   if (s.changes && r.changes.available) renderChanges(m, r);
   if (s.baseline && r.baseline.available) renderBaseline(m, r);
+  if (s.evm && r.evm.available) renderEvm(m, r);
   if (s.notes) notes();
   // 末尾は改行 1 つ
   while (m.o.size() >= 2 && m.o[m.o.size() - 1] == '\n' && m.o[m.o.size() - 2] == '\n') m.o.pop_back();

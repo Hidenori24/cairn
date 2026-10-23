@@ -4271,6 +4271,40 @@ int main() {
         check(h.c.session()->weeklyAuto().snaps.size() == 1, "元に戻しても自動のスナップショットは残る（取り消しの対象外）");
       }
     }
+    {
+      // 今週触った課題（Issue #71）: 更新日の列がないうちは理由だけ。編集すると更新日が付いて、節に出る
+      const auto at = [&](const char* needle) { return h.u.wkPreview.find(needle); };
+      check(at("## 今週触った課題") != std::string::npos && at("Updated（更新日）") != std::string::npos, "更新日の列がないCSVでは、節に出せない理由を書く");
+      Session* ws = h.c.session();
+      std::string pick;
+      for (int id : ws->tree()->leafOrder) {
+        const std::size_t k = static_cast<std::size_t>(id);
+        if (ws->tree()->kind[k] == Kind::Ms || ws->rows()->at(k).done) continue;
+        pick = ws->tree()->ids[k];
+        break;
+      }
+      check(!pick.empty(), "未完了の作業がある（触った課題）");
+      if (!pick.empty()) {
+        ws->setField(pick, [&](Issue& is) { is.assignee = "触った太郎"; });
+        h.c.afterEdit();
+        h.frame(2);
+        check(at("## 今週触った課題（1 件）") != std::string::npos, "編集した未完了の課題が「今週触った課題」に出る");
+        check(at("触った太郎") != std::string::npos && at("・更新日 ") != std::string::npos, "担当と触った日が出る");
+        check(at("## 今週の完了") < at("## 今週触った課題") && at("## 今週触った課題") < at("## 進行中"), "節の順は 完了 → 触った課題 → 進行中");
+        h.u.wk.sections.touched = false;
+        h.frame(2);
+        check(at("今週触った課題") == std::string::npos, "項目をオフにすると出ない");
+        h.u.wk.sections.touched = true;
+        h.frame(2);
+        const WeeklyOptions wo;
+        const auto html = h.c.renderWeekly(wo, true);
+        check(html.ok() && html.value().find("今週触った課題") != std::string::npos && html.value().find("触った太郎") != std::string::npos, "HTML にも出る");
+        ws->undo();
+        h.c.afterEdit();
+        h.frame(2);
+        check(at("今週触った課題（") == std::string::npos, "元に戻すと件数の節は出ない（更新日の列も戻る）");
+      }
+    }
     // 期間の切り替え
     h.u.wkPeriod = 1;
     h.frame(2);
@@ -4384,8 +4418,8 @@ int main() {
       check(!h.c.toasts().empty() && h.c.toasts().back().text.find("コピーできませんでした") != std::string::npos, "コピー失敗の通知");
       // 項目が全部オフならコピーしない
       h.u.wk.sections = WeeklySections{};
-      h.u.wk.sections.summary = h.u.wk.sections.done = h.u.wk.sections.progress = h.u.wk.sections.next = h.u.wk.sections.risks = false;
-      h.u.wk.sections.milestones = h.u.wk.sections.assignees = h.u.wk.sections.changes = h.u.wk.sections.notes = false;
+      h.u.wk.sections.summary = h.u.wk.sections.done = h.u.wk.sections.touched = h.u.wk.sections.progress = h.u.wk.sections.next = h.u.wk.sections.risks = false;
+      h.u.wk.sections.milestones = h.u.wk.sections.assignees = h.u.wk.sections.changes = h.u.wk.sections.notes = h.u.wk.sections.evm = false;
       h.frame(2);
       h.click(w->Pos.x + w->Size.x - 45, w->Pos.y + w->Size.y - rowDy);  // 所感の欄が消えて窓が縮むので、下端からの位置で押す
       check(h.u.dlg == ui::Dlg::Weekly, "押してもダイアログは開いたまま");
@@ -4719,6 +4753,163 @@ int main() {
     h.frame(3);
     check(!h.u.statsPlan.drawn, "統計の節も出ない");
     h.c.setUiSub("cols", "plan", false);
+    h.c.deleteCurrentProject();
+    h.frame(2);
+  }
+  // 統計ビューの「EVM（出来高管理）」（Issue #65）: ベースラインがないときの案内 → 指標・S カーブ・今日の線・完了予測 → 進行中の扱い → 前提 → 書き出し
+  {
+    const std::string csvText =
+        "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Duration (weeks),Outward issue link (Blocks)\n"
+        "1,Task,設計,,田中,To Do,High,1,2\n"
+        "2,Task,実装,,田中,To Do,Medium,2,3\n"
+        "3,Task,評価,,鈴木,To Do,Medium,1,\n"
+        "4,Task,調整,,鈴木,To Do,Low,1,\n";
+    check(h.c.importText(csvText, "EVM の確認", app::ImportMode::New).ok, "EVM の確認用の取り込み");
+    h.u.t = &ui::lightTokens();
+    h.u.m.compact = false;
+    h.u.m.scale = 1.0f;
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.c.filter() = Filter{};
+    h.c.clearSelection();
+    h.u.detailOpen = false;
+    h.clk.set(LocalTime{2026, 10, 19, 9, 0, 0});
+    Session* s = h.c.session();
+    s->setBaseDate("2026-10-19");
+    h.c.afterEdit();
+    h.c.setView(app::View::Stats);
+    h.frame(3);
+    auto& ev = h.u.statsEvm;
+    ImGuiIO& io = ImGui::GetIO();
+    const auto scrollTo = [&](const std::function<bool()>& visible, const char* what) {
+      io.AddMousePosEvent(700, 450);
+      for (int k = 0; k < 160 && !visible(); ++k) {
+        io.AddMouseWheelEvent(0, -1);
+        h.frame(2);
+      }
+      for (int k = 0; k < 160 && !visible(); ++k) {
+        io.AddMouseWheelEvent(0, 1);
+        h.frame(2);
+      }
+      check(visible(), what);
+    };
+    check(ev.drawn && ev.guide && !ev.metrics, "ベースラインがないときは、指標を出さず「ベースラインを保存してください」の案内だけが出る");
+    check(ev.saveB.x > ev.saveA.x, "案内に「ベースラインを保存…」のボタンがある");
+    check(h.c.saveBaseline("キックオフ").ok(), "ベースラインを保存する（10/19）");
+    // 基準日を進め、設計（1）を完了にする（完了日 = 時計の今日 10/19）
+    s->setBaseDate("2026-10-28");
+    h.c.setStatusFor({"1"}, "Done");
+    h.c.afterEdit();
+    h.frame(4);
+    check(ev.drawn && !ev.guide && ev.metrics, "ベースラインを保存すると、指標が出る");
+    check(ev.tiles == 6, "タイルは BAC・PV・EV・SV・SPI・ES の 6 つ");
+    check(ev.points >= 3 && ev.nowIndex >= 0 && ev.nowIndex < ev.points, "S カーブの点と、基準日の点がある");
+    check(static_cast<int>(ev.pvPts.size()) == ev.points, "PV は全部の点を結ぶ");
+    check(static_cast<int>(ev.evPts.size()) == ev.nowIndex + 1, "EV は基準日の点までしかない");
+    check(ev.nowX > ev.chartX0 && ev.nowX < ev.chartX1, "今日の線は図の中にある");
+    check(ev.chartX1 < ImGui::GetIO().DisplaySize.x - 400, "EVM の図は詳細パネル（幅 400）の左に収まる");
+    check(ev.forecast, "完了予測の点線が出る");
+    bool mono = true;
+    for (std::size_t k = 1; k < ev.pvPts.size(); ++k) mono = mono && ev.pvPts[k].x > ev.pvPts[k - 1].x && ev.pvPts[k].y <= ev.pvPts[k - 1].y + 0.01f;
+    check(mono, "PV の線は右へ進み、下がらない");
+    {
+      const Result<EvmReport> r = computeEvm(*s->tree(), s->viewIssues(), *s->rows(), s->calendar(), s->baseDay(), evmPickBaseline(s->baselines(), ""),
+                                             s->evmSettings());
+      check(r.ok() && r->ok() && std::abs(r->ev - 1.0) < 1e-9 && r->warn, "EV は完了した設計の 1 週、SPI はしきい値を下回って警告");
+    }
+    // 計算の前提（折りたたみ）
+    scrollTo([&] { return ev.assumpA.y > 130 && ev.assumpB.y < 800; }, "「計算の前提」が見える位置までスクロールできる");
+    if (ev.assumpA.y > 130 && ev.assumpB.y < 800) {
+      check(!ev.assumpOpen, "前提は最初は閉じている");
+      h.click((ev.assumpA.x + ev.assumpB.x) / 2, (ev.assumpA.y + ev.assumpB.y) / 2);
+      h.frame(3);
+      check(ev.assumpOpen, "押すと前提が開く");
+      h.click((ev.assumpA.x + ev.assumpB.x) / 2, (ev.assumpA.y + ev.assumpB.y) / 2);
+      h.frame(3);
+      check(!ev.assumpOpen, "もう一度押すと閉じる");
+    }
+    // SPI のしきい値: ドラッグ中の値が次のフレームで捨てられず、離したあとも残る（Copilot の指摘 #93）
+    scrollTo([&] { return ev.spiA.y > 130 && ev.spiB.y < 800; }, "SPI のしきい値の入力欄が見える位置までスクロールできる");
+    if (ev.spiA.y > 130 && ev.spiB.y < 800) {
+      const float cx = (ev.spiA.x + ev.spiB.x) / 2, cy = (ev.spiA.y + ev.spiB.y) / 2;
+      const double before = s->evmSettings().spiWarn;
+      io.AddMousePosEvent(cx, cy);
+      h.frame(2);
+      io.AddMouseButtonEvent(0, true);
+      h.frame(2);
+      for (int k = 1; k <= 8; ++k) {
+        io.AddMousePosEvent(cx - 4.f * static_cast<float>(k), cy);
+        h.frame(2);
+      }
+      const double during = s->evmSettings().spiWarn;
+      check(during < before - 0.05, "ドラッグ中に、しきい値が設定へ反映され続ける");
+      io.AddMouseButtonEvent(0, false);
+      h.frame(3);
+      check(std::abs(s->evmSettings().spiWarn - during) < 1e-6, "ドラッグを離しても、変えた値が残る（元に戻らない）");
+      EvmSettings back = s->evmSettings();
+      back.spiWarn = before;
+      h.c.setEvmSettings(back);
+      h.frame(2);
+    }
+    // 進行中の扱い: 50/50 に変える（プロジェクトの設定に残る）
+    scrollTo([&] { return ev.progA.y > 130 && ev.progB.y < 800; }, "進行中の扱いの選択欄が見える位置までスクロールできる");
+    if (ev.progA.y > 130 && ev.progB.y < 800) {
+      h.click((ev.progA.x + ev.progB.x) / 2, (ev.progA.y + ev.progB.y) / 2);
+      h.frame(2);
+      ImGuiWindow* pop = ImGui::FindWindowByName("##Combo_00");
+      check(pop && pop->Active, "進行中の扱いの選択欄を押すと一覧が開く");
+      if (pop && pop->Active) {
+        const float lh = ImGui::GetTextLineHeight(), sp = ImGui::GetStyle().ItemSpacing.y;
+        h.click(pop->Pos.x + 30, pop->Pos.y + ImGui::GetStyle().WindowPadding.y + 1 * (lh + sp) + lh / 2);
+        h.frame(3);
+        check(s->evmSettings().progress == EvmProgress::FiftyFifty, "一覧から 50/50 を選べる");
+      }
+    }
+    // 計画にするベースラインの選択欄と、担当者・ルート課題の選択欄がある
+    check(ev.baseB.x > ev.baseA.x && ev.whoB.x > ev.whoA.x && ev.rootB.x > ev.rootA.x, "ベースライン・担当者・ルート課題の選択欄がある");
+    // 担当者で絞る（田中 = 4 番目の項目ではなく、全員・担当なし・田中 の 3 番目）
+    scrollTo([&] { return ev.whoA.y > 130 && ev.whoB.y < 800; }, "担当者の選択欄が見える位置までスクロールできる");
+    if (ev.whoA.y > 130 && ev.whoB.y < 800) {
+      h.click((ev.whoA.x + ev.whoB.x) / 2, (ev.whoA.y + ev.whoB.y) / 2);
+      h.frame(2);
+      ImGuiWindow* pop = ImGui::FindWindowByName("##Combo_00");
+      check(pop && pop->Active, "担当者の選択欄を押すと一覧が開く");
+      if (pop && pop->Active) {
+        const float lh = ImGui::GetTextLineHeight(), sp = ImGui::GetStyle().ItemSpacing.y;
+        h.click(pop->Pos.x + 30, pop->Pos.y + ImGui::GetStyle().WindowPadding.y + 3 * (lh + sp) + lh / 2);
+        h.frame(3);
+        check(ev.who == TrendFilter::Who::Name && ev.name == "鈴木", "一覧から担当者（鈴木）を選べる");
+        check(ev.metrics, "絞り込んでも指標が出る");
+        ev.who = TrendFilter::Who::All;
+        h.frame(2);
+      }
+    }
+    // 書き出し・週次レポートにも出る
+    {
+      ExportOptions eo;
+      eo.list = false;
+      eo.gantt = false;
+      const auto html = h.c.buildReport(eo);
+      check(html.ok() && html.value().find("EVM（出来高管理）") != std::string::npos && html.value().find("50/50") != std::string::npos,
+            "HTML に EVM の節（50/50 の前提つき）が入る");
+      eo.evm = false;
+      const auto off = h.c.buildReport(eo);
+      check(off.ok() && off.value().find("EVM（出来高管理）") == std::string::npos, "ダイアログの選択でオフにできる");
+      WeeklyOptions wo;
+      const auto md = h.c.renderWeekly(wo, false);
+      check(md.ok() && md.value().find("## EVM（出来高管理）") != std::string::npos && md.value().find("SPI") != std::string::npos,
+            "週次レポートに SPI・ES の遅れ・SV が入る");
+    }
+    // ダークでも描ける
+    h.u.t = &ui::darkTokens();
+    ui::applyStyle(*h.u.t, h.u.m);
+    h.frame(3);
+    check(ev.metrics && ev.tiles == 6, "ダークでも描ける");
+    // 全部削除すると案内に戻る
+    while (!s->baselines().list.empty()) h.c.deleteBaseline(s->baselines().list[0].id);
+    h.frame(3);
+    check(ev.guide && !ev.metrics, "ベースラインを全部削除すると、案内に戻る");
+    h.u.t = &ui::lightTokens();
+    ui::applyStyle(*h.u.t, h.u.m);
     h.c.deleteCurrentProject();
     h.frame(2);
   }

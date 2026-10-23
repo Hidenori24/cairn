@@ -12,9 +12,11 @@
 #include "roadmap/calendar.hpp"
 #include "roadmap/clock.hpp"
 #include "roadmap/engine.hpp"
+#include "roadmap/evm.hpp"
 #include "roadmap/filestore.hpp"
 #include "roadmap/load.hpp"
 #include "roadmap/mta.hpp"
+#include "roadmap/model.hpp"
 #include "roadmap/result.hpp"
 #include "roadmap/stats.hpp"
 #include "roadmap/weekly_state.hpp"
@@ -29,6 +31,8 @@ inline constexpr int kWeeklyMaxRangeDays = 366;
 inline constexpr int kWeeklyTightDays = 10;
 // 1 行に出す件名の長さの上限（文字）
 inline constexpr std::size_t kWeeklyMaxNameChars = 200;
+// 「今週触った課題」に出す件数の上限（超えた分は件数だけ数える。Issue #71）
+inline constexpr std::size_t kWeeklyMaxTouched = 50;
 
 enum class WeeklyPeriod {
   ThisWeek,  // 基準日の週（月曜〜日曜）
@@ -46,6 +50,7 @@ WeeklyRange weeklyRange(Day base, WeeklyPeriod p, Day from, Day to);
 struct WeeklySections {
   bool summary = true;      // サマリー
   bool done = true;         // 今週の完了
+  bool touched = true;      // 今週触った課題（Updated・Created が期間に入る未完了の作業。Issue #71）
   bool progress = true;     // 進行中
   bool next = true;         // 来週の予定
   bool risks = true;        // 遅れ・余裕小
@@ -54,8 +59,9 @@ struct WeeklySections {
   bool changes = true;      // 先週から変わったこと（スナップショットがあるときだけ出る）
   bool notes = true;        // 所感・課題・お願い
   bool baseline = false;    // ベースラインとの差（表示するベースラインがあるときだけ出る。既定オフ。Issue #53）
+  bool evm = true;          // EVM（出来高管理）の SPI・ES の遅れ・SV（EVM に使うベースラインがあるときだけ出る。Issue #65）
   bool any() const {
-    return summary || done || progress || next || risks || milestones || assignees || changes || notes || baseline;
+    return summary || done || touched || progress || next || risks || milestones || assignees || changes || notes || baseline || evm;
   }
 };
 
@@ -90,6 +96,12 @@ struct WeeklyInput {
   const WeeklyAuto* autos = nullptr;      // 自動（週の頭）のスナップショット
   const BaselineCompare* baseline = nullptr;  // 表示するベースラインとの比較（なければ「ベースラインとの差」は出ない）
   int mtaLateDays = kMtaDefaultLateDays;      // マイルストーンの予測の遅れの警告のしきい値（営業日。autos があるとき、Issue #75）
+  // EVM（Issue #65）の計画にするベースライン（evmPickBaseline で選んだもの。null = 節を出さない）と設定。参照は呼び出しの間だけ使う
+  const Baseline* evmBaseline = nullptr;
+  EvmSettings evm;
+  // 作成日・更新日の列（Created・Updated。stamps.hpp）を探す元。issues[i].extra と同じ並び。
+  // なければ「今週触った課題」は出ない（Issue #71）
+  const ProjectMeta* meta = nullptr;
 };
 
 // ---------------------------------------------------------------- 結果の構造体
@@ -135,6 +147,47 @@ struct WeeklyAssigneeRow {
   int open = 0;           // 未完了の作業の数
   int loadNextPercent = -1;  // 来週の負荷（%）。分からなければ -1
   int late = 0;           // 未完了のうち遅れ
+};
+
+// 今週触った課題の 1 行（Issue #71）
+struct WeeklyTouchedItem {
+  WeeklyItem item;           // 件名・状況（done/prog）・担当・見込み
+  Day on = 0;                // 触った日（Updated が期間にあればその日。なければ Created の日）
+  bool byCreated = false;    // on は Created の日（Updated が期間にない）
+  bool created = false;      // Created が期間内（新しく作った）
+  bool commented = false;    // 日付が期間内のコメントがある
+  // 比べるスナップショットがあるときだけ（なければ「更新」とだけ出す）
+  bool statusChanged = false;
+  char statusFrom = 't', statusTo = 't';  // 't' 未着手 / 'p' 進行中 / 'd' 完了
+  bool finishMoved = false;
+  Day finishFrom = 0, finishTo = 0;       // 見込みの完了日
+  int shiftDays = 0;                      // 営業日（正 = 遅くなった）
+};
+// 親のまとまり（直接の親ごと。親のない課題は parent = -1 でまとめて最後）
+struct WeeklyTouchedGroup {
+  int parent = -1;     // Tree の添字
+  std::string path;    // "ルート / 親"（件名つき。空 = 親のない課題）
+  std::vector<WeeklyTouchedItem> items;  // Tree の順
+};
+struct WeeklyTouched {
+  bool available = false;   // meta を渡された（節を出す）
+  bool hasColumn = false;   // Created・Updated のどちらかの列がある
+  int total = 0;            // 該当した全部の数
+  int noStamp = 0;          // 更新日のない（読めない）未完了の作業の数。数えていない
+  // 「何が変わったか」を比べたスナップショット（なければ hasBasis = false）
+  bool hasBasis = false;
+  Day since = 0;
+  bool sinceAuto = false;
+  bool hasUntil = false;
+  Day until = 0;
+  bool truncated = false;
+  std::vector<WeeklyTouchedGroup> groups;
+  int shown() const {
+    int n = 0;
+    for (const WeeklyTouchedGroup& g : groups) n += static_cast<int>(g.items.size());
+    return n;
+  }
+  int omitted() const { return total - shown(); }
 };
 
 struct WeeklySummary {
@@ -206,6 +259,12 @@ struct WeeklyBaseline {
   WeeklyBaselineList removed;  // 消えた
 };
 
+// EVM（出来高管理）の節。基準日の終わりの時点の指標（期間には依らない）
+struct WeeklyEvm {
+  bool available = false;  // 節を出す（ベースラインがある）
+  EvmReport report;        // ok() でないときは、reason の案内を出す
+};
+
 struct WeeklyReport {
   std::string projectName;
   Day base = 0;
@@ -217,6 +276,7 @@ struct WeeklyReport {
   WeeklySections sections;
   WeeklySummary summary;
   WeeklyList done;        // 期間内に完了した作業（完了日の順）
+  WeeklyTouched touched;  // 期間内に触った未完了の作業（親のまとまりごと。完了した作業は「完了」に出るので含めない）
   WeeklyList progress;    // 進行中（余裕の小さい順）
   WeeklyList nextStart;   // 来週に最早の開始が来る未完了の作業
   WeeklyList nextFinish;  // 来週に最早の完了が来る未完了の作業
@@ -233,6 +293,7 @@ struct WeeklyReport {
   MtaReport mta;          // series は警告のあるものを先頭に、上限（maxItems）までにする
   int mtaOmitted = 0;     // 上限で省いた系列の数
   int mtaWarnOmitted = 0; // 上限で省いた警告の数（警告の節に「ほか N 件」を出す）
+  WeeklyEvm evm;
   std::string notes;      // 所感（そのまま）
   bool empty = false;     // 課題がない
 };

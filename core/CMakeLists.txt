@@ -33,6 +33,8 @@ add_library(roadmap_core STATIC
   src/stats.cpp
   src/load.cpp
   src/trends.cpp
+  src/evm.cpp
+  src/evm_settings.cpp
   src/today.cpp
   src/stamps.cpp
   src/theme_colors.cpp
@@ -42,6 +44,7 @@ add_library(roadmap_core STATIC
   src/report_stats.cpp
   src/report_trends.cpp
   src/report_mta.cpp
+  src/report_evm.cpp
   src/report_list.cpp
   src/baseline.cpp
   src/history.cpp

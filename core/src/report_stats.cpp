@@ -411,6 +411,7 @@ std::string renderStats(const Ctx& cx) {
   out += overall(s, st);
   out += floatDist(s, st);
   out += baselineSection(s);
+  if (cx.opt.evm) out += renderEvm(cx);
   out += weekly(s, st);
 
   // 担当別

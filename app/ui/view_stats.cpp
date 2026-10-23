@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "roadmap/evm.hpp"
 #include "roadmap/history.hpp"
 #include "roadmap/load.hpp"
 #include "roadmap/mta.hpp"
@@ -1390,6 +1391,87 @@ void drawMta(Frame& f, const Result<MtaReport>& res, const Tree& T, float W) {
   ImGui::Dummy(ImVec2(0, u.m.s(8)));
   ImGui::Text("週ごとの予測日（すべてのマイルストーン。名前の行を押すと詳細を開きます）");
   drawMtaTable(f, rep, W);
+// 担当者・ルート課題の選択欄（推移と EVM の節が共有する。選択は節ごとに持つ）
+struct FilterSel {
+  TrendFilter::Who& who;
+  std::string& name;
+  bool& standalone;
+  std::string& rootId;
+  ImVec2 &whoA, &whoB, &rootA, &rootB;  // 選択欄の位置（煙テストが使う）
+};
+
+void drawFilterCombos(Frame& f, Session& s, const Tree& T, FilterSel sel, const char* whoId, const char* rootIdStr) {
+  UiState& u = f.u;
+  {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("担当者");
+    ImGui::SameLine();
+    std::string pv = "全員";
+    if (sel.who == TrendFilter::Who::Unassigned) pv = "担当なし";
+    else if (sel.who == TrendFilter::Who::Name) pv = sel.name;
+    ImGui::SetNextItemWidth(u.m.s(180));
+    const bool whoOpen = ImGui::BeginCombo(whoId, pv.c_str());
+    sel.whoA = ImGui::GetItemRectMin();
+    sel.whoB = ImGui::GetItemRectMax();
+    if (whoOpen) {
+      if (ImGui::Selectable("全員", sel.who == TrendFilter::Who::All)) sel.who = TrendFilter::Who::All;
+      if (ImGui::Selectable("担当なし", sel.who == TrendFilter::Who::Unassigned)) sel.who = TrendFilter::Who::Unassigned;
+      for (const std::string& a : s.assignees())
+        if (ImGui::Selectable(a.c_str(), sel.who == TrendFilter::Who::Name && sel.name == a)) {
+          sel.who = TrendFilter::Who::Name;
+          sel.name = a;
+        }
+      ImGui::EndCombo();
+    }
+    ImGui::SameLine(0, u.m.s(16));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("ルート課題");
+    ImGui::SameLine();
+    std::string rv = "すべて";
+    if (sel.standalone) rv = "親のない単独の課題";
+    else if (!sel.rootId.empty()) {
+      const int r = T.find(sel.rootId);
+      if (r >= 0) rv = T.did[static_cast<std::size_t>(r)] + "  " + T.name[static_cast<std::size_t>(r)];
+    }
+    ImGui::SetNextItemWidth(u.m.s(260));
+    const bool rootOpen = ImGui::BeginCombo(rootIdStr, rv.c_str());
+    sel.rootA = ImGui::GetItemRectMin();
+    sel.rootB = ImGui::GetItemRectMax();
+    if (rootOpen) {
+      if (ImGui::Selectable("すべて", !sel.standalone && sel.rootId.empty())) {
+        sel.standalone = false;
+        sel.rootId.clear();
+      }
+      bool anyAlone = false;
+      for (int r : T.roots)
+        if (T.kids[static_cast<std::size_t>(r)].empty() && T.kind[static_cast<std::size_t>(r)] != Kind::Ms) anyAlone = true;
+      if (anyAlone && ImGui::Selectable("親のない単独の課題", sel.standalone)) {
+        sel.standalone = true;
+        sel.rootId.clear();
+      }
+      for (int r : T.roots) {
+        const std::size_t ri = static_cast<std::size_t>(r);
+        if (T.kids[ri].empty()) continue;
+        ImGui::PushID(r);
+        if (ImGui::Selectable((T.did[ri] + "  " + T.name[ri]).c_str(), !sel.standalone && sel.rootId == T.ids[ri])) {
+          sel.standalone = false;
+          sel.rootId = T.ids[ri];
+        }
+        ImGui::PopID();
+      }
+      ImGui::EndCombo();
+    }
+  }
+}
+
+// 選択を絞り込みにする
+TrendFilter filterOf(const Tree& T, const FilterSel& sel) {
+  TrendFilter flt;
+  flt.who = sel.who;
+  flt.name = sel.name;
+  if (sel.standalone) flt.root = TrendFilter::kStandalone;
+  else if (!sel.rootId.empty()) flt.root = T.find(sel.rootId);
+  return flt;
 }
 
 // 推移の節。担当者・ルート課題の選択（この節の中だけ。上の絞り込みや他の節には効かない）→ 集計 → 3 つの図
@@ -1411,73 +1493,10 @@ void drawTrendBody(Frame& f, Session& s, const Tree& T, const std::vector<Schedu
   ImGui::Dummy(ImVec2(0, u.m.s(4)));
 
   // ---- 絞り込み（担当者・ルート課題）----
-  {
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("担当者");
-    ImGui::SameLine();
-    std::string pv = "全員";
-    if (st.who == TrendFilter::Who::Unassigned) pv = "担当なし";
-    else if (st.who == TrendFilter::Who::Name) pv = st.name;
-    ImGui::SetNextItemWidth(u.m.s(180));
-    const bool whoOpen = ImGui::BeginCombo("##trendWho", pv.c_str());
-    st.whoA = ImGui::GetItemRectMin();
-    st.whoB = ImGui::GetItemRectMax();
-    if (whoOpen) {
-      if (ImGui::Selectable("全員", st.who == TrendFilter::Who::All)) st.who = TrendFilter::Who::All;
-      if (ImGui::Selectable("担当なし", st.who == TrendFilter::Who::Unassigned)) st.who = TrendFilter::Who::Unassigned;
-      for (const std::string& a : s.assignees())
-        if (ImGui::Selectable(a.c_str(), st.who == TrendFilter::Who::Name && st.name == a)) {
-          st.who = TrendFilter::Who::Name;
-          st.name = a;
-        }
-      ImGui::EndCombo();
-    }
-    ImGui::SameLine(0, u.m.s(16));
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("ルート課題");
-    ImGui::SameLine();
-    std::string rv = "すべて";
-    if (st.standalone) rv = "親のない単独の課題";
-    else if (!st.rootId.empty()) {
-      const int r = T.find(st.rootId);
-      if (r >= 0) rv = T.did[static_cast<std::size_t>(r)] + "  " + T.name[static_cast<std::size_t>(r)];
-    }
-    ImGui::SetNextItemWidth(u.m.s(260));
-    const bool rootOpen = ImGui::BeginCombo("##trendRoot", rv.c_str());
-    st.rootA = ImGui::GetItemRectMin();
-    st.rootB = ImGui::GetItemRectMax();
-    if (rootOpen) {
-      if (ImGui::Selectable("すべて", !st.standalone && st.rootId.empty())) {
-        st.standalone = false;
-        st.rootId.clear();
-      }
-      bool anyAlone = false;
-      for (int r : T.roots)
-        if (T.kids[static_cast<std::size_t>(r)].empty() && T.kind[static_cast<std::size_t>(r)] != Kind::Ms) anyAlone = true;
-      if (anyAlone && ImGui::Selectable("親のない単独の課題", st.standalone)) {
-        st.standalone = true;
-        st.rootId.clear();
-      }
-      for (int r : T.roots) {
-        const std::size_t ri = static_cast<std::size_t>(r);
-        if (T.kids[ri].empty()) continue;
-        ImGui::PushID(r);
-        if (ImGui::Selectable((T.did[ri] + "  " + T.name[ri]).c_str(), !st.standalone && st.rootId == T.ids[ri])) {
-          st.standalone = false;
-          st.rootId = T.ids[ri];
-        }
-        ImGui::PopID();
-      }
-      ImGui::EndCombo();
-    }
-  }
+  drawFilterCombos(f, s, T, {st.who, st.name, st.standalone, st.rootId, st.whoA, st.whoB, st.rootA, st.rootB}, "##trendWho", "##trendRoot");
   ImGui::Dummy(ImVec2(0, u.m.s(6)));
 
-  TrendFilter flt;
-  flt.who = st.who;
-  flt.name = st.name;
-  if (st.standalone) flt.root = TrendFilter::kStandalone;
-  else if (!st.rootId.empty()) flt.root = T.find(st.rootId);
+  const TrendFilter flt = filterOf(T, {st.who, st.name, st.standalone, st.rootId, st.whoA, st.whoB, st.rootA, st.rootB});
   const Result<TrendReport> res = computeTrends(T, I, s.meta(), R, s.calendar(), base, flt);
   if (!res.ok()) {
     ImGui::TextUnformatted("推移を集計できません。");
@@ -1550,6 +1569,287 @@ void drawTrends(Frame& f, Session& s, const Tree& T, const std::vector<ScheduleR
   drawCfd(f, s, base, W);
   drawMta(f, mta, T, W);
 }
+
+// ---------------------------------------------------------------- EVM（出来高管理。Issue #65）
+
+// 凡例（線の見本: PV は細い実線、EV は太い実線、予測と基準日は点線）
+void evmLegend(Frame& f) {
+  UiState& u = f.u;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const auto sample = [&](const char* label, ImU32 col, bool dashed, float th) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = u.m.s(24), y = p.y + ImGui::GetTextLineHeight() / 2;
+    if (dashed) dashedLine(dl, ImVec2(p.x, y), ImVec2(p.x + w, y), col, th, u.m.s(4), u.m.s(3));
+    else dl->AddLine(ImVec2(p.x, y), ImVec2(p.x + w, y), col, th);
+    ImGui::Dummy(ImVec2(w, ImGui::GetTextLineHeight()));
+    ImGui::SameLine(0, u.m.s(5));
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(0, u.m.s(16));
+  };
+  sample("PV（計画）", u.t->muted, false, u.m.s(2));
+  sample("EV（出来高）", u.t->accent, false, u.m.s(3));
+  sample("完了の予測（点線）", u.t->accent, true, u.m.s(2));
+  sample("基準日", u.t->ink, true, u.m.s(1));
+  ImGui::NewLine();
+}
+
+// S カーブ: 日付の累積の PV（四角）と EV（丸）、基準日の線、完了予測の点線
+void drawEvmChart(Frame& f, const EvmReport& r, float W) {
+  UiState& u = f.u;
+  UiState::StatsEvm& st = u.statsEvm;
+  if (r.curve.empty() || r.nowIndex < 0) return;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  evmLegend(f);
+  const float H = u.m.s(190), axisH = u.m.s(22), padL = u.m.s(52), padR = u.m.s(14), padT = u.m.s(16);
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  ImGui::Dummy(ImVec2(W, H + axisH));
+  const float x0 = p.x + padL, x1 = p.x + W - padR, yTop = p.y + padT, yBot = p.y + H;
+  const Day d0 = r.curve.front().date;
+  Day d1 = r.curve.back().date;
+  if (d1 <= d0) d1 = d0 + 1;
+  const double top = std::max(r.bac, 1e-9);
+  const auto X = [&](Day d) { return x0 + (x1 - x0) * static_cast<float>(d - d0) / static_cast<float>(d1 - d0); };
+  const auto Y = [&](double v) { return yBot - (yBot - yTop) * static_cast<float>(std::clamp(v / top, 0.0, 1.0)); };
+  st.chartX0 = x0;
+  st.chartX1 = x1;
+
+  // 基準日の帯
+  const Day today = r.curve[static_cast<std::size_t>(r.nowIndex)].date;
+  st.nowX = X(today);
+  dl->AddRectFilled(ImVec2(st.nowX - u.m.s(3), yTop), ImVec2(st.nowX + u.m.s(3), yBot), u.t->selbg);
+  // 軸: 0 と BAC
+  dl->AddLine(ImVec2(x0, yBot), ImVec2(x1, yBot), u.t->line);
+  dashedLine(dl, ImVec2(x0, Y(r.bac)), ImVec2(x1, Y(r.bac)), u.t->line2, u.m.s(1), u.m.s(4), u.m.s(3));
+  const auto rightText = [&](float xr, float y, const std::string& t, ImU32 col) {
+    dl->AddText(ImVec2(xr - ImGui::CalcTextSize(t.c_str()).x, y), col, t.c_str());
+  };
+  rightText(x0 - u.m.s(6), yBot - ImGui::GetTextLineHeight() / 2, "0", u.t->muted);
+  rightText(x0 - u.m.s(6), Y(r.bac) - ImGui::GetTextLineHeight() / 2, num(r.bac), u.t->muted);
+  dl->AddText(ImVec2(x0 + u.m.s(4), Y(r.bac) - ImGui::GetTextLineHeight() - u.m.s(1)), u.t->muted, "BAC");
+  // 日付の見出し（間引く。基準日は必ず）
+  const int every = std::max(1, static_cast<int>(std::ceil(u.m.s(44) / std::max(1.f, (x1 - x0) / static_cast<float>(r.curve.size())))));
+  for (std::size_t k = 0; k < r.curve.size(); ++k) {
+    const bool now = static_cast<int>(k) == r.nowIndex;
+    if (!now && (static_cast<int>(k) % every != 0 || std::abs(X(r.curve[k].date) - st.nowX) < u.m.s(40))) continue;
+    const std::string lb = now ? "基準日 " + fmtShort(r.curve[k].date) : fmtShort(r.curve[k].date);
+    const float tw = ImGui::CalcTextSize(lb.c_str()).x;
+    dl->AddText(ImVec2(std::clamp(X(r.curve[k].date) - tw / 2, p.x, p.x + W - tw), yBot + u.m.s(4)), now ? u.t->ink : u.t->muted, lb.c_str());
+  }
+  dashedLine(dl, ImVec2(st.nowX, yTop), ImVec2(st.nowX, yBot), u.t->ink, u.m.s(1), u.m.s(4), u.m.s(3));
+
+  // PV（細い実線と四角）
+  st.pvPts.clear();
+  st.evPts.clear();
+  for (const EvmPoint& pt : r.curve) st.pvPts.push_back(ImVec2(X(pt.date), Y(pt.pv)));
+  for (std::size_t k = 1; k < st.pvPts.size(); ++k) dl->AddLine(st.pvPts[k - 1], st.pvPts[k], u.t->muted, u.m.s(2));
+  const float sq = u.m.s(3);
+  for (const ImVec2& q : st.pvPts) dl->AddRectFilled(ImVec2(q.x - sq, q.y - sq), ImVec2(q.x + sq, q.y + sq), u.t->muted);
+  // EV（太い実線と丸）
+  for (const EvmPoint& pt : r.curve)
+    if (pt.hasEv) st.evPts.push_back(ImVec2(X(pt.date), Y(pt.ev)));
+  for (std::size_t k = 1; k < st.evPts.size(); ++k) dl->AddLine(st.evPts[k - 1], st.evPts[k], u.t->accent, u.m.s(3));
+  for (const ImVec2& q : st.evPts) dl->AddCircleFilled(q, u.m.s(3.5f), u.t->accent);
+  // 完了予測（点線）
+  st.forecast = false;
+  if (r.forecast.ok && !st.evPts.empty()) {
+    const ImVec2 a = st.evPts.back(), e(X(r.forecast.finish), Y(r.bac));
+    dashedLine(dl, a, e, u.t->accent, u.m.s(2), u.m.s(5), u.m.s(4));
+    const float rr = u.m.s(5);
+    dl->AddQuadFilled(ImVec2(e.x, e.y - rr), ImVec2(e.x + rr, e.y), ImVec2(e.x, e.y + rr), ImVec2(e.x - rr, e.y), u.t->accent);
+    const std::string lb = "完了の見込み " + fmtShort(r.forecast.finishWeek);
+    const float tw = ImGui::CalcTextSize(lb.c_str()).x;
+    const ImVec2 tp(std::min(e.x - tw / 2, x1 - tw), e.y + u.m.s(8));
+    dl->AddRectFilled(ImVec2(tp.x - u.m.s(3), tp.y - u.m.s(1)), ImVec2(tp.x + tw + u.m.s(3), tp.y + ImGui::GetTextLineHeight() + u.m.s(1)), u.t->bg, u.m.s(3));
+    dl->AddText(tp, u.t->accent, lb.c_str());
+    st.forecast = true;
+  }
+  // ホバー: いちばん近い点の値
+  if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(ImVec2(p.x, yTop), ImVec2(p.x + W, yBot + axisH))) {
+    const float mx = ImGui::GetIO().MousePos.x;
+    std::size_t best = 0;
+    for (std::size_t k = 1; k < r.curve.size(); ++k)
+      if (std::abs(X(r.curve[k].date) - mx) < std::abs(X(r.curve[best].date) - mx)) best = k;
+    const EvmPoint& q = r.curve[best];
+    std::string tip = fmtMd(q.date) + " の終わり\nPV（計画） " + evmAmountText(q.pv);
+    if (q.hasEv) tip += "\nEV（出来高） " + evmAmountText(q.ev) + "\nSV " + evmSignedAmountText(q.ev - q.pv);
+    else tip += "\n（先の日付なので EV はまだ分かりません）";
+    ImGui::SetTooltip("%s", tip.c_str());
+  }
+}
+
+// EVM の節: 計画にするベースライン・絞り込み・進行中の扱いの選択 → 指標のタイル → S カーブ → 注記・前提
+void drawEvm(Frame& f, Session& s, const Tree& T, const std::vector<ScheduleRow>& R, const std::vector<Issue>& I, Day base, float W) {
+  UiState& u = f.u;
+  UiState::StatsEvm& st = u.statsEvm;
+  if (st.projectId != f.c.currentId()) {  // プロジェクトを切り替えたら選択を初期化する
+    st = UiState::StatsEvm{};
+    st.projectId = f.c.currentId();
+  }
+  if (!st.rootId.empty()) {  // 消えた・ルートでなくなった課題は外す
+    const int r = T.find(st.rootId);
+    if (r < 0 || T.parentOf[static_cast<std::size_t>(r)] >= 0 || T.kids[static_cast<std::size_t>(r)].empty()) st.rootId.clear();
+  }
+  st.drawn = true;
+  sectionHead(f, "EVM（出来高管理）", "ベースラインの日程と比べた、スケジュール系の指標です（実績の工数がないので、コストの指標は出しません）", W);
+
+  const BaselineSet& set = s.baselines();
+  if (set.list.empty()) {
+    st.guide = true;
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+    ImGui::PushStyleColor(ImGuiCol_Text, u.t->tight);
+    ImGui::TextUnformatted(evmReasonText(EvmReport{}).c_str());
+    ImGui::PopStyleColor();
+    ImGui::TextDisabled("右上の「…」メニューの「ベースラインを保存…」からも保存できます。");
+    ImGui::PopTextWrapPos();
+    ImGui::BeginDisabled(f.c.readOnly());
+    if (ImGui::Button("ベースラインを保存…")) openDialog(f, Dlg::BaselineSave);
+    ImGui::EndDisabled();
+    st.saveA = ImGui::GetItemRectMin();
+    st.saveB = ImGui::GetItemRectMax();
+    return;
+  }
+
+  // ---- 選択: 計画にするベースライン・進行中の扱い・SPI のしきい値 ----
+  const Baseline* bl = evmPickBaseline(set, st.baselineId);
+  {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("計画");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(u.m.s(240));
+    const bool open = ImGui::BeginCombo("##evmBase", bl ? bl->name.c_str() : "");
+    st.baseA = ImGui::GetItemRectMin();
+    st.baseB = ImGui::GetItemRectMax();
+    if (open) {
+      for (const Baseline& b : set.list) {
+        ImGui::PushID(b.id.c_str());
+        const std::string lb = b.name + (b.id == set.shown ? "（表示中）" : "");
+        if (ImGui::Selectable(lb.c_str(), bl && b.id == bl->id)) {
+          st.baselineId = b.id;
+          bl = &b;
+        }
+        ImGui::PopID();
+      }
+      ImGui::EndCombo();
+    }
+    ImGui::SameLine(0, u.m.s(16));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("進行中の扱い");
+    ImGui::SameLine();
+    EvmSettings es = s.evmSettings();
+    ImGui::BeginDisabled(f.c.readOnly());
+    ImGui::SetNextItemWidth(u.m.s(210));
+    const bool pOpen = ImGui::BeginCombo("##evmProg", es.progress == EvmProgress::FiftyFifty ? "50/50（着手で 50%）" : "0/100（完了で 100%）");
+    st.progA = ImGui::GetItemRectMin();
+    st.progB = ImGui::GetItemRectMax();
+    if (pOpen) {
+      if (ImGui::Selectable("0/100（完了で 100%）", es.progress == EvmProgress::ZeroHundred)) {
+        es.progress = EvmProgress::ZeroHundred;
+        f.c.setEvmSettings(es);
+      }
+      if (ImGui::Selectable("50/50（着手で 50%）", es.progress == EvmProgress::FiftyFifty)) {
+        es.progress = EvmProgress::FiftyFifty;
+        f.c.setEvmSettings(es);
+      }
+      ImGui::EndCombo();
+    }
+    ImGui::SameLine(0, u.m.s(16));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("SPI の警告");
+    ImGui::SameLine();
+    float thr = static_cast<float>(es.spiWarn);
+    ImGui::SetNextItemWidth(u.m.s(90));
+    // 毎フレーム設定から読み直すので、ドラッグ中の値を捨てないよう、変わるたびに設定へ入れる（保存は遅らせて 1 回にまとまる）
+    if (ImGui::DragFloat("##evmSpi", &thr, 0.01f, static_cast<float>(kEvmSpiWarnMin), static_cast<float>(kEvmSpiWarnMax), "%.2f 未満",
+                         ImGuiSliderFlags_AlwaysClamp)) {
+      es.spiWarn = static_cast<double>(thr);
+      f.c.setEvmSettings(es);
+    }
+    st.spiA = ImGui::GetItemRectMin();
+    st.spiB = ImGui::GetItemRectMax();
+    ImGui::EndDisabled();
+  }
+  drawFilterCombos(f, s, T, {st.who, st.name, st.standalone, st.rootId, st.whoA, st.whoB, st.rootA, st.rootB}, "##evmWho", "##evmRoot");
+  ImGui::Dummy(ImVec2(0, u.m.s(6)));
+
+  const TrendFilter flt = filterOf(T, {st.who, st.name, st.standalone, st.rootId, st.whoA, st.whoB, st.rootA, st.rootB});
+  const Result<EvmReport> res = computeEvm(T, I, R, s.calendar(), base, bl, s.evmSettings(), flt);
+  if (!res.ok()) {
+    ImGui::TextUnformatted("EVM を集計できません。");
+    return;
+  }
+  const EvmReport& r = res.value();
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+  const auto notes = [&] {
+    const std::vector<std::string> ns = evmNotes(r);
+    st.notes = static_cast<int>(ns.size());
+    for (const std::string& n : ns) ImGui::TextDisabled("・%s", n.c_str());
+  };
+  if (!r.ok()) {
+    ImGui::PushStyleColor(ImGuiCol_Text, u.t->tight);
+    ImGui::TextUnformatted(evmReasonText(r).c_str());
+    ImGui::PopStyleColor();
+    notes();
+    ImGui::PopTextWrapPos();
+    return;
+  }
+  ImGui::PopTextWrapPos();
+  st.metrics = true;
+  st.points = static_cast<int>(r.curve.size());
+  st.nowIndex = r.nowIndex;
+
+  // ---- タイル ----
+  {
+    const int nt = 6;
+    const float gap = u.m.s(8);
+    const float tw = (W - gap * (nt - 1)) / nt;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const std::string mark = r.warn ? "! " : "";
+    const ImU32 bad = r.warn ? u.t->late : u.t->ink;
+    struct T6 {
+      const char* l;
+      std::string v;
+      ImU32 col;
+    } tl[] = {{"BAC（総計画量）", evmAmountText(r.bac), u.t->ink},
+              {"PV（計画価値）", evmAmountText(r.pv), u.t->ink},
+              {"EV（出来高）", evmAmountText(r.ev), u.t->ink},
+              {"SV（EV − PV）", (r.warn && r.sv < 0 ? mark : std::string()) + evmSignedAmountText(r.sv), bad},
+              {"SPI（EV ÷ PV）", mark + evmSpiText(r), bad},
+              {"ES の遅れ（営業日）", (r.warn && r.esDelta > 0 ? mark : std::string()) + evmEsDeltaText(r), bad}};
+    for (int i = 0; i < nt; ++i) {
+      ImGui::SetCursorScreenPos(ImVec2(p.x + static_cast<float>(i) * (tw + gap), p.y));
+      tile(f, tl[i].l, tl[i].v, tl[i].col, tw);
+    }
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + u.m.s(64) + u.m.s(6)));
+    st.tiles = nt;
+  }
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+  ImGui::TextUnformatted((evmEsSentence(r) + "（ES の遅れは + が遅れ、- が進み）　" + evmAmountSourceText(r)).c_str());
+  ImGui::PopTextWrapPos();
+  ImGui::Dummy(ImVec2(0, u.m.s(4)));
+
+  // ---- S カーブ ----
+  drawEvmChart(f, r, W);
+  ImGui::Dummy(ImVec2(0, u.m.s(4)));
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+  const std::string ft = evmForecastText(r);
+  const bool bad = !r.forecast.ok && !ft.empty() && ft[0] == '!';
+  ImGui::PushStyleColor(ImGuiCol_Text, bad ? u.t->tight : u.t->ink);
+  ImGui::TextUnformatted(ft.c_str());
+  ImGui::PopStyleColor();
+  notes();
+  ImGui::PopTextWrapPos();
+
+  // ---- 前提（折りたたみ）----
+  st.assumpOpen = ImGui::CollapsingHeader("計算の前提");
+  st.assumpA = ImGui::GetItemRectMin();
+  st.assumpB = ImGui::GetItemRectMax();
+  if (st.assumpOpen) {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+    for (const std::string& a : evmAssumptions(r)) ImGui::TextDisabled("・%s", a.c_str());
+    ImGui::PopTextWrapPos();
+  }
+}
+
 }  // namespace
 
 void drawStatsView(Frame& f, ImVec2 size) {
@@ -1559,6 +1859,14 @@ void drawStatsView(Frame& f, ImVec2 size) {
   u.statsTrend.weekCols.clear();
   u.statsTrend.agingRows.clear();
   u.statsPlan = UiState::StatsPlan{};
+  {  // EVM: 選択は残し、前のフレームの描画の結果だけ消す
+    UiState::StatsEvm& e = u.statsEvm;
+    e.drawn = e.guide = e.metrics = e.forecast = e.assumpOpen = false;
+    e.tiles = e.points = e.notes = 0;
+    e.nowIndex = -1;
+    e.pvPts.clear();
+    e.evPts.clear();
+  }
   u.statsCfd = UiState::StatsCfd{};  // 描かないフレームでは前の結果を残さない
   u.statsMta.resetDraw();
   Session* s = c.session();
@@ -1671,6 +1979,9 @@ void drawStatsView(Frame& f, ImVec2 size) {
     drawPlanDiff(f, *bc, T, I, W);
     u.statsPlan.drawn = true;
   }
+
+  // ---- EVM（出来高管理。ベースラインの日程と比べる）----
+  drawEvm(f, *s, T, R, I, base, W);
 
   // ---- 週ごとの完了 ----
   sectionHead(f, "週ごとの完了", "過去は完了日（Resolved）、先は最早の完了日", W);
