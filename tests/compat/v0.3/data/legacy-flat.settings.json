@@ -1,0 +1,33 @@
+{
+ "app": "regroadmap",
+ "version": 3,
+ "id": "pcompat03a1",
+ "name": "旧形式の見本（0.3 の平置き）",
+ "key": "PTL",
+ "base": "2026-10-19",
+ "hol": "2026-11-03\n2026-11-23\n2026-12-29\n2026-12-30\n2026-12-31",
+ "scn": "標準",
+ "scenarios": [
+  "短縮案"
+ ],
+ "res": {
+  "on": true,
+  "cap": 2
+ },
+ "ui": {
+  "collapsed": {},
+  "hide": {},
+  "zoom": "week",
+  "level": 0,
+  "view": "gantt",
+  "lane": "none",
+  "colorBy": "root",
+  "cols": {
+   "asg": true,
+   "status": true,
+   "dur": true,
+   "float": true
+  },
+  "nameW": 300
+ }
+}

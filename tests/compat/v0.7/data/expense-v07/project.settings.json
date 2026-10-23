@@ -1,0 +1,96 @@
+{
+ "app": "regroadmap",
+ "version": 3,
+ "id": "pcompat07c3",
+ "name": "経費精算の見直し（0.7 の見本）",
+ "key": "TRM",
+ "base": "2026-10-19",
+ "hol": "2026-11-03\n2026-11-23\n2026-12-29\n2026-12-30\n2026-12-31",
+ "scn": "標準",
+ "scenarios": [
+  "短縮案"
+ ],
+ "res": {
+  "on": false,
+  "cap": 1
+ },
+ "ui": {
+  "collapsed": {},
+  "hide": {},
+  "zoom": "week",
+  "level": 0,
+  "view": "gantt",
+  "lane": "none",
+  "colorBy": "root",
+  "cols": {
+   "asg": true,
+   "status": true,
+   "dur": true,
+   "float": true,
+   "pred": true
+  },
+  "nameW": 300,
+  "colW": {
+   "asg": 84
+  },
+  "attachThumb": 96,
+  "dep": {
+   "trace": false,
+   "crit": false
+  }
+ },
+ "attachments": {
+  "3": [
+   {
+    "name": "申請フロー図.png",
+    "size": 20480,
+    "at": "2026-10-14T16:20",
+    "who": "田中",
+    "sha256": "dc77f8d813d2a8e3153bcce06eb3a95906ed4c30efc4b1dae0f157a54d654e0f"
+   },
+   {
+    "name": "ヒアリングメモ.txt",
+    "size": 1530,
+    "at": "2026-10-09T11:00",
+    "who": "佐藤"
+   }
+  ]
+ },
+ "weekly": {
+  "notes": "申請フローの調査が終わった。",
+  "snaps": [
+   {
+    "base": "2026-10-12",
+    "progress": 0.25,
+    "tasks": 4,
+    "done": 0,
+    "late": 0,
+    "tight": 0,
+    "finish": "2026-12-11",
+    "truncated": false,
+    "items": [
+     "3\tp\t2026-10-14\t0",
+     "4\tp\t2026-10-16\t0",
+     "6\tt\t2026-11-13\t0",
+     "7\tt\t2026-12-11\t0"
+    ]
+   },
+   {
+    "base": "2026-10-19",
+    "progress": 0.5,
+    "tasks": 4,
+    "done": 2,
+    "late": 0,
+    "tight": 1,
+    "finish": "2026-12-11",
+    "truncated": false,
+    "items": [
+     "3\td\t2026-10-14\t0",
+     "4\td\t2026-10-16\t0",
+     "6\tp\t2026-11-13\t0",
+     "7\tt\t2026-12-11\t0"
+    ]
+   }
+  ]
+ }
+}

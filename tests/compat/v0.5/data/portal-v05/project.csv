@@ -1,0 +1,9 @@
+Issue Id,Issue key,Issue Type,Summary,Parent,Epic Name,Epic Link,Priority,Status,Assignee,Start date,Due date,Resolved,Original estimate,Labels,Description,Outward issue link (Blocks),Deadline,Remaining (weeks),Duration (weeks),Duration (weeks) @短縮案
+1,PTL-1,Epic,社内ポータルの改修,,社内ポータルの改修,,High,,,,,,,見本,架空のサンプルです。,,,,,
+2,PTL-2,Story,要件の整理,1,,社内ポータルの改修,High,,,,,,,見本,,,,,,
+3,PTL-3,Task,画面の設計,2,,,High,Done,田中,2026-10-05,,2026-10-09,,見本,完了済みの作業。,6,,,1,
+4,PTL-4,Task,認証方式の見直し,2,,,Medium,,佐藤,,,,,見本,,,2026-11-27,,2,1
+5,PTL-5,Story,実装,1,,社内ポータルの改修,High,,,,,,,見本,,,,,,
+6,PTL-6,Task,画面の実装,5,,,High,In Progress,鈴木,2026-10-12,,,,見本,進行中の作業。,7,,0.6,2,
+7,PTL-7,Task,結合テスト,5,,,Medium,,田中,,,,,見本,,8,,,1,
+8,PTL-8,Milestone,公開判定,1,,社内ポータルの改修,High,,,,,,,見本,期間 0 週のマイルストーン。,,2026-12-18,,0,

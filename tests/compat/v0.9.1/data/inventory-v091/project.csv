@@ -1,0 +1,6 @@
+Issue Id,Issue key,Issue Type,Summary,Parent,Epic Name,Epic Link,Priority,Status,Assignee,Start date,Due date,Resolved,Original estimate,Labels,Description,Outward issue link (Blocks),Deadline,Remaining (weeks),Duration (weeks),Duration (weeks) @短縮案,Created,Updated
+1,INV-1,Epic,備品管理の見直し,,備品管理の見直し,,High,,,,,,,見本,架空のサンプルです。,,,,,,2026-10-05,2026-10-22
+2,INV-2,Story,棚卸しの準備,1,,備品管理の見直し,High,,,,,,,見本,,,,,,,2026-10-05,2026-10-20
+3,INV-3,Task,台帳の整理,2,,,High,Done,田中,2026-10-05,,2026-10-09,,見本,,4,,,1,,2026-10-05,2026-10-09
+4,INV-4,Task,棚卸しの実施,2,,,Medium,In Progress,佐藤,2026-10-12,,,,見本,,5,,0.5,2,,2026-10-05,2026-10-22
+5,INV-5,Milestone,台帳の確定,1,,備品管理の見直し,High,,,,,,,見本,,,2026-12-18,,0,,2026-10-05,2026-10-05

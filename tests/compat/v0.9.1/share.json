@@ -1,0 +1,77 @@
+{
+ "app": "regroadmap",
+ "version": 3,
+ "exported": "2026-10-19T09:00:00.000Z",
+ "projects": [
+  {
+   "v": 3,
+   "id": "pcompat091e5",
+   "name": "備品管理の見直し（0.9.1 の見本）",
+   "key": "INV",
+   "base": "2026-10-19",
+   "hol": "2026-11-03\n2026-11-23\n2026-12-29\n2026-12-30\n2026-12-31",
+   "scn": "標準",
+   "scenarios": [
+    "短縮案"
+   ],
+   "ui": {
+    "collapsed": {},
+    "hide": {},
+    "zoom": "week",
+    "level": 0,
+    "view": "gantt",
+    "lane": "none",
+    "colorBy": "root",
+    "cols": {
+     "asg": true,
+     "status": true,
+     "dur": true,
+     "float": true,
+     "pred": true,
+     "plan": false
+    },
+    "nameW": 300,
+    "colW": {
+     "asg": 84
+    },
+    "attachThumb": 96,
+    "dep": {
+     "trace": false,
+     "crit": false
+    }
+   },
+   "res": {
+    "on": false,
+    "cap": 1
+   },
+   "csv": "Issue Id,Issue key,Issue Type,Summary,Parent,Epic Name,Epic Link,Priority,Status,Assignee,Start date,Due date,Resolved,Original estimate,Labels,Description,Outward issue link (Blocks),Deadline,Remaining (weeks),Duration (weeks),Duration (weeks) @短縮案,Created,Updated\r\n1,INV-1,Epic,備品管理の見直し,,備品管理の見直し,,High,,,,,,,見本,架空のサンプルです。,,,,,,2026-10-05,2026-10-22\r\n2,INV-2,Story,棚卸しの準備,1,,備品管理の見直し,High,,,,,,,見本,,,,,,,2026-10-05,2026-10-20\r\n3,INV-3,Task,台帳の整理,2,,,High,Done,田中,2026-10-05,,2026-10-09,,見本,,4,,,1,,2026-10-05,2026-10-09\r\n4,INV-4,Task,棚卸しの実施,2,,,Medium,In Progress,佐藤,2026-10-12,,,,見本,,5,,0.5,2,,2026-10-05,2026-10-22\r\n5,INV-5,Milestone,台帳の確定,1,,備品管理の見直し,High,,,,,,,見本,,,2026-12-18,,0,,2026-10-05,2026-10-05\r\n"
+  }
+ ],
+ "templates": [
+  {
+   "id": "u:k3x9",
+   "name": "作成とレビュー",
+   "desc": "架空のテンプレート",
+   "items": [
+    {
+     "n": "作成",
+     "w": 1,
+     "lv": 0,
+     "after": [],
+     "lab": []
+    },
+    {
+     "n": "レビュー",
+     "w": 1,
+     "lv": 0,
+     "after": [
+      0
+     ],
+     "lab": [
+      "期間仮置き"
+     ]
+    }
+   ]
+  }
+ ]
+}

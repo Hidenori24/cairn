@@ -1,0 +1,9 @@
+Issue Id,Issue key,Issue Type,Summary,Parent,Epic Name,Epic Link,Priority,Status,Assignee,Start date,Due date,Resolved,Original estimate,Labels,Description,Outward issue link (Blocks),Comment,Deadline,Remaining (weeks),Duration (weeks),Duration (weeks) @短縮案,Created,Updated,Sprint
+1,TRM-1,Epic,経費精算の見直し,,経費精算の見直し,,High,,,,,,,見本,架空のサンプルです。,,,,,,,05/Oct/26 9:00 AM,19/Oct/26 5:30 PM,
+2,TRM-2,Story,現状の洗い出し,1,,経費精算の見直し,High,,,,,,,見本,,,,,,,,05/Oct/26 9:10 AM,12/Oct/26 3:00 PM,
+3,TRM-3,Task,申請フローの調査,2,,,High,Done,田中,2026-10-05,,2026-10-14,,見本,完了済み。,5,19/Oct/26 10:00 AM;佐藤;関係者に確認済みです。,,,1,,05/Oct/26 9:20 AM,14/Oct/26 6:00 PM,Sprint 1
+4,TRM-4,Task,承認ルールの整理,2,,,Medium,Done,佐藤,2026-10-07,,2026-10-16,,見本,,5,,,,1,,05/Oct/26 9:30 AM,16/Oct/26 6:00 PM,Sprint 1
+5,TRM-5,Story,新しい申請画面,1,,経費精算の見直し,High,,,,,,,見本,,,,,,,,12/Oct/26 9:00 AM,19/Oct/26 5:30 PM,
+6,TRM-6,Task,画面の試作,5,,,High,In Progress,鈴木,2026-10-19,,,,見本,,7,,,0.5,2,,12/Oct/26 9:05 AM,19/Oct/26 5:00 PM,Sprint 2
+7,TRM-7,Task,利用者テスト,5,,,Medium,,田中,,,,,見本,,8,,2026-12-11,,1,,12/Oct/26 9:10 AM,12/Oct/26 9:10 AM,Sprint 2
+8,TRM-8,Milestone,切り替え判定,1,,経費精算の見直し,High,,,,,,,見本,,,,2026-12-18,,0,,12/Oct/26 9:15 AM,12/Oct/26 9:15 AM,

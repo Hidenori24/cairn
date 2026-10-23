@@ -1,5 +1,7 @@
 # 正解データ・サンプルは改行コード（CRLF）を含めてバイト単位で照合するため、git に変換させない
 golden/** -text
+# 版ごとの互換の見本（tests/compat/）も、CSV の CRLF と設定 JSON をバイト単位で照合する
+tests/compat/** -text
 app/resources/*.csv -text
 core/samples/*.csv -text
 *.cpp text eol=lf
