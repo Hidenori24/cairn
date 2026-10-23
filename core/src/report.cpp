@@ -317,6 +317,9 @@ td.nm{overflow-wrap:anywhere}
 footer{margin-top:36px;padding-top:8px;border-top:1px solid var(--line);color:var(--muted);font-size:11px}
 @page{size:A4 portrait;margin:10mm;@bottom-right{content:counter(page) " / " counter(pages);font-size:9px;color:#667085}}
 @page gantt{size:A4 landscape;margin:10mm;@bottom-right{content:counter(page) " / " counter(pages);font-size:9px;color:#667085}}
+@media screen{
+.part.gantt{width:100vw;margin-left:calc(50% - 50vw);padding-left:max(20px,calc((100vw - 1240px)/2 + 20px));padding-right:max(20px,calc((100vw - 1240px)/2 + 20px))}
+}
 @media screen and (max-width:760px){.tiles{grid-template-columns:repeat(2,1fr)}.page{padding:12px 10px}}
 @media print{
 body{font-size:11px;line-height:1.5}
