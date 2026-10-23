@@ -14,11 +14,13 @@ BEGIN
   BEGIN
     BLOCK "041104B0"
     BEGIN
-      VALUE "FileDescription", "Project Roadmap"
+      VALUE "FileDescription", "Cairn"
       VALUE "FileVersion", "0.9.1"
-      VALUE "ProductName", "Project Roadmap"
+      VALUE "InternalName", "Cairn"
+      VALUE "LegalCopyright", "Copyright (c) 2026 Hidenori24"
+      VALUE "ProductName", "Cairn"
       VALUE "ProductVersion", "0.9.1"
-      VALUE "OriginalFilename", "ProjectRoadmap.exe"
+      VALUE "OriginalFilename", "Cairn.exe"
     END
   END
   BLOCK "VarFileInfo"

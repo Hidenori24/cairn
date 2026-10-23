@@ -463,7 +463,7 @@ std::string weeklyHtml(const WeeklyReport& r, const IClock* clock) {
     if (s.evm && r.evm.available) h += evmHtml(r);
     if (s.notes) h += notesHtml(r);
   }
-  h += "</main>\n<footer>このアプリで出力（プロジェクト管理）</footer>\n</div>\n</body>\n</html>\n";
+  h += "</main>\n<footer>このアプリで出力（Cairn）</footer>\n</div>\n</body>\n</html>\n";
   return h;
 }
 

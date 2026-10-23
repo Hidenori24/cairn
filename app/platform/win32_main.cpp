@@ -448,10 +448,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                  nullptr, nullptr, L"ProjectRoadmap", nullptr};
   RegisterClassExW(&wc);
   const WindowPlacement& wp = ctl.prefs().window;
-  HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"プロジェクト管理", WS_OVERLAPPEDWINDOW, wp.x, wp.y, wp.w, wp.h, nullptr,
+  HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"Cairn", WS_OVERLAPPEDWINDOW, wp.x, wp.y, wp.w, wp.h, nullptr,
                               nullptr, hInst, nullptr);
   if (!hwnd || !createDevice(hwnd)) {
-    MessageBoxW(nullptr, L"DirectX 11 を初期化できませんでした。", L"プロジェクト管理", MB_OK | MB_ICONERROR);
+    MessageBoxW(nullptr, L"DirectX 11 を初期化できませんでした。", L"Cairn", MB_OK | MB_ICONERROR);
     cleanupDevice();
     return 1;
   }

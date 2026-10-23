@@ -16,7 +16,7 @@ namespace roadmap::win {
 std::wstring widen(const std::string& s);
 std::string narrow(const std::wstring& s);
 std::string exeDir();
-std::string localAppDataDir();  // %LOCALAPPDATA%\ProjectRoadmap
+std::string localAppDataDir();  // %LOCALAPPDATA%\ProjectRoadmap（互換のため改名前の名前のまま。Issue #82）
 std::string envVar(const char* name);
 bool systemDarkMode();
 void setDarkTitleBar(HWND hwnd, bool dark);

@@ -3,7 +3,7 @@
 
 namespace roadmap::ui::S {
 
-inline constexpr const char* kAppTitle = "プロジェクト管理";
+inline constexpr const char* kAppTitle = "Cairn";
 inline constexpr const char* kViewGantt = "ガント";
 inline constexpr const char* kViewBoard = "ボード";
 inline constexpr const char* kViewList = "リスト";

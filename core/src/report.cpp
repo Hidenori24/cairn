@@ -397,7 +397,7 @@ std::string exportHtml(const ExportInput& in, const ExportOptions& opt) {
     if (opt.stats) part(report::renderStats(cx));
     if (opt.list) part(report::renderList(cx));
   }
-  h += "</main>\n<footer>このアプリで出力（プロジェクト管理）</footer>\n</div>\n</body>\n</html>\n";
+  h += "</main>\n<footer>このアプリで出力（Cairn）</footer>\n</div>\n</body>\n</html>\n";
   return h;
 }
 
