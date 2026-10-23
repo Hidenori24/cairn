@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <string>
@@ -260,12 +261,12 @@ TEST_CASE("evm: 計画量は見積りがあれば見積り、なければ期間�
   CHECK(rq.items == 1);
   CHECK(rq.noAmount == 1);
   CHECK(rq.bac == Approx(2.0));
-  // 0 以下・非数・極端な値も数えない
+  // 0 以下・非数・極端な値も数えない（日程の計算にこの値を通すと範囲外の変換になるので、計算のあとで書き換える）
   Spec e{"5"}, f{"6"}, g{"7"};
   e.dur = 0.0;
-  f.dur = std::numeric_limits<double>::quiet_NaN();
-  g.dur = 1e300;
   Proj w = Proj::make({a, e, f, g}, "2026-10-28");
+  w.issues[2].durW = std::numeric_limits<double>::quiet_NaN();
+  w.issues[3].durW = 1e300;
   w.bl.items = {bi("1", 't', "2026-10-19", "2026-10-23"), bi("5", 't', "2026-10-19", "2026-10-23"), bi("6", 't', "2026-10-19", "2026-10-23"),
                 bi("7", 't', "2026-10-19", "2026-10-23")};
   // dur = 0 は日程計算ではマイルストーン扱い（数えない）。NaN と 1e300 は計画量として数えない

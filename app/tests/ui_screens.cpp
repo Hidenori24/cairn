@@ -1121,7 +1121,7 @@ int main(int argc, char** argv) {
     u.t = &ui::lightTokens();
     ui::applyStyle(*u.t, u.m);
     evmShots("65_evm_guide_light");
-    c.saveBaseline("9/14 の計画");
+    (void)c.saveBaseline("9/14 の計画");
     goTo(2026, 9, 18);
     c.setStatusFor({"2"}, "Done");
     goTo(2026, 9, 25);
@@ -1133,11 +1133,8 @@ int main(int argc, char** argv) {
     evmShots("66_evm_light");
     // 前提を開く
     {
-      const ImVec2 a = u.statsEvm.assumpA, b = u.statsEvm.assumpB;
       scrollTo([&] { return u.statsEvm.assumpA.y > 0 && u.statsEvm.assumpA.y < 880 && u.statsEvm.assumpB.y < 880; });
       const ImVec2 a2 = u.statsEvm.assumpA, b2 = u.statsEvm.assumpB;
-      (void)a;
-      (void)b;
       ImGui::GetIO().AddMousePosEvent((a2.x + b2.x) / 2, (a2.y + b2.y) / 2);
       frames(2);
       ImGui::GetIO().AddMouseButtonEvent(0, true);
