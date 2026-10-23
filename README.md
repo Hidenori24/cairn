@@ -139,7 +139,7 @@ Cairn/
 - 絞り込み: 上のバーの担当・状況・優先度と「遅れ」「余裕小」のチップは、一致しない課題を**薄く**表示します（行は減らない）。検索語と、表の列名の右の漏斗（列の絞り込み）は、一致しない課題を**隠し**ます
 - 拡大縮小: `Ctrl+ホイール`（タッチパッドのピンチも）・`Ctrl+「+」「-」`・`Ctrl+0`（100%）で画面全体。ガントの時間軸の上の `Ctrl+ホイール` は時間軸だけを広げ縮めます（マウスの位置の日付は動きません）
 - 削除: 行（ボードはカード）にマウスを載せると出るごみ箱、`Delete` キー、右クリックのメニュー。通知の「元に戻す」で戻せます
-- 主なキー: `Ctrl+K` コマンドパレット、`1`〜`4` ビュー切替、`N` 追加、`Tab`/`Shift+Tab` 階層、`Enter`/`F2` 名前の編集、`?` ショートカット一覧
+- 主なキー: `Ctrl+K` コマンドパレット、`1`〜`6` ビュー切替、`N` 追加、`Tab`/`Shift+Tab` 階層、`Enter`/`F2` 名前の編集、`?` ショートカット一覧
 
 ### rmcli
 
@@ -149,9 +149,17 @@ rmcli import-export input.csv --format jira -o jira.csv                         
 rmcli check-jira input.csv                                                              # JIRA取り込みの互換チェック
 rmcli gen --count 5000 -o big.csv                                                       # テスト用の大きなCSV
 rmcli validate input.csv                                                                # 読めるかと警告の一覧
+rmcli report input.csv --base 2026-10-19 --name "開発計画" -o report.html                  # ガント・統計・リストのHTML報告
+rmcli report input.csv --sections gantt -o gantt.html                                    # ガントだけを出力
+rmcli weekly input.csv --base 2026-10-19 --period last -o weekly.md                       # 先週の週報（Markdown）
+rmcli weekly input.csv --format html -o weekly.html                                     # 今週の週報（HTML）
 ```
 
 終了コードは 成功 0 / 入力の誤り 2 / 内部エラー 1。各コマンドに `--help` があります。
+
+`report` と `weekly` は GUI と同じ報告の生成処理を使います。`-o` を省略するか `-o -` を指定すると標準出力へ、読み込み時の注意は標準エラーへ出します。入力 CSV は変更しません。基準日の既定は実行日のため、定期実行で対象日を固定するときは `--base` を指定してください。
+
+入力は CSV です。GUI のプロジェクト設定・休業日・履歴・ベースライン・所感は自動では読み込みません。休業日は `--holidays`、シナリオは `--scenario`、同時作業の制限は `--level` で指定できます。週報の任意の期間は `--from YYYY-MM-DD --to YYYY-MM-DD`（最大366日。`--period` との併用不可）で指定します。
 
 ## テストと確認の状況
 

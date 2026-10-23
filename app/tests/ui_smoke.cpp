@@ -410,11 +410,89 @@ void readOnlyScenario(bool stale) {
     check(r.u.dlg == ui::Dlg::None, "引き継いだらダイアログが閉じる");
   }
 }
+// 検索を Esc で解除しても選択は保ち、パレットの検索を変えたら先頭の候補から選ぶ。
+void keyboardUxScenario() {
+  Harness h;
+  h.c.createProject(app::SampleKind::Hierarchy, "操作の確認", "DEV");
+  h.c.setView(app::View::List);
+  h.frame(3);
+  const std::string selected = h.c.session()->tree()->ids.front();
+  h.c.select(selected);
+  h.c.filter().q = "DEV";
+  h.u.focusSearch = true;
+  h.frame(3);
+  check(ImGui::GetIO().WantTextInput, "検索欄にフォーカスする");
+  ImGui::GetIO().AddInputCharactersUTF8("検索語");
+  h.frame();
+  h.key(ImGuiKey_Escape);
+  check(h.c.filter().q.empty(), "検索中の Esc で、元の検索語も含めて解除する");
+  check(h.c.selection().size() == 1 && h.c.selection().front() == selected, "検索解除の Esc では課題の選択を保つ");
+
+  // 検索の × は入力欄と重ならず、密度・倍率・テーマによらず押せる。
+  ImGui::GetIO().DisplaySize = ImVec2(3200, 1800);
+  for (float scale : {1.f, 1.5f, 2.f}) {
+    for (bool compact : {false, true}) {
+      for (bool dark : {false, true}) {
+        h.u.m.scale = scale;
+        h.u.m.compact = compact;
+        h.u.t = dark ? &ui::darkTokens() : &ui::lightTokens();
+        ui::applyStyle(*h.u.t, h.u.m);
+        h.c.filter().q = "検索語";
+        h.u.focusSearch = true;
+        h.frame(3);
+        ImGuiWindow* root = ImGui::FindWindowByName("##root");
+        check(root && ImGui::GetActiveID() == root->GetID("##q"), "検索欄がアクティブ");
+        if (!root) continue;
+        const ImRect box = root->NavRectRel[ImGuiNavLayer_Main];
+        h.click(root->Pos.x + box.Max.x + h.u.m.s(14), root->Pos.y + box.Min.y + h.u.m.s(16));
+        check(h.c.filter().q.empty(), "密度・倍率・テーマによらず、検索欄の × で解除できる");
+      }
+    }
+  }
+  h.u.m = ui::Metrics{};
+  h.u.t = &ui::lightTokens();
+  ui::applyStyle(*h.u.t, h.u.m);
+  ImGui::GetIO().DisplaySize = ImVec2(1440, 900);
+  h.frame(3);
+
+  h.key(ImGuiKey_K, true);
+  h.frame(3);
+  h.key(ImGuiKey_DownArrow);
+  h.key(ImGuiKey_DownArrow);
+  check(h.u.paletteSel == 2, "パレットの候補を下へ移動する");
+  ImGui::GetIO().AddInputCharactersUTF8("表示");
+  h.frame(2);
+  check(h.u.paletteSel == 0, "パレットの検索語を変えたら先頭の候補を選ぶ");
+  h.key(ImGuiKey_Escape);
+
+  h.c.clearFilter();
+  h.u.openColFilter = "name";
+  h.frame(3);
+  check(ImGui::GetCurrentContext()->OpenPopupStack.Size > 0, "件名の列フィルターを開く");
+  ImGui::GetIO().AddInputCharactersUTF8("DEV");
+  h.frame();
+  h.key(ImGuiKey_KeypadEnter);
+  check(ImGui::GetCurrentContext()->OpenPopupStack.Size == 0, "テンキーの Enter でも列フィルターを確定して閉じる");
+  check(h.c.columnFilter().name == "DEV", "列フィルターの確定後も検索語を保つ");
+  h.c.clearFilter();
+  const Tree& T = *h.c.session()->tree();
+  for (int id : T.dfs) {
+    if (T.kids[id].empty()) continue;
+    const std::string parent = T.ids[id];
+    h.c.select(parent);
+    h.key(ImGuiKey_LeftArrow);
+    check(h.c.session()->isCollapsed(parent), "左矢印で親課題を折りたたむ");
+    h.key(ImGuiKey_RightArrow);
+    check(!h.c.session()->isCollapsed(parent), "右矢印で親課題を展開する");
+    break;
+  }
+}
 }  // namespace
 
 int main() {
   readOnlyScenario(false);
   readOnlyScenario(true);
+  keyboardUxScenario();
   Harness h;
   h.frame(3);  // はじめに
   check(h.c.firstRun(), "初回はプロジェクトなし");

@@ -624,7 +624,8 @@ void drawTopBar(Frame& f) {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(u.m.s(26), u.m.s(5)));
     ImGui::InputTextWithHint("##q", S::kSearchHint, &c.filter().q);
     ImGui::PopStyleVar();
-    if (ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    // InputText は Esc を受けたフレームで非アクティブになる。そのフレームも解除する。
+    if ((ImGui::IsItemActive() || ImGui::IsItemDeactivated()) && !u.imeComposing && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
       c.filter().q.clear();
       ImGui::SetWindowFocus(nullptr);
     }

@@ -134,7 +134,7 @@ void drawColumnFilterPopup(Frame& f, const std::string& col, const char* title, 
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     ImGui::SetNextItemWidth(u.m.s(240));
     ImGui::InputTextWithHint("##nf", "含む文字", &cf.name);
-    if (ImGui::IsItemDeactivated() && ImGui::IsKeyPressed(ImGuiKey_Enter)) ImGui::CloseCurrentPopup();
+    if (ImGui::IsItemDeactivated() && enterPressed(u)) ImGui::CloseCurrentPopup();
   } else if (s && s->tree()) {
     ImGui::TextDisabled("チェックを外した値は隠します");
     const auto values = filterValues(*s, cf, col);
