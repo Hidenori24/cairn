@@ -54,7 +54,8 @@ struct WeeklySnapshot {
 struct WeeklyMemo {
   std::string notes;                  // 所感・課題・お願い
   std::vector<WeeklySnapshot> snaps;  // 基準日の古い順。同じ週のものは 1 つ
-  bool empty() const { return notes.empty() && snaps.empty(); }
+  nlohmann::ordered_json extra = nlohmann::ordered_json::object();  // weekly 直下の未知のキー
+  bool empty() const { return notes.empty() && snaps.empty() && extra.empty(); }
   bool operator==(const WeeklyMemo&) const = default;
 };
 

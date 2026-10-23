@@ -328,31 +328,9 @@ TEST_CASE("compat: 未知のキーが消えない（設定のトップレベル�
   CHECK(n >= 5 * 3);  // 見本が減ってもテストが空にならないこと
 }
 
-// ↓ 今の版は、次の場所の未知のキーを書き戻さない（読んだ値だけを書き直す）。1.0.0 の約束（docs/COMPAT.md の「既知の穴」）の
-// 前に直す。直したら should_fail を外して、上のテストの kinds に足す。
-TEST_CASE("compat: 未知のキー: 資源制限 res の中" * doctest::should_fail()) {
+TEST_CASE("compat: 設定の入れ子にある未知のキーが消えない") {
   int n = 0;
-  CHECK(allKept({"res"}, n));
-  CHECK(n > 0);
-}
-TEST_CASE("compat: 未知のキー: 添付 attachments の項目の中" * doctest::should_fail()) {
-  int n = 0;
-  CHECK(allKept({"attachments"}, n));
-  CHECK(n > 0);
-}
-TEST_CASE("compat: 未知のキー: 週次レポート weekly の直下" * doctest::should_fail()) {
-  int n = 0;
-  CHECK(allKept({"weekly"}, n));
-  CHECK(n > 0);
-}
-TEST_CASE("compat: 未知のキー: ベースライン baselines（全体・項目）" * doctest::should_fail()) {
-  int n = 0;
-  CHECK(allKept({"baselines", "baselines.item"}, n));
-  CHECK(n > 0);
-}
-TEST_CASE("compat: 未知のキー: 履歴 history（全体・点）" * doctest::should_fail()) {
-  int n = 0;
-  CHECK(allKept({"history", "history.point"}, n));
+  CHECK(allKept({"res", "attachments", "weekly", "baselines", "baselines.item", "history", "history.point"}, n));
   CHECK(n > 0);
 }
 
@@ -406,10 +384,9 @@ TEST_CASE("compat: 見本を「JIRA用」で書き出せる（未知の列を除
     const std::string jira = exportJiraCsv(h->data.issues, h->data.meta, &c.value());
     CHECK(csv::importCsv(jira).ok());  // 書き出したものを、また取り込める
     const auto r = checkJiraCsv(jira);
-    // アプリが足す列（Created / Updated）・JIRA 由来の列（Sprint / Attachment / Relates）は「不明な列」として報告される。
-    // それ以外の問題（階層・日付・種別など）は出ないこと
-    for (const auto& err : r.errors) CHECK_MESSAGE(err.rfind("不明な列 ", 0) == 0, err);
-    if (std::string(s.unknownCol).empty()) CHECK(r.ok);
+    CHECK(r.errors.empty());
+    CHECK(r.ok);  // JIRA が無視する可能性のある追加列は警告にとどめる
+    if (std::string(s.unknownCol).empty()) CHECK(r.warnings.empty());
   }
 }
 
@@ -454,8 +431,7 @@ TEST_CASE("compat: 各版の roadmap_prefs.json を読め、保存し直して�
   }
 }
 
-// 入れ子の中の未知のキー（window・inherit・テンプレート）は、今は書き戻さない（docs/COMPAT.md の「既知の穴」）。直したら should_fail を外す
-TEST_CASE("compat: 未知のキー: roadmap_prefs.json の入れ子の中" * doctest::should_fail()) {
+TEST_CASE("compat: 未知のキー: roadmap_prefs.json の入れ子の中") {
   for (const Sample& s : kSamples) {
     CAPTURE(s.ver);
     Json j = Json::parse(originalTop(s, "roadmap_prefs.json"));
@@ -500,10 +476,8 @@ TEST_CASE("compat: 平置きのデータを、フォルダ構成へ移しても�
   CHECK_FALSE(o.fs.exists("data/legacy-flat.csv"));
 }
 
-// 共有・バックアップ JSON から取り込んだプロジェクトを保存したとき、project.settings.json に JSON の枠のキー（v・csv）が混ざらないこと。
-// 今は混ざる（parseBackup が recordFromSettingsJson を通すと、v と csv が「未知のキー」として settings.unknown に入り、
-// 設定ファイルに CSV の全文の写しが書かれる）。docs/COMPAT.md の「既知の穴」。直したら should_fail を外す
-TEST_CASE("compat: 共有 JSON から取り込んで保存した設定に、csv や v が混ざらない" * doctest::should_fail()) {
+// 共有・バックアップ JSON の枠のキー（v・csv）は設定に混ざらず、以前に混ざった値も次の保存で落ちる。
+TEST_CASE("compat: 共有 JSON から取り込んで保存した設定に、csv や v が混ざらない") {
   for (const Sample& s : kSamples) {
     CAPTURE(s.ver);
     auto b = parseBackup(originalTop(s, "share.json"), clk);
@@ -516,4 +490,22 @@ TEST_CASE("compat: 共有 JSON から取り込んで保存した設定に、csv 
     CHECK_FALSE(out.contains("csv"));
     CHECK_FALSE(out.contains("v"));
   }
+  // 以前の版で混ざった設定ファイルを開いて保存した場合も、CSV 全文の写しを除去する。
+  const Sample& s = kSamples[0];
+  Json contaminated = Json::parse(original(s, s.setRel));
+  contaminated["v"] = 3;
+  contaminated["csv"] = original(s, s.csvRel);
+  MemFileStore fs;
+  loadTree(fs, s);
+  fs.put(dataPath(s.setRel), contaminated.dump(1));
+  Workspace ws(fs, clk, "data");
+  REQUIRE(ws.sync().ok());
+  REQUIRE(ws.entries().size() == 1);
+  ProjectSettings settings = ws.entries()[0].rec.settings;
+  settings.ui["nameW"] = 321;
+  ws.updateSettings(s.id, settings);
+  REQUIRE(ws.flush().ok());
+  const Json out = Json::parse(fs.content(dataPath(s.setRel)));
+  CHECK_FALSE(out.contains("csv"));
+  CHECK_FALSE(out.contains("v"));
 }

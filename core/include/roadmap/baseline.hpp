@@ -48,13 +48,15 @@ struct Baseline {
   std::string at;    // 保存した日時 "YYYY-MM-DDTHH:MM"（分からなければ空）
   bool truncated = false;  // 課題が多すぎて、先頭の分だけ持っている
   std::vector<BaselineItem> items;
+  nlohmann::ordered_json extra = nlohmann::ordered_json::object();  // ベースライン項目内の未知のキー
   bool operator==(const Baseline&) const = default;
 };
 
 struct BaselineSet {
   std::vector<Baseline> list;  // 保存した順
   std::string shown;           // ガント・リスト・統計に出すベースラインの id（空 = 出さない）
-  bool empty() const { return list.empty() && shown.empty(); }
+  nlohmann::ordered_json extra = nlohmann::ordered_json::object();  // baselines 直下の未知のキー
+  bool empty() const { return list.empty() && shown.empty() && extra.empty(); }
   bool operator==(const BaselineSet&) const = default;
 };
 

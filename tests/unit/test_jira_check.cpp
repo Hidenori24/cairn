@@ -48,6 +48,19 @@ TEST_CASE("check-jira: 各規則") {
   CHECK(r.report("x").size() == 13);  // 問題点は最大12件
 }
 
+TEST_CASE("check-jira: 既知の追加列は警告して成功扱いにする") {
+  const std::string csv =
+      "Issue Id,Issue Type,Summary,Created,Updated,Sprint,Attachment,Relates,Outward issue link (Relates)\n"
+      "1,Task,作業,2026-10-19,2026-10-20,Sprint 1,file.txt,2,ABC-2\n";
+  const auto r = checkJiraCsv(csv);
+  CHECK(r.ok);
+  CHECK(r.errors.empty());
+  CHECK(r.warnings.size() == 5);
+  CHECK(r.report("x")[0] == "x: 1件 / 列 9 / OK（警告 5件）");
+  CHECK(r.report("x").size() == 6);
+  for (const auto& warning : r.warnings) CHECK(warning.find("JIRA が無視する可能性があります") != std::string::npos);
+}
+
 TEST_CASE("check-jira: 親の規則") {
   auto r = checkJiraCsv("Issue Id,Issue Type,Summary,Parent,Epic Name\n1,Epic,E,,E\n2,Sub-task,a,1,\n3,Task,b,2,\n4,Task,c,,\n5,Task,d,4,\n");
   REQUIRE_FALSE(r.ok);

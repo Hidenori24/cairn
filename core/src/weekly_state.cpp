@@ -255,7 +255,9 @@ const WeeklySnapshot* weeklyPreviousSnapshot(const WeeklyMemo& m, Day base) {
 }
 
 Json weeklyToJson(const WeeklyMemo& m) {
-  Json j = Json::object();
+  Json j = m.extra.is_object() ? m.extra : Json::object();
+  j.erase("notes");
+  j.erase("snaps");
   j["notes"] = m.notes;
   Json snaps = Json::array();
   for (const WeeklySnapshot& s : m.snaps) snaps.push_back(snapshotToJson(s));
@@ -266,6 +268,8 @@ Json weeklyToJson(const WeeklyMemo& m) {
 WeeklyMemo weeklyFromJson(const Json& j) {
   WeeklyMemo m;
   if (!j.is_object()) return m;
+  for (auto it = j.begin(); it != j.end(); ++it)
+    if (it.key() != "notes" && it.key() != "snaps") m.extra[it.key()] = it.value();
   if (j.contains("notes") && j["notes"].is_string()) m.notes = weeklySanitizeNotes(j["notes"].get<std::string>());
   if (j.contains("snaps") && j["snaps"].is_array()) {
     for (const Json& x : j["snaps"]) {

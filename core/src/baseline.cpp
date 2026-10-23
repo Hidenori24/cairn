@@ -186,6 +186,9 @@ bool baselineFromJson(const Json& j, Baseline& out) {
     }
     b.items.push_back(std::move(it));
   }
+  for (auto it = j.begin(); it != j.end(); ++it)
+    if (it.key() != "id" && it.key() != "name" && it.key() != "at" && it.key() != "truncated" && it.key() != "items")
+      b.extra[it.key()] = it.value();
   b.name = baselineSanitizeName(b.name);
   if (b.name.empty()) b.name = kDefaultName;
   out = std::move(b);
@@ -325,11 +328,14 @@ bool baselineSetShown(BaselineSet& set, const std::string& id) {
 
 // ---------------------------------------------------------------- JSON
 Json baselinesToJson(const BaselineSet& set) {
-  Json j = Json::object();
+  Json j = set.extra.is_object() ? set.extra : Json::object();
+  j.erase("shown");
+  j.erase("list");
   j["shown"] = set.shown;
   Json list = Json::array();
   for (const Baseline& b : set.list) {
-    Json o = Json::object();
+    Json o = b.extra.is_object() ? b.extra : Json::object();
+    for (const char* k : {"id", "name", "at", "truncated", "items"}) o.erase(k);
     o["id"] = b.id;
     o["name"] = b.name;
     o["at"] = b.at;
@@ -346,6 +352,8 @@ Json baselinesToJson(const BaselineSet& set) {
 BaselineSet baselinesFromJson(const Json& j) {
   BaselineSet set;
   if (!j.is_object()) return set;
+  for (auto it = j.begin(); it != j.end(); ++it)
+    if (it.key() != "list" && it.key() != "shown") set.extra[it.key()] = it.value();
   if (j.contains("list") && j["list"].is_array()) {
     for (const Json& x : j["list"]) {
       if (set.list.size() >= kBaselineMax) break;
