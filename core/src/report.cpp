@@ -296,6 +296,7 @@ p{margin:0}
 svg{display:block;font-family:inherit;font-size:12px}
 .card{margin:0 0 18px}
 .gseg{break-inside:avoid;page-break-inside:avoid}
+.gantt-panel-start{break-before:page;page-break-before:always}
 .tiles{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:6px 0 10px}
 .tile{border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--card)}
 .tile .l{font-size:11px;color:var(--muted)}
