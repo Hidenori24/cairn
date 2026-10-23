@@ -14,6 +14,7 @@
 #include "roadmap/engine.hpp"
 #include "roadmap/filestore.hpp"
 #include "roadmap/load.hpp"
+#include "roadmap/mta.hpp"
 #include "roadmap/result.hpp"
 #include "roadmap/stats.hpp"
 #include "roadmap/weekly_state.hpp"
@@ -88,6 +89,7 @@ struct WeeklyInput {
   const WeeklyMemo* memo = nullptr;       // 手動（コピー・保存したとき）のスナップショット
   const WeeklyAuto* autos = nullptr;      // 自動（週の頭）のスナップショット
   const BaselineCompare* baseline = nullptr;  // 表示するベースラインとの比較（なければ「ベースラインとの差」は出ない）
+  int mtaLateDays = kMtaDefaultLateDays;      // マイルストーンの予測の遅れの警告のしきい値（営業日。autos があるとき、Issue #75）
 };
 
 // ---------------------------------------------------------------- 結果の構造体
@@ -225,6 +227,11 @@ struct WeeklyReport {
   int assigneesTotal = 0;
   WeeklyChanges changes;
   WeeklyBaseline baseline;
+  // マイルストーンの予測の推移と遅れの警告（Issue #75）。autos（自動のスナップショット）を渡したときだけ。名前は cleanText 済み。
+  // 警告は「遅れ・余裕小」の節に、推移の表は「マイルストーン」の節に出す
+  bool mtaAvailable = false;
+  MtaReport mta;          // series は警告のあるものを先頭に、上限（maxItems）までにする
+  int mtaOmitted = 0;     // 上限で省いた系列の数
   std::string notes;      // 所感（そのまま）
   bool empty = false;     // 課題がない
 };

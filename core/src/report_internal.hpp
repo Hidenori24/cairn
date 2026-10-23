@@ -71,6 +71,9 @@ std::string renderGantt(const Ctx& cx);
 std::string renderStats(const Ctx& cx);
 // 統計の「推移」（バーンダウン・リードタイム・滞留日数。Issue #54 の A）。renderStats の最後に足す
 std::string renderTrends(const Ctx& cx);
+// マイルストーンの予測の推移（Issue #75）。遅れの警告（統計の上。なければ空）と、推移の図・表（renderTrends の最後。weeklyAuto がなければ空）
+std::string renderMtaBand(const Ctx& cx);
+std::string renderMtaCard(const Ctx& cx);
 std::string renderList(const Ctx& cx);
 
 // ページ全体の CSS（週次レポートの HTML も同じ見た目にするため共有する）と、出力日時の "2026/10/19 18:36"

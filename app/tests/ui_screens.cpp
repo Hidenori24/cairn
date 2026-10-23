@@ -1203,6 +1203,146 @@ int main(int argc, char** argv) {
     u.t = &ui::lightTokens();
     ui::applyStyle(*u.t, u.m);
   }
+  // 統計ビューの「マイルストーンの予測の推移」と遅れの警告（Issue #75）: 案内（記録 1 週）・警告の帯・折れ線（ライト・ダーク・狭い幅）・ホバー・選択欄
+  {
+    const auto goToDay = [&](Day d) {
+      const Ymd ymd = civilFromDays(d);
+      clk.set(LocalTime{ymd.y, ymd.m, ymd.d, 18, 36, 0});
+    };
+    const std::string csvText =
+        "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Resolved,Duration (weeks),Outward issue link (Blocks),Deadline\n"
+        "1,Epic,新製品の立ち上げ,,,,High,,,,\n"
+        "2,Task,設計,1,田中,In Progress,High,,1,3,\n"
+        "3,Task,実装,1,田中,To Do,Medium,,3,4,\n"
+        "4,Milestone,中間レビュー,1,,,High,,0,5,2026-11-13\n"
+        "5,Milestone,リリース判定,1,,,High,,0,,2026-12-11\n"
+        "6,Task,試験,1,鈴木,To Do,Medium,,2,7,\n"
+        "7,Milestone,試験完了,1,,,Medium,,0,,2026-11-20\n"
+        "8,Task,量産準備,1,佐藤,To Do,Low,,6,9,\n"
+        "9,Milestone,量産開始,1,,,Medium,,0,,2026-12-25\n";
+    const auto mtaScroll = [&](const std::function<bool()>& reached) {
+      c.setView(app::View::Stats);
+      clk.advanceMs(15000);
+      frames(3);
+      ImGui::GetIO().AddMousePosEvent(700, 450);
+      for (int k = 0; k < 60; ++k) {
+        ImGui::GetIO().AddMouseWheelEvent(0, 20);
+        frames(1);
+      }
+      for (int k = 0; k < 400 && !reached(); ++k) {
+        ImGui::GetIO().AddMouseWheelEvent(0, -1);
+        frames(2);
+      }
+    };
+    const auto mtaAway = [&](const std::string& name) {
+      ImGui::GetIO().AddMousePosEvent(5, 5);
+      frames(2);
+      shot(name);
+    };
+    const auto mtaChartVisible = [&] { return u.statsMta.chart && !u.statsMta.cols.empty() && u.statsMta.cols.front().a.y > 150 && u.statsMta.cols.back().b.y < 880; };
+    const auto mtaTop = [&] { return u.statsMta.drawn; };
+    const auto mtaSecVisible = [&] { return u.statsMta.drawn && u.statsMta.secY > 150 && u.statsMta.secY < 450; };
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    const Day w0 = *parseIso("2026-10-05");
+    goToDay(w0);
+    c.importText(csvText, "新製品（予測の推移）", app::ImportMode::New);
+    const std::string pid = c.currentId();
+    mtaScroll(mtaSecVisible);
+    mtaAway("75_mta_pending");  // 記録 1 週: 案内だけ
+    const auto step = [&](Day d, const std::function<void(Session&)>& edit) {
+      goToDay(d);
+      Session* ws = c.session();
+      ws->setBaseDate(clk.todayIso());
+      if (edit) edit(*ws);
+      c.afterEdit();
+      c.openProject(pid);  // 開いたとき、その週の頭のスナップショットを取る
+    };
+    const auto slip = [](Session& ws, const char* id, double weeks) {
+      ws.setField(id, [&](Issue& o) { o.durW = (o.durW ? *o.durW : 1.0) + weeks; });
+    };
+    step(w0 + 7, [&](Session& ws) { slip(ws, "3", 1); });                                   // 実装が 1 週延びる
+    step(w0 + 21, [&](Session& ws) { slip(ws, "3", 1); slip(ws, "6", 1); });                  // 10/19 の週は開かなかった。実装がさらに延び、試験も延びる
+    step(w0 + 28, [&](Session& ws) {                                                         // 設計が終わる・量産準備が前倒し
+      ws.setField("2", [&](Issue& o) {
+        o.status = "Done";
+        o.resolved = *parseIso("2026-11-02");
+      });
+      slip(ws, "8", -1);
+    });
+    mtaScroll(mtaTop);
+    mtaAway("76_mta_band");  // 統計の一番上の警告の帯
+    mtaScroll(mtaChartVisible);
+    mtaAway("77_mta_light");
+    if (u.statsMta.cols.size() > 3) {  // 記録のない週（10/19）にマウスを載せる
+      const auto& col = u.statsMta.cols[2];
+      ImGui::GetIO().AddMousePosEvent((col.a.x + col.b.x) / 2, (col.a.y + col.b.y) / 2);
+      frames(2);
+      shot("77b_mta_gap_tip");
+      const auto& col2 = u.statsMta.cols[3];
+      ImGui::GetIO().AddMousePosEvent((col2.a.x + col2.b.x) / 2, (col2.a.y + col2.b.y) / 2);
+      frames(2);
+      shot("77c_mta_week_tip");
+    }
+    u.t = &ui::darkTokens();
+    ui::applyStyle(*u.t, u.m);
+    mtaScroll(mtaChartVisible);
+    mtaAway("78_mta_dark");
+    // 選択欄を開く
+    if (u.statsMta.selB.x > u.statsMta.selA.x) {
+      ImGui::GetIO().AddMousePosEvent((u.statsMta.selA.x + u.statsMta.selB.x) / 2, (u.statsMta.selA.y + u.statsMta.selB.y) / 2);
+      frames(2);
+      ImGui::GetIO().AddMouseButtonEvent(0, true);
+      frames(1);
+      ImGui::GetIO().AddMouseButtonEvent(0, false);
+      frames(3);
+      shot("78b_mta_select");
+      ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, true);
+      frames(1);
+      ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, false);
+      frames(2);
+    }
+    // 狭い幅（詳細パネルを開く）
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+    io.DisplaySize = ImVec2(900, 900);
+    u.detailOpen = true;
+    mtaScroll(mtaChartVisible);
+    mtaAway("79_mta_narrow");
+    io.DisplaySize = ImVec2(1440, 900);
+    u.detailOpen = false;
+    // 書き出した HTML と週次レポート（ブラウザで開いて確かめる。ライト・ダーク）
+    for (const bool dark : {false, true}) {
+      ExportOptions opt;
+      opt.gantt = opt.list = false;
+      opt.dark = dark;
+      const auto html = c.buildReport(opt);
+      if (html.ok()) {
+        const std::string file = dark ? "html_mta_dark.html" : "html_mta_light.html";
+        std::ofstream o(out + "/" + file, std::ios::binary);
+        o << html.value();
+        std::printf("wrote %s/%s (%zu KB)\n", out.c_str(), file.c_str(), html.value().size() / 1024);
+      }
+    }
+    {
+      WeeklyOptions wo;
+      const auto html = c.renderWeekly(wo, true);
+      const auto md = c.renderWeekly(wo, false);
+      if (html.ok()) {
+        std::ofstream o(out + "/weekly_mta.html", std::ios::binary);
+        o << html.value();
+        std::printf("wrote %s/weekly_mta.html (%zu KB)\n", out.c_str(), html.value().size() / 1024);
+      }
+      if (md.ok()) {
+        std::ofstream o(out + "/weekly_mta.md", std::ios::binary);
+        o << md.value();
+      }
+    }
+    c.deleteCurrentProject();
+    goToDay(*parseIso("2026-10-19"));
+    u.t = &ui::lightTokens();
+    ui::applyStyle(*u.t, u.m);
+  }
   // HTML に書き出す（Issue #42）: 「…」メニュー・ダイアログ・通知と、書き出した HTML（ブラウザで開いて確かめる）
   {
     const auto dumpHtml = [&](const std::string& file, ExportOptions opt) {

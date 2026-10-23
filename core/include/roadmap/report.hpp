@@ -14,6 +14,7 @@
 #include "roadmap/filestore.hpp"
 #include "roadmap/filter.hpp"
 #include "roadmap/history.hpp"
+#include "roadmap/mta.hpp"
 #include "roadmap/gantt_geom.hpp"
 #include "roadmap/result.hpp"
 
@@ -72,6 +73,10 @@ struct ExportInput {
   const BaselineCompare* baseline = nullptr;
   // 状況の件数の履歴（Session::history()。null = 出さない）。統計の「推移」に累積フロー図を出す（Issue #64）
   const History* history = nullptr;
+  // 週の頭のスナップショット（Session::weeklyAuto()。null = 出さない）。統計に「マイルストーンの予測の推移」と遅れの警告を出す（Issue #75）。
+  // 警告のしきい値は mtaLateDays（営業日。範囲外は収める）。表示中のベースラインがあれば、計画の線も出す
+  const WeeklyAuto* weeklyAuto = nullptr;
+  int mtaLateDays = kMtaDefaultLateDays;
 };
 
 // 1 つの HTML（UTF-8、BOM なし）。課題が 0 件でも、案内を書いた HTML を返す

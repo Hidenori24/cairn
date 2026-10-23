@@ -83,6 +83,18 @@ void normalizeItems(WeeklySnapshot& s) {
     kept.push_back(std::move(it));
   }
   s.items = std::move(kept);
+  // マイルストーン（Issue #75）: 同じ検査。上限を超えたぶんは持たない
+  std::vector<WeeklySnapItem> ms;
+  ms.reserve(std::min(s.milestones.size(), kWeeklyMaxSnapshotMilestones));
+  std::unordered_set<std::string> seenMs;
+  for (WeeklySnapItem& it : s.milestones) {
+    if (!validId(it.id) || !validState(it.st)) continue;
+    if (!seenMs.insert(it.id).second) continue;
+    if (ms.size() >= kWeeklyMaxSnapshotMilestones) break;
+    if (it.st == 'd') it.late = false;
+    ms.push_back(std::move(it));
+  }
+  s.milestones = std::move(ms);
 }
 
 void clampCounts(WeeklySnapshot& s) {
@@ -106,7 +118,7 @@ bool readCount(const Json& j, const char* key, int& out) {
 }
 
 bool isKnownSnapshotKey(const std::string& k) {
-  static const char* const kKnown[] = {"base", "progress", "tasks", "done", "late", "tight", "finish", "truncated", "items"};
+  static const char* const kKnown[] = {"base", "progress", "tasks", "done", "late", "tight", "finish", "truncated", "items", "ms"};
   for (const char* x : kKnown)
     if (k == x) return true;
   return false;
@@ -156,6 +168,17 @@ bool snapshotFromJson(const Json& j, WeeklySnapshot& out) {
       s.items.push_back(std::move(it));
     }
   }
+  if (j.contains("ms") && j["ms"].is_array()) {  // マイルストーン（Issue #75）。配列でなければ無視（スナップショットは読める）
+    std::unordered_set<std::string> seenMs;
+    for (const Json& x : j["ms"]) {
+      if (!x.is_string()) continue;
+      WeeklySnapItem it;
+      if (!itemFromString(x.get<std::string>(), it)) continue;
+      if (!seenMs.insert(it.id).second) continue;
+      if (s.milestones.size() >= kWeeklyMaxSnapshotMilestones) break;
+      s.milestones.push_back(std::move(it));
+    }
+  }
   // 未知のキーは捨てずに持つ（書き戻す）
   for (auto it = j.begin(); it != j.end(); ++it)
     if (!isKnownSnapshotKey(it.key())) s.extra[it.key()] = it.value();
@@ -187,6 +210,11 @@ Json snapshotToJson(const WeeklySnapshot& s) {
   Json items = Json::array();
   for (const WeeklySnapItem& it : s.items) items.push_back(itemToString(it));
   o["items"] = std::move(items);
+  if (!s.milestones.empty()) {  // 空なら書かない（マイルストーンのないプロジェクトの設定は今までと同じバイト列）
+    Json ms = Json::array();
+    for (const WeeklySnapItem& it : s.milestones) ms.push_back(itemToString(it));
+    o["ms"] = std::move(ms);
+  }
   if (s.extra.is_object())
     for (auto it = s.extra.begin(); it != s.extra.end(); ++it)
       if (!isKnownSnapshotKey(it.key())) o[it.key()] = it.value();  // 未知のキーはそのまま書き戻す

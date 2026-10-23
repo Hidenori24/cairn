@@ -5,9 +5,12 @@
 
 #include "roadmap/engine.hpp"
 #include "roadmap/issue_name.hpp"
+#include "roadmap/mta.hpp"
 #include "roadmap/text.hpp"
 
 namespace roadmap {
+
+static_assert(kMtaDefaultLateDays == 5, "Prefs::mtaLateDays の既定（project_io.hpp）と合わせる");
 
 Json normalizeNumbers(const Json& j) {
   if (j.is_number_float()) {
@@ -286,6 +289,7 @@ Prefs prefsFromJson(const Json& j) {
   };
   clampInt("uiScale", 70, 200, p.uiScale);
   clampInt("dimPercent", 10, 80, p.dimPercent);
+  clampInt("mtaLateDays", kMtaMinLateDays, kMtaMaxLateDays, p.mtaLateDays);
   if (j.contains("confirmDelete") && j["confirmDelete"].is_boolean()) p.confirmDelete = j["confirmDelete"].get<bool>();
   if (j.contains("autoBaseToday") && j["autoBaseToday"].is_boolean()) p.autoBaseToday = j["autoBaseToday"].get<bool>();
   if (j.contains("autoCompleteGitHub") && j["autoCompleteGitHub"].is_boolean()) p.autoCompleteGitHub = j["autoCompleteGitHub"].get<bool>();
@@ -306,7 +310,7 @@ Prefs prefsFromJson(const Json& j) {
     gb("duration", p.inherit.duration);
   }
   static const char* const known[] = {"theme",   "density", "me",         "currentProject", "templates",    "window",
-                                      "hintDismissed", "dataDir", "uiScale", "dimPercent", "confirmDelete",
+                                      "hintDismissed", "dataDir", "uiScale", "dimPercent", "mtaLateDays", "confirmDelete",
                                       "autoBaseToday", "autoCompleteGitHub", "useLock", "newNameFormat", "newNameCustom", "inherit"};
   for (auto it = j.begin(); it != j.end(); ++it) {
     const std::string& k = it.key();
@@ -327,6 +331,7 @@ Json prefsToJson(const Prefs& p) {
   j["dataDir"] = p.dataDir;
   j["uiScale"] = p.uiScale;
   j["dimPercent"] = p.dimPercent;
+  j["mtaLateDays"] = p.mtaLateDays;
   j["confirmDelete"] = p.confirmDelete;
   j["autoBaseToday"] = p.autoBaseToday;
   j["autoCompleteGitHub"] = p.autoCompleteGitHub;

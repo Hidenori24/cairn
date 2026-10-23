@@ -165,6 +165,16 @@ void renderNext(Md& m, const WeeklyReport& r) {
   listMore(m, r.nextFinish);
 }
 
+// マイルストーンの予測の遅れ（Issue #75）。遅れ・余裕小の節の終わりに足す。なければ何も出さない
+void renderMtaWarnings(Md& m, const WeeklyReport& r) {
+  if (!r.mtaAvailable || r.mta.warnings == 0) return;
+  m.heading(3, "マイルストーンの予測の遅れ（" + std::to_string(r.mta.warnings) + " 件）");
+  m.line("完了の見込みが、前の週の記録から " + std::to_string(r.mta.lateDays) + " 営業日以上遅れたマイルストーンです。");
+  m.blank();
+  for (const MtaSeries& s : r.mta.series)
+    if (s.warn) m.line("- ! " + escapeMarkdown(mtaSeriesName(s)) + ": " + escapeMarkdown(mtaWarnTail(s)));
+}
+
 void renderRisks(Md& m, const WeeklyReport& r) {
   m.heading(2, "遅れ・余裕小（" + std::to_string(r.risks.total) + " 件）");
   m.line("余裕が負、または " + std::to_string(kWeeklyTightDays) + " 営業日以内の未完了の作業です。");
@@ -178,6 +188,7 @@ void renderRisks(Md& m, const WeeklyReport& r) {
              floatPhrase(it.predFloat) + "）");
   }
   listMore(m, r.risks);
+  renderMtaWarnings(m, r);
 }
 
 void renderMilestones(Md& m, const WeeklyReport& r) {
@@ -195,6 +206,31 @@ void renderMilestones(Md& m, const WeeklyReport& r) {
   }
   if (r.milestonesTotal > static_cast<int>(r.milestones.size()))
     m.line("\nほか " + std::to_string(r.milestonesTotal - static_cast<int>(r.milestones.size())) + " 件");
+}
+
+// マイルストーンの予測の推移（Issue #75）。週の頭に記録した完了の見込み日と、前の点からの動き
+void renderMtaTrend(Md& m, const WeeklyReport& r) {
+  if (!r.mtaAvailable) return;
+  m.heading(3, "予測の推移");
+  if (!r.mta.drawable()) {
+    m.line(mtaPendingText(r.mta.recordedWeeks));
+    return;
+  }
+  m.line("週の頭に記録した完了の見込み日と、前の点からの動き（営業日。+ は遅れ、! は " + std::to_string(r.mta.lateDays) + " 営業日以上の遅れ）です。");
+  m.blank();
+  m.line("| マイルストーン | 週 | 予測日 | 前の点からの動き |");
+  m.line("| --- | --- | --- | --- |");
+  for (const MtaSeries& s : r.mta.series) {
+    bool first = true;
+    for (std::size_t c = 0; c < s.points.size(); ++c) {
+      const MtaPoint& p = s.points[c];
+      if (!p.has && !p.ended) continue;
+      m.line("| " + (first ? escapeMarkdown(mtaLegendText(s)) : std::string()) + " | " + escapeMarkdown(mtaColumnText(r.mta.columns[c])) + " | " +
+             escapeMarkdown(mtaDateText(p)) + " | " + escapeMarkdown(mtaMoveText(p)) + " |");
+      first = false;
+    }
+  }
+  if (r.mtaOmitted > 0) m.line("\n" + moreText(r.mtaOmitted));
 }
 
 void renderAssignees(Md& m, const WeeklyReport& r) {
@@ -303,7 +339,10 @@ std::string weeklyMarkdown(const WeeklyReport& r) {
   if (s.progress) renderProgress(m, r);
   if (s.next) renderNext(m, r);
   if (s.risks) renderRisks(m, r);
-  if (s.milestones) renderMilestones(m, r);
+  if (s.milestones) {
+    renderMilestones(m, r);
+    renderMtaTrend(m, r);
+  }
   if (s.assignees) renderAssignees(m, r);
   if (s.changes && r.changes.available) renderChanges(m, r);
   if (s.baseline && r.baseline.available) renderBaseline(m, r);

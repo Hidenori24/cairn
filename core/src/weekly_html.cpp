@@ -149,6 +149,42 @@ std::string nextHtml(const WeeklyReport& r) {
   return section(nextTitle(r), b);
 }
 
+// マイルストーンの予測の遅れ（Issue #75）。遅れ・余裕小の節の終わりに足す。なければ空
+std::string mtaWarnHtml(const WeeklyReport& r) {
+  if (!r.mtaAvailable || r.mta.warnings == 0) return {};
+  std::string b = "<h3>マイルストーンの予測の遅れ（" + std::to_string(r.mta.warnings) + " 件）</h3>\n<p class=\"sub\">完了の見込みが、前の週の記録から " +
+                  std::to_string(r.mta.lateDays) + " 営業日以上遅れたマイルストーンです。</p>\n<ul>\n";
+  for (const MtaSeries& s : r.mta.series)
+    if (s.warn) b += "<li class=\"rk-late\">" + E(mtaWarnText(s)) + "</li>\n";
+  return b + "</ul>\n";
+}
+
+// マイルストーンの予測の推移（Issue #75）。週の頭に記録した完了の見込み日と、前の点からの動き
+std::string mtaTrendHtml(const WeeklyReport& r) {
+  if (!r.mtaAvailable) return {};
+  std::string b = "<h3>予測の推移</h3>\n";
+  if (!r.mta.drawable()) return b + "<p class=\"sub\">" + E(mtaPendingText(r.mta.recordedWeeks)) + "</p>\n";
+  b += "<p class=\"sub\">週の頭に記録した完了の見込み日と、前の点からの動き（営業日。+ は遅れ、! は " + std::to_string(r.mta.lateDays) +
+       " 営業日以上の遅れ）です。</p>\n";
+  Tbl t;
+  t.head({{"マイルストーン", false}, {"週", false}, {"予測日", true}, {"前の点からの動き", false}});
+  for (const MtaSeries& s : r.mta.series) {
+    bool first = true;
+    for (std::size_t c = 0; c < s.points.size(); ++c) {
+      const MtaPoint& p = s.points[c];
+      if (!p.has && !p.ended) continue;
+      t.row({{first ? mtaLegendText(s) : std::string(), false, "nm"},
+             {mtaColumnText(r.mta.columns[c]), false, ""},
+             {mtaDateText(p), true, ""},
+             {mtaMoveText(p), false, p.late ? "rk-late" : ""}});
+      first = false;
+    }
+  }
+  b += t.close();
+  b += moreP(r.mtaOmitted);
+  return b;
+}
+
 std::string risksHtml(const WeeklyReport& r) {
   std::string b = "<p class=\"sub\">余裕が負、または " + std::to_string(kWeeklyTightDays) + " 営業日以内の未完了の作業です。</p>\n";
   if (r.risks.items.empty()) {
@@ -169,6 +205,7 @@ std::string risksHtml(const WeeklyReport& r) {
     b += t.close();
   }
   b += moreP(r.risks.omitted());
+  b += mtaWarnHtml(r);
   return section("遅れ・余裕小", b, std::to_string(r.risks.total) + " 件");
 }
 
@@ -191,6 +228,7 @@ std::string milestonesHtml(const WeeklyReport& r) {
     if (r.milestonesTotal > static_cast<int>(r.milestones.size()))
       b += moreP(r.milestonesTotal - static_cast<int>(r.milestones.size()));
   }
+  b += mtaTrendHtml(r);
   return section("マイルストーン", b);
 }
 

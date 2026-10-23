@@ -1001,6 +1001,8 @@ Result<std::string> AppController::buildReport(const ExportOptions& opt) const {
   ExportInput in(*s->tree(), s->viewIssues(), *s->rows(), s->calendar());
   in.baseline = s->baselineCompare();
   in.history = &s->history();
+  in.weeklyAuto = &s->weeklyAuto();  // マイルストーンの予測の推移と遅れの警告（Issue #75）
+  in.mtaLateDays = prefs_.mtaLateDays;
   in.base = s->baseDay();
   in.meta = &s->meta();
   in.projectName = s->settings().name;
@@ -1060,6 +1062,7 @@ Result<WeeklyReport> AppController::buildWeekly(const WeeklyOptions& opt) const 
   in.projectName = s->settings().name;
   in.memo = &s->weekly();  // 比べる元は期間に合わせて選ぶ（手動と自動。weeklyChooseCompare）
   in.autos = &s->weeklyAuto();
+  in.mtaLateDays = prefs_.mtaLateDays;  // マイルストーンの予測の遅れの警告のしきい値（Issue #75）
   in.baseline = s->baselineCompare();
   return buildWeeklyReport(in, opt);
 }

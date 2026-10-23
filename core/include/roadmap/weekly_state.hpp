@@ -18,6 +18,8 @@ namespace roadmap {
 
 // スナップショット 1 つに持つ課題の数の上限（超えた分は持たず、truncated を立てる）
 inline constexpr std::size_t kWeeklyMaxSnapshotItems = 5000;
+// スナップショット 1 つに持つマイルストーンの数の上限（超えた分は持たない。Issue #75）
+inline constexpr std::size_t kWeeklyMaxSnapshotMilestones = 500;
 // 課題 1 件の Issue Id の長さの上限（バイト）
 inline constexpr std::size_t kWeeklyMaxIdBytes = 64;
 // 覚えておくスナップショットの数（基準日の週のものと、それより前の週のもの）
@@ -42,6 +44,9 @@ struct WeeklySnapshot {
   OptDay finish;  // プロジェクトの完了見込み日
   bool truncated = false;  // 課題が多すぎて、先頭の分だけ持っている
   std::vector<WeeklySnapItem> items;
+  // マイルストーン（葉）の状況と見込みの完了日（Issue #75。"ms"）。items には入れない（「増えた・無くなった作業」の数に混ぜないため）。
+  // 0.9.x が取ったスナップショットには無い（空）。古い版は未知のキーとして、そのまま書き戻す
+  std::vector<WeeklySnapItem> milestones;
   nlohmann::ordered_json extra;  // 未知のキー（新しい版が足したもの。読み込んで、そのまま書き戻す。なければ null）
   bool operator==(const WeeklySnapshot&) const = default;
 };

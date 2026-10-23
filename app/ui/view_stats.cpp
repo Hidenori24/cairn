@@ -8,6 +8,7 @@
 
 #include "roadmap/history.hpp"
 #include "roadmap/load.hpp"
+#include "roadmap/mta.hpp"
 #include "roadmap/stats.hpp"
 #include "roadmap/text.hpp"
 #include "roadmap/trends.hpp"
@@ -959,6 +960,427 @@ void drawCfd(Frame& f, Session& s, Day base, float W) {
   }
 }
 
+// ---- マイルストーンの予測の推移（Issue #75）----
+// 印（点）。達成済みは中を背景色にした輪
+void mtaMarkerShape(ImDrawList* dl, MtaMarker m, ImVec2 c, float r, ImU32 col, ImU32 bg, bool hollow, float th) {
+  const ImU32 fill = hollow ? bg : col;
+  switch (m) {
+    case MtaMarker::Circle:
+      dl->AddCircleFilled(c, r, fill);
+      dl->AddCircle(c, r, col, 0, th);
+      break;
+    case MtaMarker::Square:
+      dl->AddRectFilled(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), fill);
+      dl->AddRect(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), col, 0, 0, th);
+      break;
+    case MtaMarker::Triangle: {
+      const ImVec2 a(c.x, c.y - r - 1), b(c.x + r + 1, c.y + r), d(c.x - r - 1, c.y + r);
+      dl->AddTriangleFilled(a, b, d, fill);
+      dl->AddTriangle(a, b, d, col, th);
+      break;
+    }
+    case MtaMarker::Diamond: {
+      const ImVec2 a(c.x, c.y - r - 1), b(c.x + r + 1, c.y), d(c.x, c.y + r + 1), e(c.x - r - 1, c.y);
+      dl->AddQuadFilled(a, b, d, e, fill);
+      dl->AddQuad(a, b, d, e, col, th);
+      break;
+    }
+    case MtaMarker::Cross:
+      dl->AddLine(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), col, th);
+      dl->AddLine(ImVec2(c.x + r, c.y - r), ImVec2(c.x - r, c.y + r), col, th);
+      break;
+    case MtaMarker::Plus:
+      dl->AddLine(ImVec2(c.x - r - 1, c.y), ImVec2(c.x + r + 1, c.y), col, th);
+      dl->AddLine(ImVec2(c.x, c.y - r - 1), ImVec2(c.x, c.y + r + 1), col, th);
+      break;
+  }
+}
+
+// 線種（dash == 0 は実線）で折れ線を引く
+void mtaPolyline(ImDrawList* dl, const std::vector<ImVec2>& pts, ImU32 col, float th, float dash, float gap) {
+  if (pts.size() < 2) return;
+  if (dash <= 0.f) dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), col, ImDrawFlags_None, th);
+  else dashedPolyline(dl, pts, col, th, dash, gap);
+}
+
+// 遅れの警告（統計の一番上）。前の週の記録から、しきい値以上遅れたマイルストーン
+void drawMtaBand(Frame& f, const MtaReport* rep, float W) {
+  UiState& u = f.u;
+  UiState::StatsMta& sm = u.statsMta;
+  if (!rep || rep->warnings == 0) return;
+  ImGui::Dummy(ImVec2(0, u.m.s(10)));
+  const ImVec2 p0 = ImGui::GetCursorScreenPos();
+  const float pad = u.m.s(10), padY = u.m.s(6);
+  ImGui::SetCursorScreenPos(ImVec2(p0.x + pad, p0.y + padY));
+  ImGui::BeginGroup();
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W - pad);
+  ImGui::PushFont(u.fontBold);
+  ImGui::PushStyleColor(ImGuiCol_Text, u.t->late);
+  ImGui::Text("! 遅れの警告（マイルストーンの予測）");
+  ImGui::PopStyleColor();
+  ImGui::PopFont();
+  ImGui::TextDisabled("完了の見込みが、前の週の記録から %d 営業日以上遅れたマイルストーンです（しきい値はアプリの設定で変えられます）。", rep->lateDays);
+  constexpr int kMaxLines = 5;
+  int shown = 0;
+  for (const MtaSeries& s : rep->series) {
+    if (!s.warn) continue;
+    if (shown >= kMaxLines) break;
+    ImGui::PushStyleColor(ImGuiCol_Text, u.t->late);
+    ImGui::TextUnformatted(mtaWarnText(s).c_str());
+    ImGui::PopStyleColor();
+    ++shown;
+  }
+  if (rep->warnings > shown) ImGui::TextDisabled("ほか %d 件（下の「マイルストーンの予測の推移」で見られます）", rep->warnings - shown);
+  ImGui::PopTextWrapPos();
+  ImGui::EndGroup();
+  const ImVec2 p1(ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y + padY);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  dl->AddRectFilled(ImVec2(p0.x, p0.y), ImVec2(p0.x + u.m.s(4), p1.y), u.t->late);  // 色だけに頼らない（「!」と文字でも分かる）
+  dl->AddRect(ImVec2(p0.x, p0.y), ImVec2(p0.x + W, p1.y), withAlpha(u.t->late, 0.5f), u.m.s(3));
+  sm.bandA = p0;
+  sm.bandB = ImVec2(p0.x + W, p1.y);
+  sm.bandLines = shown;
+  ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
+  ImGui::Dummy(ImVec2(W, u.m.s(4)));
+}
+
+// 凡例: 系列ごとの線種と印の見本 + 期限・計画・記録なし・「!」
+void mtaLegend(Frame& f, const MtaReport& rep, const std::vector<std::size_t>& shown, float W) {
+  UiState& u = f.u;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float x0 = ImGui::GetCursorScreenPos().x;
+  const auto wrapIfNeeded = [&](float itemW) {
+    const float x = ImGui::GetCursorScreenPos().x;
+    if (x > x0 + 1.f && x + itemW > x0 + W) ImGui::NewLine();
+  };
+  const float swW = u.m.s(40);
+  const auto sample = [&](const std::string& label, ImU32 col, float dash, float gap, float th, const MtaMarker* mk) {
+    wrapIfNeeded(swW + u.m.s(5) + ImGui::CalcTextSize(label.c_str()).x);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = ImGui::GetTextLineHeight();
+    const float y = p.y + h / 2;
+    if (dash <= 0.f) dl->AddLine(ImVec2(p.x, y), ImVec2(p.x + swW, y), col, th);
+    else dashedLine(dl, ImVec2(p.x, y), ImVec2(p.x + swW, y), col, th, dash, gap);
+    if (mk) mtaMarkerShape(dl, *mk, ImVec2(p.x + swW / 2, y), u.m.s(3.6f), col, u.t->bg, false, u.m.s(2));
+    ImGui::Dummy(ImVec2(swW, h));
+    ImGui::SameLine(0, u.m.s(5));
+    ImGui::TextUnformatted(label.c_str());
+    ImGui::SameLine(0, u.m.s(16));
+  };
+  for (std::size_t order = 0; order < shown.size(); ++order) {
+    const MtaStyle st = mtaStyleOf(order);
+    const MtaMarker mk = st.marker;
+    sample(mtaLegendText(rep.series[shown[order]]), u.t->c[st.color % 8], u.m.s(static_cast<float>(st.dash)), u.m.s(static_cast<float>(st.gap)), u.m.s(2), &mk);
+  }
+  sample("期限（長い破線の横線）", u.t->muted, u.m.s(10), u.m.s(5), u.m.s(1.4f), nullptr);
+  sample("計画（点線の横線）", u.t->muted, u.m.s(2), u.m.s(3), u.m.s(1.4f), nullptr);
+  {  // 記録なし: 点線の枠
+    const char* label = "記録なし（線を引かない）";
+    wrapIfNeeded(u.m.s(26) + u.m.s(5) + ImGui::CalcTextSize(label).x);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = ImGui::GetTextLineHeight();
+    const ImVec2 a(p.x, p.y + u.m.s(2)), b(p.x + u.m.s(26), p.y + h - u.m.s(2));
+    dl->AddRectFilled(a, b, withAlpha(u.t->muted, 0.08f));
+    dashedLine(dl, a, ImVec2(b.x, a.y), u.t->muted, 1.f, u.m.s(2), u.m.s(2));
+    dashedLine(dl, ImVec2(a.x, b.y), b, u.t->muted, 1.f, u.m.s(2), u.m.s(2));
+    ImGui::Dummy(ImVec2(u.m.s(26), h));
+    ImGui::SameLine(0, u.m.s(5));
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(0, u.m.s(16));
+  }
+  ImGui::TextUnformatted("! しきい値以上の遅れ");
+}
+
+// 折れ線: 横軸は週（記録のない週は帯）と「いま」、縦軸は完了の見込み日（上ほど遅れ）。期限・計画は横線
+void drawMtaChart(Frame& f, const MtaReport& rep, const std::vector<std::size_t>& shown, float W) {
+  UiState& u = f.u;
+  UiState::StatsMta& sm = u.statsMta;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const MtaYAxis ax = mtaYAxis(rep, shown);
+  if (!ax.ok) {
+    ImGui::TextUnformatted("図に出すマイルストーンを選んでください（記録のあるもの）。");
+    return;
+  }
+  const int nc = static_cast<int>(rep.columns.size());
+  const float left = u.m.s(46), right = std::min(u.m.s(150), W * 0.3f), top = u.m.s(16), plotH = u.m.s(210), axisH = u.m.s(22);
+  const float plotW = std::max(W - left - right, u.m.s(120));
+  const float colW = plotW / static_cast<float>(nc);
+  const int every = std::max(1, static_cast<int>(std::ceil(u.m.s(46) / colW)));
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  ImGui::Dummy(ImVec2(W, top + plotH + axisH));
+  sm.chart = true;
+  sm.chartX1 = p.x + W;
+  const float plotRight = p.x + left + plotW;
+  const double span = std::max(1.0, static_cast<double>(ax.hi - ax.lo));
+  const auto xOf = [&](int i) { return p.x + left + colW * (static_cast<float>(i) + 0.5f); };
+  const auto yOf = [&](Day d) { return p.y + top + static_cast<float>((static_cast<double>(ax.hi) - static_cast<double>(d)) / span) * plotH; };
+  const float baseY = p.y + top + plotH;
+
+  // 記録のない週: 薄い帯と点線の枠（連続する週はひとつの帯）
+  for (int i = 0; i < nc;) {
+    const MtaColumn& c = rep.columns[static_cast<std::size_t>(i)];
+    if (c.recorded || c.now) {
+      ++i;
+      continue;
+    }
+    int j = i;
+    while (j < nc && !rep.columns[static_cast<std::size_t>(j)].recorded && !rep.columns[static_cast<std::size_t>(j)].now) ++j;
+    const ImVec2 a(p.x + left + colW * static_cast<float>(i), p.y + top), b(p.x + left + colW * static_cast<float>(j), baseY);
+    dl->AddRectFilled(a, b, withAlpha(u.t->muted, 0.08f));
+    dashedLine(dl, a, ImVec2(a.x, b.y), withAlpha(u.t->muted, 0.5f), 1.f, u.m.s(2), u.m.s(3));
+    dashedLine(dl, ImVec2(b.x, a.y), b, withAlpha(u.t->muted, 0.5f), 1.f, u.m.s(2), u.m.s(3));
+    dashedLine(dl, a, ImVec2(b.x, a.y), withAlpha(u.t->muted, 0.5f), 1.f, u.m.s(2), u.m.s(3));
+    const float tw = ImGui::CalcTextSize("記録なし").x;
+    if (b.x - a.x >= tw + u.m.s(6)) dl->AddText(ImVec2((a.x + b.x - tw) / 2, p.y + top + plotH / 2 - ImGui::GetTextLineHeight() / 2), withAlpha(u.t->muted, 0.8f), "記録なし");
+    i = j;
+  }
+  // 目盛りの横線と日付
+  for (Day t : ax.ticks) {
+    const float y = yOf(t);
+    dl->AddLine(ImVec2(p.x + left, y), ImVec2(plotRight, y), u.t->line);
+    const std::string lb = fmtShort(t);
+    dl->AddText(ImVec2(p.x + left - u.m.s(6) - ImGui::CalcTextSize(lb.c_str()).x, y - ImGui::GetTextLineHeight() / 2), u.t->muted, lb.c_str());
+  }
+  dl->AddText(ImVec2(p.x, p.y), u.t->muted, "遅れ ↑");
+  dashedLine(dl, ImVec2(xOf(nc - 1), p.y + top), ImVec2(xOf(nc - 1), baseY), withAlpha(u.t->muted, 0.7f), 1.f, u.m.s(3), u.m.s(3));  // 「いま」の列
+
+  struct Label {
+    float y;
+    std::string text;
+    ImU32 col;
+  };
+  std::vector<Label> labels;
+  // 期限（長い破線）・計画（点線）
+  for (std::size_t order = 0; order < shown.size(); ++order) {
+    const MtaSeries& s = rep.series[shown[order]];
+    const MtaStyle st = mtaStyleOf(order);
+    const ImU32 col = withAlpha(u.t->c[st.color % 8], 0.85f);
+    if (s.deadline) {
+      const float y = yOf(*s.deadline);
+      dashedLine(dl, ImVec2(p.x + left, y), ImVec2(plotRight, y), col, u.m.s(1.4f), u.m.s(10), u.m.s(5));
+      labels.push_back({y, std::string(s.plan && *s.plan == *s.deadline ? "期限・計画 " : "期限 ") + fmtShort(*s.deadline) + "（" + s.did + "）", u.t->c[st.color % 8]});
+    }
+    if (s.plan && !(s.deadline && *s.plan == *s.deadline)) {
+      const float y = yOf(*s.plan);
+      dashedLine(dl, ImVec2(p.x + left, y), ImVec2(plotRight, y), col, u.m.s(1.4f), u.m.s(2), u.m.s(3));
+      labels.push_back({y, "計画 " + fmtShort(*s.plan) + "（" + s.did + "）", u.t->c[st.color % 8]});
+    }
+  }
+  // 系列の線と印
+  for (std::size_t order = 0; order < shown.size(); ++order) {
+    const MtaSeries& s = rep.series[shown[order]];
+    const MtaStyle st = mtaStyleOf(order);
+    const ImU32 col = u.t->c[st.color % 8];
+    std::vector<ImVec2> run;
+    const auto flush = [&] {
+      mtaPolyline(dl, run, col, u.m.s(2), u.m.s(static_cast<float>(st.dash)), u.m.s(static_cast<float>(st.gap)));
+      run.clear();
+    };
+    int lastI = -1;
+    for (int i = 0; i < nc; ++i) {
+      const MtaPoint& pt = s.points[static_cast<std::size_t>(i)];
+      if (!pt.has) {
+        flush();
+        continue;
+      }
+      run.push_back(ImVec2(xOf(i), yOf(pt.date)));
+      lastI = i;
+    }
+    flush();
+    for (int i = 0; i < nc; ++i) {
+      const MtaPoint& pt = s.points[static_cast<std::size_t>(i)];
+      if (!pt.has) continue;
+      const ImVec2 c(xOf(i), yOf(pt.date));
+      mtaMarkerShape(dl, st.marker, c, u.m.s(3.6f), col, u.t->bg, pt.achieved, u.m.s(2));
+      if (pt.late) {  // 「!」の丸い印（色だけに頼らない）
+        const ImVec2 bc(c.x, c.y - u.m.s(15));
+        dl->AddCircleFilled(bc, u.m.s(7), u.t->late);
+        const float tw = ImGui::CalcTextSize("!").x;
+        dl->AddText(ImVec2(bc.x - tw / 2, bc.y - ImGui::GetTextLineHeight() / 2), IM_COL32(255, 255, 255, 255), "!");
+      }
+      if (pt.achieved) dl->AddText(ImVec2(c.x + u.m.s(7), c.y + u.m.s(2)), u.t->muted, "達成");
+    }
+    if (lastI >= 0) labels.push_back({yOf(s.points[static_cast<std::size_t>(lastI)].date), s.did.empty() ? mtaSeriesName(s) : s.did, col});
+  }
+  dl->AddLine(ImVec2(p.x + left, baseY), ImVec2(plotRight, baseY), u.t->line);
+  // 右の余白の文字: 重ならないよう上から間隔を空ける
+  std::stable_sort(labels.begin(), labels.end(), [](const Label& a, const Label& b) { return a.y < b.y; });
+  const float lineH = ImGui::GetTextLineHeight();
+  float prev = p.y + top - lineH;
+  for (Label& l : labels) {
+    l.y = std::max(l.y - lineH / 2, prev + lineH);
+    prev = l.y;
+  }
+  float next = baseY + lineH;
+  for (std::size_t k = labels.size(); k-- > 0;) {
+    labels[k].y = std::min(labels[k].y, next - lineH);
+    next = labels[k].y;
+  }
+  for (const Label& l : labels) clippedText(u, ImVec2(plotRight + u.m.s(6), l.y), right - u.m.s(8), l.col, l.text);
+  // 横軸の週の見出し
+  for (int i = 0; i < nc; ++i) {
+    const MtaColumn& c = rep.columns[static_cast<std::size_t>(i)];
+    if (!c.now && i % every != 0) continue;
+    const std::string lb = c.now ? std::string("いま") : fmtShort(c.week);
+    const float tw = ImGui::CalcTextSize(lb.c_str()).x;
+    dl->AddText(ImVec2(xOf(i) - tw / 2, baseY + u.m.s(3)), c.now ? u.t->ink : u.t->muted, lb.c_str());
+  }
+  // ホバー: 列ごとに、選んだ系列の値（記録のない週は「記録なし」）
+  sm.cols.clear();
+  for (int i = 0; i < nc; ++i) {
+    const ImVec2 a(p.x + left + colW * static_cast<float>(i), p.y), b(p.x + left + colW * static_cast<float>(i + 1), baseY + axisH);
+    sm.cols.push_back({a, ImVec2(b.x, baseY)});
+    if (ImGui::IsMouseHoveringRect(a, b) && ImGui::IsWindowHovered()) {
+      std::string t;
+      for (std::size_t order = 0; order < shown.size(); ++order) {
+        if (!t.empty()) t += "\n\n";
+        t += mtaPointText(rep.series[shown[order]], rep.columns[static_cast<std::size_t>(i)], static_cast<std::size_t>(i));
+      }
+      ImGui::SetTooltip("%s", t.c_str());
+    }
+  }
+}
+
+// 表: マイルストーンごとに、週ごとの予測日と前の点からの動き。行を押すと、そのマイルストーンの詳細を開く
+void drawMtaTable(Frame& f, const MtaReport& rep, float W) {
+  UiState& u = f.u;
+  UiState::StatsMta& sm = u.statsMta;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float h = u.m.rowH();
+  const float nameW = std::clamp(W * 0.34f, u.m.s(120), u.m.s(340)), weekW = u.m.s(104), dateW = u.m.s(104);
+  const float moveW = std::max(W - nameW - weekW - dateW, u.m.s(80));
+  {
+    const ImVec2 q = ImGui::GetCursorScreenPos();
+    dl->AddText(ImVec2(q.x + u.m.s(6), q.y), u.t->muted, "マイルストーン");
+    dl->AddText(ImVec2(q.x + nameW, q.y), u.t->muted, "週");
+    dl->AddText(ImVec2(q.x + nameW + weekW, q.y), u.t->muted, "予測日");
+    dl->AddText(ImVec2(q.x + nameW + weekW + dateW, q.y), u.t->muted, "前の点からの動き");
+    ImGui::Dummy(ImVec2(W, ImGui::GetTextLineHeight() + u.m.s(4)));
+  }
+  constexpr std::size_t kMaxRows = 300;
+  std::size_t rows = 0, omitted = 0;
+  for (const MtaSeries& s : rep.series) {
+    bool first = true;
+    for (std::size_t c = 0; c < s.points.size(); ++c) {
+      const MtaPoint& pt = s.points[c];
+      if (!pt.has && !pt.ended) continue;
+      if (rows >= kMaxRows) {
+        ++omitted;
+        continue;
+      }
+      ++rows;
+      const ImVec2 p = ImGui::GetCursorScreenPos();
+      const bool hov = !s.removed && ImGui::IsMouseHoveringRect(p, ImVec2(p.x + W, p.y + h)) && ImGui::IsWindowHovered();
+      if (hov) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + h), u.t->hover, u.m.s(4));
+      const float ty = p.y + (h - ImGui::GetTextLineHeight()) / 2;
+      if (first) clippedText(u, ImVec2(p.x + u.m.s(6), ty), nameW - u.m.s(12), s.warn ? u.t->late : u.t->ink, (s.warn ? "! " : "") + mtaLegendText(s));
+      clippedText(u, ImVec2(p.x + nameW, ty), weekW - u.m.s(8), u.t->muted, mtaColumnText(rep.columns[c]));
+      clippedText(u, ImVec2(p.x + nameW + weekW, ty), dateW - u.m.s(8), u.t->ink, mtaDateText(pt));
+      clippedText(u, ImVec2(p.x + nameW + weekW + dateW, ty), moveW - u.m.s(8), pt.late ? u.t->late : u.t->ink, mtaMoveText(pt));
+      dl->AddLine(ImVec2(p.x, p.y + h), ImVec2(p.x + W, p.y + h), u.t->rowline);
+      if (first && !s.removed) sm.rows.push_back({s.id, p, ImVec2(p.x + W, p.y + h)});
+      if (hov) {
+        ImGui::SetTooltip("%s\n押すと、このマイルストーンの詳細を開きます", mtaPointText(s, rep.columns[c], c).c_str());
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) openDetail(f, s.id, 0);
+      }
+      ImGui::Dummy(ImVec2(W, h));
+      first = false;
+    }
+  }
+  sm.tableRows = static_cast<int>(rows);
+  if (omitted > 0) {
+    ImGui::TextDisabled("ほか %d 行は省きました。", static_cast<int>(omitted));
+  }
+}
+
+// 「マイルストーンの予測の推移」の節。図に出すマイルストーンの選択（プロジェクトごと）→ 凡例 → 折れ線 → 表
+void drawMta(Frame& f, const Result<MtaReport>& res, const Tree& T, float W) {
+  UiState& u = f.u;
+  UiState::StatsMta& sm = u.statsMta;
+  sm.drawn = true;
+  ImGui::Dummy(ImVec2(0, u.m.s(14)));
+  sm.secY = ImGui::GetCursorScreenPos().y;
+  ImGui::PushFont(u.fontBold);
+  ImGui::TextUnformatted("マイルストーンの予測の推移");
+  ImGui::PopFont();
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+  ImGui::TextDisabled("アプリを開いたとき、週に 1 回まで、マイルストーンの完了の見込み日を覚えています（最大 %d 週）。線が上へ動けば遅れ、下へ動けば前倒し、同じ高さなら安定です。絞り込みに関係なく、プロジェクト全体です。",
+                      static_cast<int>(kWeeklyAutoMaxSnapshots));
+  ImGui::PopTextWrapPos();
+  if (!res.ok()) {
+    ImGui::TextUnformatted("推移を集計できません。");
+    return;
+  }
+  const MtaReport& rep = res.value();
+  sm.series = static_cast<int>(rep.series.size());
+  sm.recorded = rep.recordedWeeks;
+  sm.warnings = rep.warnings;
+  sm.columns = static_cast<int>(rep.columns.size());
+  for (const MtaColumn& c : rep.columns)
+    if (!c.recorded && !c.now) ++sm.gaps;
+  if (rep.series.empty()) {
+    ImGui::TextUnformatted("マイルストーンがありません。種別が Milestone の課題を足すと、ここに予測の推移が出ます。");
+    return;
+  }
+  (void)T;
+  ImGui::TextDisabled("前の記録から %d 営業日以上遅れると「!」を付け、統計の上に警告を出します（アプリの設定で変えられます）。", rep.lateDays);
+  ImGui::Dummy(ImVec2(0, u.m.s(4)));
+  if (!rep.drawable()) {
+    sm.pending = true;
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+    ImGui::TextUnformatted(mtaPendingText(rep.recordedWeeks).c_str());
+    ImGui::PopTextWrapPos();
+    return;
+  }
+  // 図に出すマイルストーン（初めは警告のあるもの → 記録のあるもの）
+  if (!sm.inited) {
+    sm.inited = true;
+    sm.shownIds.clear();
+    for (std::size_t i : mtaDefaultShown(rep)) sm.shownIds.push_back(rep.series[i].id);
+  }
+  const auto isShown = [&](const std::string& id) { return std::find(sm.shownIds.begin(), sm.shownIds.end(), id) != sm.shownIds.end(); };
+  int nSel = 0;
+  for (const MtaSeries& s : rep.series) nSel += isShown(s.id) ? 1 : 0;
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted("図に出すマイルストーン");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(u.m.s(240));
+  const std::string pv = std::to_string(nSel) + " 本 / 全 " + std::to_string(rep.series.size()) + " 本";
+  const bool selOpen = ImGui::BeginCombo("##mtaSel", pv.c_str());
+  sm.selA = ImGui::GetItemRectMin();
+  sm.selB = ImGui::GetItemRectMax();
+  if (selOpen) {
+    for (std::size_t i = 0; i < rep.series.size(); ++i) {
+      const MtaSeries& s = rep.series[i];
+      ImGui::PushID(static_cast<int>(i));
+      const bool on = isShown(s.id);
+      const std::string lb = std::string(on ? "[x] " : "[ ] ") + (s.warn ? "! " : "") + mtaLegendText(s) + (s.recorded == 0 ? "　（記録なし）" : "");
+      if (ImGui::Selectable(lb.c_str(), on, ImGuiSelectableFlags_DontClosePopups)) {
+        if (on) sm.shownIds.erase(std::remove(sm.shownIds.begin(), sm.shownIds.end(), s.id), sm.shownIds.end());
+        else sm.shownIds.push_back(s.id);
+      }
+      ImGui::PopID();
+    }
+    ImGui::EndCombo();
+  }
+  std::vector<std::size_t> shown;
+  for (std::size_t i = 0; i < rep.series.size(); ++i)
+    if (isShown(rep.series[i].id)) shown.push_back(i);
+  sm.shownN = static_cast<int>(shown.size());
+  ImGui::Dummy(ImVec2(0, u.m.s(4)));
+  mtaLegend(f, rep, shown, W);
+  drawMtaChart(f, rep, shown, W);
+  if (sm.gaps > 0) {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
+    ImGui::TextDisabled("記録のない週が %d 週あります（点線の枠の帯。線は引かず、補いません）。", sm.gaps);
+    ImGui::PopTextWrapPos();
+  }
+  if (rep.truncatedWeeks) ImGui::TextDisabled("古い週は省きました（最大 %d 週）。", kMtaMaxWeeks);
+  ImGui::Dummy(ImVec2(0, u.m.s(8)));
+  ImGui::Text("週ごとの予測日（すべてのマイルストーン。行を押すと詳細を開きます）");
+  drawMtaTable(f, rep, W);
+}
+
 // 推移の節。担当者・ルート課題の選択（この節の中だけ。上の絞り込みや他の節には効かない）→ 集計 → 3 つの図
 void drawTrendBody(Frame& f, Session& s, const Tree& T, const std::vector<ScheduleRow>& R, const std::vector<Issue>& I, Day base, float W) {
   UiState& u = f.u;
@@ -1110,10 +1532,12 @@ void drawTrendBody(Frame& f, Session& s, const Tree& T, const std::vector<Schedu
   }
 }
 
-// 推移の節: 日付から出す 3 つの図（担当者・ルート課題の選択つき）→ 記録した件数の累積フロー
-void drawTrends(Frame& f, Session& s, const Tree& T, const std::vector<ScheduleRow>& R, const std::vector<Issue>& I, Day base, float W) {
+// 推移の節: 日付から出す 3 つの図（担当者・ルート課題の選択つき）→ 記録した件数の累積フロー → マイルストーンの予測の推移
+void drawTrends(Frame& f, Session& s, const Tree& T, const std::vector<ScheduleRow>& R, const std::vector<Issue>& I, Day base, const Result<MtaReport>& mta,
+                float W) {
   drawTrendBody(f, s, T, R, I, base, W);
   drawCfd(f, s, base, W);
+  drawMta(f, mta, T, W);
 }
 }  // namespace
 
@@ -1125,6 +1549,7 @@ void drawStatsView(Frame& f, ImVec2 size) {
   u.statsTrend.agingRows.clear();
   u.statsPlan = UiState::StatsPlan{};
   u.statsCfd = UiState::StatsCfd{};  // 描かないフレームでは前の結果を残さない
+  u.statsMta.resetDraw();
   Session* s = c.session();
   if (!s || !s->tree()) return;
   const Tree& T = *s->tree();
@@ -1132,6 +1557,14 @@ void drawStatsView(Frame& f, ImVec2 size) {
   const auto& I = s->viewIssues();
   const Day base = parseIso(s->settings().baseDate).value_or(0);
   const ProjectStats st = computeStats(T, I, R, base);
+  // マイルストーンの予測の推移と遅れの警告（週の頭のスナップショットから。Issue #75）。プロジェクトを切り替えたら図の選択を初期化する
+  if (u.statsMta.projectId != c.currentId()) {
+    u.statsMta = UiState::StatsMta{};
+    u.statsMta.projectId = c.currentId();
+  }
+  MtaOptions mtaOpt;
+  mtaOpt.lateDays = c.prefs().mtaLateDays;
+  const Result<MtaReport> mta = computeMta(T, I, R, s->calendar(), s->weeklyAuto(), base, s->baselineCompare(), mtaOpt);
 
   ImGui::BeginChild("##stats", size, ImGuiChildFlags_None);
   ImGui::SetCursorPos(ImVec2(u.m.s(24), u.m.s(16)));
@@ -1144,6 +1577,7 @@ void drawStatsView(Frame& f, ImVec2 size) {
   ImGui::TextDisabled("絞り込みに関係なく、プロジェクト全体の集計です（「推移」の節だけ、その中の選択欄で担当者・ルート課題を絞れます）。数える対象は作業（子を持たない課題）で、マイルストーンは別に数えます。基準日は %s です。",
                       fmtLong(base).c_str());
   ImGui::PopTextWrapPos();
+  drawMtaBand(f, mta.ok() ? &mta.value() : nullptr, W);  // 遅れの警告は統計の一番上
 
   if (st.tasks == 0) {
     ImGui::Dummy(ImVec2(0, u.m.s(12)));
@@ -1315,7 +1749,7 @@ void drawStatsView(Frame& f, ImVec2 size) {
   }
 
   // ---- 推移（作成日・完了日・更新日から。担当者・ルート課題の選択はこの節の中）----
-  drawTrends(f, *s, T, R, I, base, W);
+  drawTrends(f, *s, T, R, I, base, mta, W);
 
   ImGui::EndGroup();
   ImGui::Dummy(ImVec2(0, u.m.s(40)));

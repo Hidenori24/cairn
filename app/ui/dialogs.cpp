@@ -8,6 +8,7 @@
 
 #include "roadmap/links.hpp"
 #include "roadmap/issue_name.hpp"
+#include "roadmap/mta.hpp"
 #include "roadmap/project_io.hpp"
 #include "roadmap/text.hpp"
 #include "ui/internal.hpp"
@@ -918,6 +919,14 @@ void dlgAppSettings(Frame& f) {
                       withAlpha(u.t->c[1], dimAlpha(c)), u.m.s(3));
     ImGui::Dummy(ImVec2(u.m.s(128), h));
   }
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted("マイルストーンの予測の遅れの警告");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(u.m.s(180));
+  if (ImGui::SliderInt("##mtaLate", &pr.mtaLateDays, 1, 30, "%d 営業日")) pr.mtaLateDays = std::clamp(pr.mtaLateDays, kMtaMinLateDays, kMtaMaxLateDays);
+  if (ImGui::IsItemDeactivatedAfterEdit()) c.savePrefs();
+  ImGui::SameLine();
+  ImGui::TextDisabled("前の週の記録から、これ以上遅れると統計の上と週次レポートに出します");
 
   // ---- 操作 ----
   ImGui::SeparatorText("操作");

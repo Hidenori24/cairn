@@ -353,6 +353,8 @@ TEST_CASE("store: データフォルダの決定・prefs") {
   p.dataDir = "data/mine";
   p.uiScale = 125;
   p.dimPercent = 45;
+  CHECK(p.mtaLateDays == 5);  // マイルストーンの遅れの警告のしきい値の既定（Issue #75）
+  p.mtaLateDays = 8;
   p.confirmDelete = true;
   p.autoBaseToday = true;
   CHECK_FALSE(p.autoCompleteGitHub);  // 既定はオフ（Issue #61）
@@ -371,6 +373,7 @@ TEST_CASE("store: データフォルダの決定・prefs") {
   CHECK(q.dataDir == "data/mine");
   CHECK(q.uiScale == 125);
   CHECK(q.dimPercent == 45);
+  CHECK(q.mtaLateDays == 8);
   CHECK(q.confirmDelete);
   CHECK(q.autoBaseToday);
   CHECK(q.autoCompleteGitHub);
@@ -390,6 +393,13 @@ TEST_CASE("store: データフォルダの決定・prefs") {
   CHECK(loadPrefs(fs, "low.json").uiScale == 70);
   CHECK(b.dimPercent == 10);
   CHECK(b.dataDir.empty());
+  CHECK(b.mtaLateDays == 5);  // 書いていなければ既定
+  REQUIRE(fs.writeAtomic("mta0.json", R"({"mtaLateDays": 0})"));
+  CHECK(loadPrefs(fs, "mta0.json").mtaLateDays == 1);
+  REQUIRE(fs.writeAtomic("mta9.json", R"({"mtaLateDays": 99999})"));
+  CHECK(loadPrefs(fs, "mta9.json").mtaLateDays == 260);
+  REQUIRE(fs.writeAtomic("mtas.json", R"({"mtaLateDays": "x"})"));
+  CHECK(loadPrefs(fs, "mtas.json").mtaLateDays == 5);
   // 新しい課題の名前: 知らない形式は今のまま、長すぎる自由入力は切る
   REQUIRE(fs.writeAtomic("nn.json", R"({"newNameFormat": "zzz", "newNameCustom": 5})"));
   const Prefs n1 = loadPrefs(fs, "nn.json");

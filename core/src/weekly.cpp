@@ -442,6 +442,27 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
     fillB(wb.early, cEarly);
     fillB(wb.added, cAdded);
   }
+
+  // ---- マイルストーンの予測の推移と遅れの警告（Issue #75）----
+  if (in.autos) {
+    MtaOptions mo;
+    mo.lateDays = in.mtaLateDays;
+    Result<MtaReport> m = computeMta(T, in.issues, in.rows, cal, *in.autos, in.base, in.baseline, mo);
+    if (m.ok()) {
+      r.mta = std::move(m).value();
+      r.mtaAvailable = true;
+      std::stable_partition(r.mta.series.begin(), r.mta.series.end(), [](const MtaSeries& s) { return s.warn; });  // 警告を先頭に
+      if (r.mta.series.size() > cap) {
+        r.mtaOmitted = static_cast<int>(r.mta.series.size() - cap);
+        r.mta.series.resize(cap);
+      }
+      for (MtaSeries& s : r.mta.series) {  // 件名・Issue Id は他の節と同じ下ごしらえ（制御文字・壊れた UTF-8）
+        s.id = cleanText(s.id);
+        s.did = cleanText(s.did);
+        s.name = cleanText(s.name);
+      }
+    }
+  }
   return r;
 }
 
@@ -497,7 +518,18 @@ WeeklySnapshot makeWeeklySnapshot(const Tree& T, const std::vector<Issue>& issue
   for (int i : T.dfs) {
     if (i < 0 || static_cast<std::size_t>(i) >= n) continue;
     const std::size_t k = static_cast<std::size_t>(i);
-    if (!T.kids[k].empty() || T.kind[k] == Kind::Ms) continue;
+    if (!T.kids[k].empty()) continue;
+    if (T.kind[k] == Kind::Ms) {  // マイルストーンは items ではなく milestones に（Issue #75）
+      if (T.ids[k].empty() || T.ids[k].size() > kWeeklyMaxIdBytes || s.milestones.size() >= kWeeklyMaxSnapshotMilestones) continue;
+      const ScheduleRow& mr = rows[k];
+      WeeklySnapItem mi;
+      mi.id = T.ids[k];
+      mi.st = mr.done ? 'd' : mr.prog ? 'p' : 't';
+      mi.finish = mr.done && issues[k].resolved ? issues[k].resolved : OptDay(mr.asapFinish);
+      mi.late = !mr.done && mr.floatDays < 0;
+      s.milestones.push_back(std::move(mi));
+      continue;
+    }
     if (T.ids[k].empty() || T.ids[k].size() > kWeeklyMaxIdBytes) {
       s.truncated = true;  // 入らなかった課題がある: 次の週に「増えた」と数え違えないよう、不完全の印を付ける
       continue;
