@@ -495,7 +495,7 @@ std::string renderGantt(const Ctx& cx) {
   // 見出し
   const char* const zoomName = zoom == "day" ? "日" : zoom == "month" ? "月" : zoom == "all" ? "全体" : "週";
   const char* const colorName = g.by == GanttColorBy::Float ? "余裕" : g.by == GanttColorBy::Assignee ? "担当者" : "Epic";
-  out += std::string("<p class=\"note\">拡大率: ") + zoomName + "　色分け: " + colorName + "　時間軸は約2か月ごとに分割　基準日の線: " + escapeXml(fmtLong(in.base)) + "</p>\n";
+  out += std::string("<p class=\"note\">拡大率: ") + zoomName + "　色分け: " + colorName + "　時間軸は約2か月ごとに分割　‹/› は前後の期間へ続く印　基準日の線: " + escapeXml(fmtLong(in.base)) + "</p>\n";
   if (cx.rows.size() > g.nRows)
     out += "<p class=\"warn\">課題が " + std::to_string(cx.rows.size()) + " 行あるため、ガントには先頭の " + std::to_string(g.nRows) +
            " 行だけを出しています（リストには全部出ます）。</p>\n";
@@ -586,10 +586,28 @@ std::string renderGantt(const Ctx& cx) {
     const double panelW = kLeftW + timelineW;
     for (std::size_t c = 0; c < nChunks; ++c) {
       const DrawChunk& draw = drawChunks[c];
+      std::string continuations;
+      const std::size_t r0 = c * g.rowsPerChunk, r1 = std::min(g.nRows, r0 + g.rowsPerChunk);
+      const double windowEnd = x0 + std::min(kPrintDaysPerPanel, days - firstDay) * static_cast<double>(g.ax.px);
+      for (std::size_t i = r0; i < r1; ++i) {
+        const VisibleRow& vr = rows[i];
+        const ScheduleRow& sr = in.rows[static_cast<std::size_t>(vr.id)];
+        const GanttRowShape shape = ganttRowShape(g.ax, T, sr, vr.id, vr.isPar);
+        double barLo = shape.kind == GanttRowShape::Kind::Milestone ? shape.msX - 7.2 : shape.x0;
+        double barHi = shape.kind == GanttRowShape::Kind::Milestone ? shape.msX + 7.2 : shape.x1;
+        if (barLo < x0 && barHi > x0) {
+          const double y = ganttRowY(static_cast<float>(g.headH), static_cast<float>(kRowH), static_cast<int>(i - r0)) + kRowH / 2 + 5;
+          addText(continuations, x0 + 9, y, "‹", TextStyle{15, true, "middle", hex(g.k.ink), 1});
+        }
+        if (barLo < windowEnd && barHi > windowEnd) {
+          const double y = ganttRowY(static_cast<float>(g.headH), static_cast<float>(kRowH), static_cast<int>(i - r0)) + kRowH / 2 + 5;
+          addText(continuations, windowEnd - 9, y, "›", TextStyle{15, true, "middle", hex(g.k.ink), 1});
+        }
+      }
       std::string svg = "<div class=\"gseg" + std::string(panel > 0 && c == 0 ? " gantt-panel-start" : "") + "\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" + pathNum(panelW) + "\" height=\"" + pathNum(draw.height) + "\" viewBox=\"0 0 " + pathNum(panelW) + " " + pathNum(draw.height) + "\" role=\"img\" aria-label=\"ガント、期間 " + std::to_string(panel + 1) + " / " + std::to_string(panels) + "、行 " + std::to_string(c + 1) + " / " + std::to_string(nChunks) + "\">\n";
       if (panel == 0 && c == 0) svg += sharedDefs;
       svg += "<rect width=\"" + pathNum(panelW) + "\" height=\"" + pathNum(draw.height) + "\" fill=\"" + hex(g.k.surface) + "\"/>" + g.leftHeader();
-      svg += "<svg x=\"" + pathNum(kLeftW) + "\" y=\"0\" width=\"" + pathNum(timelineW) + "\" height=\"" + pathNum(draw.height) + "\" viewBox=\"" + pathNum(x0) + " 0 " + pathNum(timelineW) + " " + pathNum(draw.height) + "\"><use href=\"#gb\"/><use href=\"#gh\"/><use href=\"#gbars" + std::to_string(c) + "\"/><use href=\"#garrows" + std::to_string(c) + "\"/></svg>";
+      svg += "<svg x=\"" + pathNum(kLeftW) + "\" y=\"0\" width=\"" + pathNum(timelineW) + "\" height=\"" + pathNum(draw.height) + "\" viewBox=\"" + pathNum(x0) + " 0 " + pathNum(timelineW) + " " + pathNum(draw.height) + "\"><use href=\"#gb\"/><use href=\"#gh\"/><use href=\"#gbars" + std::to_string(c) + "\"/><use href=\"#garrows" + std::to_string(c) + "\"/>" + continuations + "</svg>";
       svg += "<use href=\"#gseps" + std::to_string(c) + "\"/><use href=\"#gleft" + std::to_string(c) + "\"/>";
       svg += "</svg></div>\n";
       out += svg;

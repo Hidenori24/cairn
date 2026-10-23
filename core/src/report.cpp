@@ -297,6 +297,8 @@ svg{display:block;font-family:inherit;font-size:12px}
 .card{margin:0 0 18px}
 .gseg{break-inside:avoid;page-break-inside:avoid}
 .gantt-panel-start{break-before:page;page-break-before:always}
+.gantt-first{page:gantt}
+.part.gantt{page:gantt}
 .tiles{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:6px 0 10px}
 .tile{border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--card)}
 .tile .l{font-size:11px;color:var(--muted)}
@@ -313,7 +315,8 @@ td.nm{overflow-wrap:anywhere}
 .st-done{color:var(--ok)}.st-prog{color:var(--accent)}.st-todo{color:var(--muted)}
 .rk-late{color:var(--late);font-weight:700}.rk-tight{color:var(--tight);font-weight:600}.rk-ok{color:var(--ok)}.rk-done{color:var(--muted)}
 footer{margin-top:36px;padding-top:8px;border-top:1px solid var(--line);color:var(--muted);font-size:11px}
-@page{size:A4 landscape;margin:10mm;@bottom-right{content:counter(page) " / " counter(pages);font-size:9px;color:#667085}}
+@page{size:A4 portrait;margin:10mm;@bottom-right{content:counter(page) " / " counter(pages);font-size:9px;color:#667085}}
+@page gantt{size:A4 landscape;margin:10mm;@bottom-right{content:counter(page) " / " counter(pages);font-size:9px;color:#667085}}
 @media screen and (max-width:760px){.tiles{grid-template-columns:repeat(2,1fr)}.page{padding:12px 10px}}
 @media print{
 body{font-size:11px;line-height:1.5}
@@ -363,7 +366,7 @@ std::string exportHtml(const ExportInput& in, const ExportOptions& opt) {
   h += "<title>" + escapeXml(title) + " - 報告</title>\n<style>\n" + css(k) + "</style>\n</head>\n<body>\n<div class=\"page\">\n";
 
   // ヘッダ: プロジェクト名・基準日・出力した日時
-  h += "<header>\n<h1>" + escapeXml(title) + "</h1>\n<p class=\"meta\">基準日 <b>" + escapeXml(fmtLong(in.base)) + "</b>";
+  h += std::string("<header") + (consistent && opt.gantt ? " class=\"gantt-first\"" : std::string()) + ">\n<h1>" + escapeXml(title) + "</h1>\n<p class=\"meta\">基準日 <b>" + escapeXml(fmtLong(in.base)) + "</b>";
   if (in.clock) h += "　／　出力 <b>" + escapeXml(fmtDateTime(*in.clock)) + "</b>";
   if (consistent) {
     const Summary sm = summarize(T, in.rows);
@@ -390,15 +393,16 @@ std::string exportHtml(const ExportInput& in, const ExportOptions& opt) {
     h += "<p class=\"empty\">書き出す内容が選ばれていません。</p>\n";
   } else {
     bool first = true;
-    const auto part = [&](const std::string& body) {
-      h += std::string("<section class=\"part") + (first ? " first" : "") + "\">\n" + body + "</section>\n";
+    const auto part = [&](const std::string& body, bool gantt = false) {
+      h += std::string("<section class=\"part") + (first ? " first" : "") + (gantt ? " gantt" : "") + "\">\n" + body + "</section>\n";
       first = false;
     };
-    if (opt.gantt) part(report::renderGantt(cx));
+    if (opt.gantt) part(report::renderGantt(cx), true);
     if (opt.stats) part(report::renderStats(cx));
     if (opt.list) part(report::renderList(cx));
   }
-  h += "</main>\n<footer>このアプリで出力（Cairn）</footer>\n</div>\n</body>\n</html>\n";
+  const bool ganttOnly = consistent && opt.gantt && !opt.stats && !opt.list;
+  h += "</main>\n<footer" + std::string(ganttOnly ? " class=\"gantt-first\"" : "") + ">このアプリで出力（Cairn）</footer>\n</div>\n</body>\n</html>\n";
   return h;
 }
 
