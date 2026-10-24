@@ -1,7 +1,7 @@
 # Cairn (C++)
 
 JIRA CSVを読み、営業日でスケジュールを計算し、ガント・ボード・リスト・ギャップで見せるデスクトップアプリ。
-仕様は docs/SPEC.md、正解データは golden/。
+仕様は docs/SPEC.md、正解データは golden/。文書の入口は docs/README.md、現行の開発・リリース手順は docs/DEVELOPMENT.md と docs/RELEASING.md。
 
 ## ルール
 - 仕様と golden が食い違ったら golden が正。仕様に書かれていない点は暫定判断で進め、docs/spec-questions.md に書く（止まらない）。
@@ -22,8 +22,8 @@ JIRA CSVを読み、営業日でスケジュールを計算し、ガント・ボ
 - Windows 向けのクロスビルド（コンパイル確認）: `cmake --preset mingw-cross`
 - ネットワークがないとき: `-DFETCHCONTENT_SOURCE_DIR_IMGUI=<imgui のソース>` などで依存を差し替える
 
-## フェーズ
-docs/SPEC.md 第13章の P0〜P7 を順に。各フェーズの受け入れ条件を満たしてから次へ。完了ごとに docs/CHANGELOG.md を更新。
+## 現行版の変更
+P0〜P7 は初期実装の記録。現在の機能追加・改善は docs/DEVELOPMENT.md に従い、変更を docs/CHANGELOG.md に記録する。保存形式を変える場合は docs/COMPAT.md の手順を守る。
 
 ## 触らないもの
 - golden/（正解データ。更新するときはユーザーに確認）
