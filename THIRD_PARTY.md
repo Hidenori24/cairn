@@ -1,6 +1,6 @@
 # サードパーティのソフトウェア
 
-Cairn（旧称 Project Roadmap。Copyright (c) 2026 Hidenori24。MIT ライセンス）が使っているサードパーティのソフトウェアです。商用利用できるライセンスのものだけを使っています。
+Cairn（旧称 Project Roadmap。Copyright (c) 2026 Hidenori24。MIT ライセンス）が使っているサードパーティのソフトウェアです。商用利用できるライセンスのものだけを使っています。表の JSON・doctest の版は FetchContent の既定で、インストール済みパッケージを使う場合は異なることがあります（`cmake/Dependencies.cmake`）。
 
 | 名前 | 版 | 用途 | ライセンス | 配布物に含むか |
 |---|---|---|---|---|
@@ -20,3 +20,8 @@ stb_image は単一のヘッダで、FetchContent ではなくリポジトリに
 ## 開発時だけ使うもの
 
 - Python 3（`tools/make_icon.py`・`tools/gen_ui_glyphs.py`）
+- Inno Setup 6（Windows インストーラの作成。生成したインストーラは配布します）
+
+## 任意の外部ツール（同梱しない）
+
+- GitHub CLI（`gh`）: 利用者がリンクの状態確認を押したときだけ呼び出します。Cairn の通常の計画・編集には不要です。認証と通信は利用者の `gh` の設定を使います。
