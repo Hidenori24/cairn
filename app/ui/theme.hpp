@@ -5,6 +5,9 @@
 
 namespace roadmap::ui {
 
+inline constexpr float kBodyFontSize = 15.f;
+inline constexpr float kHeadingFontSize = 20.f;
+
 struct Tokens {
   ImU32 bg, surface, surface2, surface3, ink, muted, line, line2;
   ImU32 accent, accentInk, accentBg;

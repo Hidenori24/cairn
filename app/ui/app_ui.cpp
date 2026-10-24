@@ -598,8 +598,9 @@ void drawTopBar(Frame& f) {
   // 右側: 保存状態 / Ctrl+K / 元に戻す / やり直す / ＋課題 / その他
   const std::string saved = c.saveState() == app::SaveState::Error ? S::kSaveError : c.saveState() == app::SaveState::Saving ? S::kSaving
       : std::string(S::kSaved) + (c.savedAt().empty() ? "" : " " + c.savedAt());
+  const std::string scaleLabel = std::to_string(c.prefs().uiScale) + "% ▼";
   const float rightW = ImGui::CalcTextSize(saved.c_str()).x + ImGui::CalcTextSize("レポート ▼").x +
-      ImGui::CalcTextSize(S::kAddIssue).x + u.m.s(16 + 28 * 4 + 20 * 2 + 28);
+      ImGui::CalcTextSize(S::kAddIssue).x + ImGui::CalcTextSize(scaleLabel.c_str()).x + u.m.s(16 + 28 * 4 + 20 * 3 + 34);
   ImGui::SameLine(0, 0);
   const float rx = p0.x + W - rightW - u.m.s(12);
   if (ImGui::GetCursorScreenPos().x < rx) ImGui::SetCursorScreenPos(ImVec2(rx, by));
@@ -674,6 +675,28 @@ void drawTopBar(Frame& f) {
     if (!id.empty()) beginEdit(f, id, EditField::Name, true);
   }
   remember("add");
+  ImGui::SameLine(0, u.m.s(6));
+  if (iconTextButton(u, "scale", nullptr, scaleLabel.c_str())) ImGui::OpenPopup("##scale");
+  remember("scale");
+  tip("文字とボタンの大きさを変更します（Windows の表示倍率に追加）");
+  const ImVec2 scaleAnchor = u.headerControls["scale"].second;
+  ImGui::SetNextWindowPos(ImVec2(scaleAnchor.x, scaleAnchor.y + u.m.s(4)), ImGuiCond_Appearing, ImVec2(1, 0));
+  if (ImGui::BeginPopup("##scale")) {
+    if (!u.imeComposing && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+      ImGui::CloseCurrentPopup();
+      u.popupEscFrame = ImGui::GetFrameCount();
+    }
+    ImGui::TextDisabled("文字・ボタンの大きさ");
+    for (int pct : {100, 125, 150, 175, 200}) {
+      const std::string label = std::to_string(pct) + (pct == 100 ? "%（標準）" : "%");
+      if (ImGui::MenuItem(label.c_str(), nullptr, c.prefs().uiScale == pct)) c.setUiScale(pct);
+      remember("scale:" + std::to_string(pct));
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("表示設定…")) openDialog(f, Dlg::AppSettings);
+    ImGui::TextDisabled("Ctrl+ホイールで調整 / Ctrl+0で100%%");
+    ImGui::EndPopup();
+  }
   ImGui::SameLine(0, u.m.s(4));
   if (iconButton(u, "more", "more", S::kMore)) ImGui::OpenPopup("##more");
   remember("more");
@@ -710,9 +733,18 @@ void drawTopBar(Frame& f) {
   } tabs[] = {{View::Gantt, "gantt", S::kViewGantt}, {View::Board, "board", S::kViewBoard},
               {View::List, "list", S::kViewList}, {View::Goals, "target", S::kViewGoals}, {View::Stats, "chart", S::kViewStats},
               {View::Today, "sun", S::kViewToday}};
+  const float searchW = std::clamp(W * 0.25f, u.m.s(180), u.m.s(360));
+  float labelledW = searchW + u.m.s(24);
+  for (const auto& tab : tabs) labelledW += ImGui::CalcTextSize(tab.label).x + u.m.s(42);
+  if (s && s->tree()) {
+    const Summary sm = s->summary();
+    const std::string summary = std::string(S::kLate) + " " + std::to_string(sm.late) + S::kTight + " " + std::to_string(sm.tight) +
+        "完了 " + std::to_string(sm.done) + " / 全体 " + std::to_string(sm.total) + S::kGoal;
+    labelledW += ImGui::CalcTextSize(summary.c_str()).x + u.m.s(108);
+  }
+  const bool narrow = W < labelledW;
   for (const auto& t : tabs) {
     ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
-    const bool narrow = W < u.m.s(1040);
     const bool pressed = narrow ? iconButton(u, t.label, t.icon, t.label, s != nullptr, cur == t.v)
                                 : iconTextButton(u, t.label, t.icon, t.label, false, cur == t.v, s != nullptr);
     if (pressed) c.setView(t.v);
@@ -724,7 +756,7 @@ void drawTopBar(Frame& f) {
   // 絞り込み欄
   {
     ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
-    const float w = std::clamp(W * 0.25f, u.m.s(180), u.m.s(360));
+    const float w = searchW;
     const ImVec2 q = ImGui::GetCursorScreenPos();
     if (u.focusSearch) {
       ImGui::SetWindowFocus();  // Esc で外したフォーカスも戻してから入力欄へ移す

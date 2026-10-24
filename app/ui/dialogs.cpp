@@ -927,6 +927,7 @@ void dlgAppSettings(Frame& f) {
   ImGui::EndDisabled();
   ImGui::SameLine();
   ImGui::TextDisabled("Ctrl+ホイール・Ctrl+「+」「-」・Ctrl+0 でも変えられます");
+  ImGui::TextDisabled("Windows の表示倍率に加えて、文字とボタンの大きさを調整します。");
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted("絞り込みで薄くする課題の濃さ");
   ImGui::SameLine();

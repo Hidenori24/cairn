@@ -165,6 +165,23 @@ struct Harness {
       ImGui::Render();
     }
   }
+  void renderScale(float scale) {
+    // Win32 と同様に文字も作り直す。部品の寸法だけを広げるテストにはしない。
+    ImGuiIO& io = ImGui::GetIO();
+    io.Fonts->Clear();
+    ImFontConfig cfg;
+    cfg.SizePixels = ui::kBodyFontSize * scale;
+    u.fontBody = io.Fonts->AddFontDefault(&cfg);
+    u.fontMono = u.fontBold = u.fontBody;
+    cfg.SizePixels = ui::kHeadingFontSize * scale;
+    u.fontLarge = io.Fonts->AddFontDefault(&cfg);
+    io.FontDefault = u.fontBody;
+    unsigned char* pixels;
+    int w, h;
+    io.Fonts->GetTexDataAsRGBA32(&pixels, &w, &h);
+    u.m.scale = scale;
+    ui::applyStyle(*u.t, u.m);
+  }
   void key(ImGuiKey k, bool ctrl = false, bool shift = false) {
     ImGuiIO& io = ImGui::GetIO();
     io.AddKeyEvent(ImGuiMod_Ctrl, ctrl);
@@ -599,9 +616,50 @@ void navigationUxScenario() {
   }
   check(lastY > firstY && hasRect(h.u.clearFiltersBtn), "条件が多いときは折り返し、解除の入口を保つ");
 }
+void readabilityScenario() {
+  Harness h;
+  h.c.createProject(app::SampleKind::Hierarchy, "表示倍率の確認", "DEV");
+  h.frame(3);
+  auto scale = h.u.headerControls.find("scale");
+  check(scale != h.u.headerControls.end(), "設定を開かずに表示倍率を選べる");
+  if (scale == h.u.headerControls.end()) return;
+  const ImVec2 button = center(scale->second);
+  h.click(button.x, button.y);
+  h.frame(3);
+  const auto preset = h.u.headerControls.find("scale:150");
+  check(preset != h.u.headerControls.end(), "表示倍率の150%を選べる");
+  if (preset == h.u.headerControls.end()) return;
+  const ImVec2 choice = center(preset->second);
+  h.click(choice.x, choice.y);
+  check(h.c.prefs().uiScale == 150 && loadPrefs(h.fs, "prefs.json").uiScale == 150, "選んだ倍率を保存する");
+  ImGui::GetIO().DisplaySize = ImVec2(3840, 2160);
+  for (bool compact : {false, true}) {
+    h.u.m.compact = compact;
+    for (float dpi : {1.5f, 2.f}) {
+      for (int pct : {100, 125, 150, 200}) {
+        h.c.setUiScale(pct);
+        h.renderScale(dpi * static_cast<float>(pct) / 100.f);
+        h.frame(3);
+        // ImGui 1.90 はフォントの小数部分を切り捨てる（15px × 150% は22px）。
+        check(h.u.fontBody->FontSize >= 22.f && h.u.fontLarge->FontSize > h.u.fontBody->FontSize,
+              "高DPIでは本文・見出しを拡大し、見出しの大きさを保つ");
+        for (const char* id : {"project", "scale", "reports", "add", "more", "search", "late", "tight", "summary", "goal", "plan"}) {
+          const auto control = h.u.headerControls.find(id);
+          const bool fits = control != h.u.headerControls.end() && hasRect(control->second) &&
+              control->second.first.x >= 0 && control->second.second.x <= 3840;
+          check(fits, (std::string("実際のフォントを拡大しても4K画面の中に操作が収まる: ") + id).c_str());
+        }
+      }
+    }
+  }
+}
 }  // namespace
 
 int main(int argc, char** argv) {
+  if (argc == 2 && std::string(argv[1]) == "--readability") {
+    readabilityScenario();
+    return failures ? 1 : 0;
+  }
   if (argc == 2 && std::string(argv[1]) == "--ux") {
     navigationUxScenario();
     return failures ? 1 : 0;
@@ -614,6 +672,7 @@ int main(int argc, char** argv) {
   readOnlyScenario(true);
   keyboardUxScenario();
   navigationUxScenario();
+  readabilityScenario();
   Harness h;
   h.frame(3);  // はじめに
   check(h.c.firstRun(), "初回はプロジェクトなし");
