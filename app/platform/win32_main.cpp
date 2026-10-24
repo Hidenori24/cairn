@@ -217,7 +217,7 @@ void buildFonts(ui::UiState& u) {
   ImGuiIO& io = ImGui::GetIO();
   io.Fonts->Clear();
   const std::string dir = fontsDir();
-  const float px = 13.0f * uiScale();
+  const float px = ui::kBodyFontSize * uiScale();
   // 文字の範囲: 日本語（常用漢字を含む約3,000字）+ 記号 + データにある文字
   ImFontGlyphRangesBuilder rb;
   rb.AddRanges(io.Fonts->GetGlyphRangesJapanese());
@@ -255,7 +255,11 @@ void buildFonts(ui::UiState& u) {
     io.Fonts->AddFontFromFileTTF(p.c_str(), size, &cfg, sym);
   };
   u.fontBody = load(regular, 4, px, false, ranges.Data);
-  if (!u.fontBody) u.fontBody = io.Fonts->AddFontDefault();
+  if (!u.fontBody) {
+    ImFontConfig cfg;
+    cfg.SizePixels = px;
+    u.fontBody = io.Fonts->AddFontDefault(&cfg);
+  }
   symbols(px);
   // 等幅（数字・日付）: Consolas + 日本語を合成
   {
@@ -269,7 +273,7 @@ void buildFonts(ui::UiState& u) {
   u.fontBold = load(bold, 2, px, false, ranges.Data);
   if (u.fontBold) symbols(px);
   else u.fontBold = u.fontBody;
-  u.fontLarge = load(regular, 4, 17.0f * gDpiScale, false, ranges.Data);
+  u.fontLarge = load(regular, 4, ui::kHeadingFontSize * uiScale(), false, ranges.Data);
   if (!u.fontLarge) u.fontLarge = u.fontBody;
   io.Fonts->Build();
   ImGui_ImplDX11_InvalidateDeviceObjects();

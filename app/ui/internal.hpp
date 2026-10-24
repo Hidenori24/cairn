@@ -21,6 +21,7 @@ void drawBoardView(Frame& f, ImVec2 size);
 void drawGoalsView(Frame& f, ImVec2 size);
 void drawStatsView(Frame& f, ImVec2 size);
 void drawTodayView(Frame& f, ImVec2 size);
+void drawActiveFilters(Frame& f);
 void drawDetailPanel(Frame& f, ImVec2 size);
 // 詳細パネルの「添付」タブ（i = 課題の添字）
 void drawAttachTab(Frame& f, int i);

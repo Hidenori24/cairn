@@ -1,10 +1,12 @@
 // rmcli: 計算・変換・検査を画面なしで実行する（SPEC 13章 P4）
 // 終了コード: 成功 0 / 入力の誤り 2 / 内部エラー 1
 #include <algorithm>
+#include <charconv>
 #include <cstdlib>
 #include <stdexcept>
 #include <exception>
 #include <fstream>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -25,6 +27,9 @@
 #include "roadmap/project_io.hpp"
 #include "roadmap/store.hpp"
 #include "roadmap/schedule.hpp"
+#include "roadmap/report.hpp"
+#include "roadmap/weekly.hpp"
+#include "roadmap/text.hpp"
 
 using namespace roadmap;
 
@@ -56,6 +61,10 @@ Args parseArgs(int argc, char** argv, int from, const std::vector<std::string>& 
   Args a;
   for (int i = from; i < argc; ++i) {
     std::string s = argv[i];
+    if (s == "--") {
+      while (++i < argc) a.pos.emplace_back(argv[i]);
+      break;
+    }
     if (s == "-o") s = "--out";
     if (s == "-h") s = "--help";
     if (s.rfind("--", 0) == 0) {
@@ -65,7 +74,8 @@ Args parseArgs(int argc, char** argv, int from, const std::vector<std::string>& 
         v = k.substr(eq + 1);
         k = k.substr(0, eq);
       } else if (std::find(flags.begin(), flags.end(), k) == flags.end()) {
-        if (i + 1 >= argc) throw InputError("--" + k + " に値がありません");
+        if (i + 1 >= argc || std::string(argv[i + 1]).rfind("--", 0) == 0 || std::string(argv[i + 1]) == "-o")
+          throw InputError("--" + k + " に値がありません");
         v = argv[++i];
       }
       a.opt[k] = v;
@@ -121,14 +131,64 @@ Loaded load(const Args& a, const std::string& path) {
   L.opt.base = *b;
   L.opt.scenario = a.get("scenario", kStdScenario);
   if (a.has("level")) {
-    const int cap = std::atoi(a.get("level").c_str());
-    if (cap < 1) throw InputError("--level は1以上の整数です");
+    const std::string value = a.get("level");
+    int cap = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), cap);
+    if (parsed.ec != std::errc() || parsed.ptr != value.data() + value.size() || cap < 1)
+      throw InputError("--level は1以上の整数です");
     L.opt.resource = {true, cap};
   }
   return L;
 }
 
 Json optDate(const OptDay& d) { return d ? Json(fmtIso(*d)) : Json(nullptr); }
+
+// 報告コマンドは綴り違いを既定値として処理しない。入力 CSV や休業日ファイルも上書きしない。
+void checkDocumentArgs(const Args& a, const std::vector<std::string>& options, const std::vector<std::string>& flags) {
+  for (const auto& [key, value] : a.opt) {
+    if (key == "help" || key == "verbose") continue;
+    if (std::find(flags.begin(), flags.end(), key) != flags.end()) {
+      if (!value.empty()) throw InputError("--" + key + " に値は指定できません");
+    } else if (std::find(options.begin(), options.end(), key) == options.end()) {
+      throw InputError("不明なオプション: --" + key);
+    }
+  }
+  if (a.pos.size() != 1) throw InputError("入力 CSV は1つ指定してください");
+}
+
+std::filesystem::path utf8Path(const std::string& path) {
+  return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(path.data()), path.size()));
+}
+
+void checkDocumentOutput(const Args& a, bool html) {
+  if (!a.has("out") || a.get("out") == "-") return;
+  const std::string out = a.get("out");
+  const Status path = html ? checkReportPath(out) : checkWeeklyPath(out, false);
+  if (!path) throw InputError(path.error());
+  for (const std::string& input : {a.pos[0], a.get("holidays")}) {
+    if (input.empty()) continue;
+    std::error_code ec;
+    if (std::filesystem::equivalent(utf8Path(input), utf8Path(out), ec) && !ec)
+      throw InputError("入力ファイルと同じ保存先には書き出せません");
+  }
+}
+
+std::string documentName(const Args& a) {
+  if (a.has("name")) return a.get("name");
+  const auto name = utf8Path(a.pos[0]).stem().u8string();
+  return std::string(reinterpret_cast<const char*>(name.data()), name.size());
+}
+
+std::string choice(const Args& a, const std::string& key, const std::string& def, const std::vector<std::string>& values) {
+  const std::string v = a.get(key, def);
+  if (std::find(values.begin(), values.end(), v) == values.end()) throw InputError("--" + key + " の値が正しくありません: " + v);
+  return v;
+}
+
+void documentWarnings(const Loaded& L, const Computed& c) {
+  for (const auto& w : L.imp.warns) std::cerr << "注意: " << w << "\n";
+  for (const auto& w : c.T.warns) std::cerr << "注意: " << w << "\n";
+}
 
 // ---------------------------------------------------------------- コマンド
 const char* const kHelpSchedule =
@@ -212,6 +272,95 @@ int cmdImportExport(const Args& a) {
   auto c = computeAll(L.imp.issues, L.imp.meta, L.cal, L.opt);
   if (!c) throw InputError(c.error());
   writeOut(a, exportJiraCsv(L.imp.issues, L.imp.meta, &c.value()));
+  return kOk;
+}
+
+const char* const kHelpReport =
+    "使い方: rmcli report <CSV> [--name 名前] [--sections gantt,stats,list]\n"
+    "                     [--zoom day|week|month|all] [--color-by root|float|asg] [--dark] [--no-deps]\n"
+    "                     [--base YYYY-MM-DD] [--scenario 名前] [--level 同時件数] [--holidays ファイル] [-o 出力.html]\n"
+    "  GUI と同じ HTML 報告を出力します。既定は全項目・週表示・ライト。名前の既定は CSV のファイル名です。\n"
+    "  -o の省略または - で標準出力。注意は標準エラーへ出します。\n"
+    "  CSV だけを読みます。GUI の設定・履歴・ベースラインは読み込みません。\n";
+
+int cmdReport(const Args& a) {
+  if (a.has("help") || a.pos.empty()) {
+    std::cout << kHelpReport;
+    return a.has("help") ? kOk : kInput;
+  }
+  checkDocumentArgs(a, {"name", "sections", "zoom", "color-by", "base", "scenario", "level", "holidays", "out"},
+                    {"dark", "no-deps"});
+  ExportOptions opt;
+  opt.zoom = choice(a, "zoom", "week", {"day", "week", "month", "all"});
+  opt.colorBy = choice(a, "color-by", "root", {"root", "float", "asg"});
+  opt.dark = a.has("dark");
+  opt.showDeps = !a.has("no-deps");
+  opt.gantt = opt.stats = opt.list = false;
+  const std::string sections = a.get("sections", "gantt,stats,list");
+  for (std::size_t start = 0;;) {
+    const std::size_t end = sections.find(',', start);
+    const std::string section = text::trim(sections.substr(start, end == std::string::npos ? end : end - start));
+    if (section == "gantt") opt.gantt = true;
+    else if (section == "stats") opt.stats = true;
+    else if (section == "list") opt.list = true;
+    else throw InputError("--sections は gantt,stats,list からカンマ区切りで指定してください");
+    if (end == std::string::npos) break;
+    start = end + 1;
+  }
+  checkDocumentOutput(a, true);
+  Loaded L = load(a, a.pos[0]);
+  auto c = computeAll(L.imp.issues, L.imp.meta, L.cal, L.opt);
+  if (!c) throw InputError(c.error());
+  documentWarnings(L, *c);
+  ExportInput in(c->T, L.imp.issues, c->R, L.cal);
+  in.meta = &L.imp.meta;
+  in.base = L.opt.base;
+  in.projectName = documentName(a);
+  in.resource = L.opt.resource;
+  writeOut(a, exportHtml(in, opt));
+  return kOk;
+}
+
+const char* const kHelpWeekly =
+    "使い方: rmcli weekly <CSV> [--name 名前] [--format markdown|html] [--period this|last]\n"
+    "                     [--from YYYY-MM-DD --to YYYY-MM-DD]\n"
+    "                     [--base YYYY-MM-DD] [--scenario 名前] [--level 同時件数] [--holidays ファイル] [-o 出力.md|出力.html]\n"
+    "  GUI と同じ週次レポートを出力します。既定は今週（月曜〜日曜）の Markdown。\n"
+    "  --period last は先週。--from と --to は任意の期間（最大366日。--period と併用不可）。\n"
+    "  -o の省略または - で標準出力。注意は標準エラーへ出します。\n"
+    "  CSV だけを読み、GUI の設定・履歴・所感・ベースラインを読み込んだり変更したりしません。\n";
+
+int cmdWeekly(const Args& a) {
+  if (a.has("help") || a.pos.empty()) {
+    std::cout << kHelpWeekly;
+    return a.has("help") ? kOk : kInput;
+  }
+  checkDocumentArgs(a, {"name", "format", "period", "from", "to", "base", "scenario", "level", "holidays", "out"}, {});
+  const bool html = choice(a, "format", "markdown", {"markdown", "html"}) == "html";
+  WeeklyOptions opt;
+  opt.period = choice(a, "period", "this", {"this", "last"}) == "last" ? WeeklyPeriod::LastWeek : WeeklyPeriod::ThisWeek;
+  if (a.has("from") || a.has("to")) {
+    if (!a.has("from") || !a.has("to") || a.has("period"))
+      throw InputError("--from と --to は両方指定し、--period とは併用しないでください");
+    const OptDay from = parseIso(a.get("from")), to = parseIso(a.get("to"));
+    if (!from || !to) throw InputError("--from と --to は YYYY-MM-DD で指定してください");
+    opt.period = WeeklyPeriod::Custom;
+    opt.from = *from;
+    opt.to = *to;
+  }
+  checkDocumentOutput(a, html);
+  Loaded L = load(a, a.pos[0]);
+  auto c = computeAll(L.imp.issues, L.imp.meta, L.cal, L.opt);
+  if (!c) throw InputError(c.error());
+  documentWarnings(L, *c);
+  const auto stats = computeStats(c->T, L.imp.issues, c->R, L.opt.base);
+  const auto loadReport = computeLoad(c->T, L.imp.issues, c->R, L.cal, L.opt.base, L.opt.resource);
+  WeeklyInput in(c->T, L.imp.issues, c->R, L.cal, stats, loadReport);
+  in.base = L.opt.base;
+  in.projectName = documentName(a);
+  in.meta = &L.imp.meta;
+  const auto report = buildWeeklyReport(in, opt);
+  writeOut(a, html ? weeklyHtml(report) : weeklyMarkdown(report));
   return kOk;
 }
 
@@ -313,6 +462,8 @@ const char* const kHelp =
     "  check-jira     JIRA用CSV の互換チェック\n"
     "  gen            テスト用の大きなCSVを作る\n"
     "  validate       CSV が読めるかと警告の一覧\n"
+    "  report         ガント・統計・リストの HTML 報告\n"
+    "  weekly         週次レポート（Markdown / HTML）\n"
     "各コマンドの詳細は rmcli <コマンド> --help\n"
     "終了コード: 成功 0 / 入力の誤り 2 / 内部エラー 1\n";
 
@@ -350,14 +501,14 @@ int main(int argc, char** argv) {
   }
   const std::map<std::string, std::function<int(const Args&)>> cmds = {
       {"schedule", cmdSchedule}, {"import-export", cmdImportExport}, {"check-jira", cmdCheckJira},
-      {"gen", cmdGen},           {"validate", cmdValidate}};
+      {"gen", cmdGen},           {"validate", cmdValidate}, {"report", cmdReport}, {"weekly", cmdWeekly}};
   auto it = cmds.find(cmd);
   if (it == cmds.end()) {
     std::cerr << "不明なコマンド: " << cmd << "\n" << kHelp;
     return kInput;
   }
   try {
-    const Args a = parseArgs(argc, argv, 2, {"help", "raw", "verbose"});
+    const Args a = parseArgs(argc, argv, 2, {"help", "raw", "verbose", "dark", "no-deps"});
     gVerbose = a.has("verbose");
     return it->second(a);
   } catch (const InputError& e) {

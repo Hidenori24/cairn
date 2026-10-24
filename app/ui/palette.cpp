@@ -177,7 +177,7 @@ void drawPalette(Frame& f) {
     u.paletteFocus = false;
   }
   ImGui::SetNextItemWidth(-1);
-  ImGui::InputTextWithHint("##pq", S::kPaletteHint, &u.paletteQuery);
+  if (ImGui::InputTextWithHint("##pq", S::kPaletteHint, &u.paletteQuery)) u.paletteSel = 0;
   // 一覧
   struct Item {
     std::string group, title, key;

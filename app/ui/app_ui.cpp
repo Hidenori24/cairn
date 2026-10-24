@@ -564,15 +564,22 @@ void drawTopBar(Frame& f) {
   const float W = ImGui::GetContentRegionAvail().x, H = u.m.topBar();
   dl->AddRectFilled(p0, ImVec2(p0.x + W, p0.y + H), u.t->surface);
   dl->AddLine(ImVec2(p0.x, p0.y + H - 1), ImVec2(p0.x + W, p0.y + H - 1), u.t->line);
-  const float by = p0.y + (H - u.m.s(28)) / 2;
+  const float rowH = H / 2;
+  float by = p0.y + (rowH - u.m.s(28)) / 2;
+  u.headerControls.clear();
+  u.reportMenuItems.clear();
+  const auto remember = [&](const std::string& id) {
+    u.headerControls[id] = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
+  };
   ImGui::SetCursorScreenPos(ImVec2(p0.x + u.m.s(12), by));
 
   // プロジェクト切替
   {
     const std::string name = s ? s->settings().name : "プロジェクト";
     const std::string key = s ? s->settings().key : "";
-    const std::string label = ellipsize(name, u.m.s(220)) + (key.empty() ? "" : "  [" + key + "]") + "  ▼";
+    const std::string label = ellipsize(name + (key.empty() ? "" : "  [" + key + "]"), std::min(W * 0.28f, u.m.s(240))) + "  ▼";
     if (iconTextButton(u, "proj", "folder", label.c_str())) ImGui::OpenPopup("##projmenu");
+    remember("project");
     ImGui::SetNextWindowSize(ImVec2(u.m.s(300), 0));
     if (ImGui::BeginPopup("##projmenu")) {
       for (const auto& pi : c.projects()) {
@@ -588,79 +595,12 @@ void drawTopBar(Frame& f) {
       ImGui::EndPopup();
     }
   }
-  ImGui::SameLine(0, u.m.s(10));
-  {
-    const ImVec2 q = ImGui::GetCursorScreenPos();
-    dl->AddLine(ImVec2(q.x, p0.y + u.m.s(10)), ImVec2(q.x, p0.y + H - u.m.s(10)), u.t->line);
-    ImGui::Dummy(ImVec2(1, 1));
-  }
-  ImGui::SameLine(0, u.m.s(10));
-  // ビュー切替
-  const View cur = c.view();
-  const struct {
-    View v;
-    const char* icon;
-    const char* label;
-  } tabs[] = {{View::Gantt, "gantt", S::kViewGantt}, {View::Board, "board", S::kViewBoard},
-              {View::List, "list", S::kViewList}, {View::Goals, "target", S::kViewGoals}, {View::Stats, "chart", S::kViewStats},
-              {View::Today, "sun", S::kViewToday}};
-  for (const auto& t : tabs) {
-    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
-    if (iconTextButton(u, t.label, t.icon, t.label, false, cur == t.v, s != nullptr)) c.setView(t.v);
-    ImGui::SameLine(0, u.m.s(2));
-  }
-  ImGui::SameLine(0, u.m.s(12));
-  // 絞り込み欄
-  {
-    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
-    const float w = std::clamp(W * 0.18f, u.m.s(160), u.m.s(300));
-    const ImVec2 q = ImGui::GetCursorScreenPos();
-    if (u.focusSearch) {
-      ImGui::SetKeyboardFocusHere();
-      u.focusSearch = false;
-    }
-    const float clearButtonW = c.filter().q.empty() ? 0.f : u.m.s(28);
-    ImGui::SetNextItemWidth(w - clearButtonW);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(u.m.s(26), u.m.s(5)));
-    ImGui::InputTextWithHint("##q", S::kSearchHint, &c.filter().q);
-    ImGui::PopStyleVar();
-    if (ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-      c.filter().q.clear();
-      ImGui::SetWindowFocus(nullptr);
-    }
-    drawIcon(dl, "search", ImVec2(q.x + u.m.s(6), q.y + u.m.s(6)), u.m.s(14), u.t->muted);
-    if (!c.filter().q.empty()) {
-      ImGui::SameLine(0, 0);
-      ImGui::SetCursorScreenPos(ImVec2(q.x + w - clearButtonW, q.y + u.m.s(2)));
-      if (iconButton(u, "clrq", "x", "消す")) c.filter().q.clear();
-    }
-  }
-  // 状況チップ
-  if (s && s->tree()) {
-    const Summary sm = s->summary();
-    ImGui::SameLine(0, u.m.s(10));
-    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by + u.m.s(2)));
-    auto& flt = c.filter().flt;
-    if (chipButton(u, "late", std::string(S::kLate) + " " + std::to_string(sm.late), u.t->late, u.t->lateBg, sm.late == 0))
-      flt = flt == FltFilter::Late ? FltFilter::None : FltFilter::Late;
-    ImGui::SameLine(0, u.m.s(4));
-    if (chipButton(u, "tight", std::string(S::kTight) + " " + std::to_string(sm.tight), u.t->tight, u.t->tightBg, sm.tight == 0))
-      flt = flt == FltFilter::Tight ? FltFilter::None : FltFilter::Tight;
-    ImGui::SameLine(0, u.m.s(4));
-    chip(u, "完了 " + std::to_string(sm.done) + " / 全体 " + std::to_string(sm.total), u.t->muted, u.t->surface3);
-    // ゴールボタン（ルート課題が1つもなければ出さない）
-    const Tree& T = *s->tree();
-    bool anyRoot = false;
-    for (int r : T.roots) anyRoot |= !T.kids[r].empty() || isEpic(s->viewIssues()[r]);
-    if (anyRoot) {
-      ImGui::SameLine(0, u.m.s(6));
-      ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
-      if (iconTextButton(u, "goal", "flag", S::kGoal)) ImGui::OpenPopup("##goalpop");
-      drawGoalPopover(f);
-    }
-  }
   // 右側: 保存状態 / Ctrl+K / 元に戻す / やり直す / ＋課題 / その他
-  const float rightW = u.m.s(150 + 36 + 32 * 2 + 80 + 36);
+  const std::string saved = c.saveState() == app::SaveState::Error ? S::kSaveError : c.saveState() == app::SaveState::Saving ? S::kSaving
+      : std::string(S::kSaved) + (c.savedAt().empty() ? "" : " " + c.savedAt());
+  const std::string scaleLabel = std::to_string(c.prefs().uiScale) + "% ▼";
+  const float rightW = ImGui::CalcTextSize(saved.c_str()).x + ImGui::CalcTextSize("レポート ▼").x +
+      ImGui::CalcTextSize(S::kAddIssue).x + ImGui::CalcTextSize(scaleLabel.c_str()).x + u.m.s(16 + 28 * 4 + 20 * 3 + 34);
   ImGui::SameLine(0, 0);
   const float rx = p0.x + W - rightW - u.m.s(12);
   if (ImGui::GetCursorScreenPos().x < rx) ImGui::SetCursorScreenPos(ImVec2(rx, by));
@@ -686,6 +626,7 @@ void drawTopBar(Frame& f) {
     }
     ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by + u.m.s(2)));
     if (chipButton(u, "save", label, fg, bg)) openDialog(f, Dlg::Folder);
+    remember("save");
     tip("保存先: " + c.dataDir() + (c.dataDirFallback ? "（既定の場所に書けないため）" : ""));
   }
   ImGui::SameLine(0, u.m.s(6));
@@ -694,26 +635,76 @@ void drawTopBar(Frame& f) {
     u.paletteOpen = true;
     u.paletteFocus = true;
   }
+  remember("palette");
   ImGui::SameLine(0, u.m.s(2));
   const bool ro = c.readOnly();
   if (iconButton(u, "undo", "undo", "元に戻す (Ctrl+Z)", s && s->canUndo() && !ro)) c.undo();
+  remember("undo");
   ImGui::SameLine(0, u.m.s(2));
   if (iconButton(u, "redo", "redo", "やり直す (Ctrl+Shift+Z)", s && s->canRedo() && !ro)) c.redo();
+  remember("redo");
+  ImGui::SameLine(0, u.m.s(6));
+  if (iconTextButton(u, "reports", nullptr, "レポート ▼", false, false, s != nullptr)) ImGui::OpenPopup("##reports");
+  remember("reports");
+  tip("HTML 報告・週報・CSV を書き出す");
+  const ImVec2 reportAnchor = u.headerControls["reports"].second;
+  ImGui::SetNextWindowPos(ImVec2(reportAnchor.x, reportAnchor.y + u.m.s(4)), ImGuiCond_Appearing, ImVec2(1, 0));
+  if (ImGui::BeginPopup("##reports")) {
+    if (!u.imeComposing && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+      ImGui::CloseCurrentPopup();
+      u.popupEscFrame = ImGui::GetFrameCount();
+    }
+    ImGui::TextDisabled("共有・報告");
+    const auto item = [&](const char* label, Dlg dlg, const char* kind = nullptr, bool enabled = true) {
+      if (ImGui::MenuItem(label, nullptr, false, enabled)) {
+        if (kind) u.exportKind = kind;
+        openDialog(f, dlg);
+      }
+      u.reportMenuItems.push_back({label, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), enabled});
+    };
+    item("HTML レポート…", Dlg::ExportHtml, nullptr, s && s->tree());
+    item("週次レポート…", Dlg::Weekly, nullptr, s && s->tree());
+    ImGui::Separator();
+    item("CSV・共有用 JSON…", Dlg::Export, "app");
+    item("全プロジェクトをバックアップ…", Dlg::Export, "backup");
+    ImGui::EndPopup();
+  }
   ImGui::SameLine(0, u.m.s(6));
   if (iconTextButton(u, "add", nullptr, S::kAddIssue, true, false, s != nullptr && !ro)) {
     const std::string id = c.createIssue("", "");
     if (!id.empty()) beginEdit(f, id, EditField::Name, true);
   }
+  remember("add");
+  ImGui::SameLine(0, u.m.s(6));
+  if (iconTextButton(u, "scale", nullptr, scaleLabel.c_str())) ImGui::OpenPopup("##scale");
+  remember("scale");
+  tip("文字とボタンの大きさを変更します（Windows の表示倍率に追加）");
+  const ImVec2 scaleAnchor = u.headerControls["scale"].second;
+  ImGui::SetNextWindowPos(ImVec2(scaleAnchor.x, scaleAnchor.y + u.m.s(4)), ImGuiCond_Appearing, ImVec2(1, 0));
+  if (ImGui::BeginPopup("##scale")) {
+    if (!u.imeComposing && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+      ImGui::CloseCurrentPopup();
+      u.popupEscFrame = ImGui::GetFrameCount();
+    }
+    ImGui::TextDisabled("文字・ボタンの大きさ");
+    for (int pct : {100, 125, 150, 175, 200}) {
+      const std::string label = std::to_string(pct) + (pct == 100 ? "%（標準）" : "%");
+      if (ImGui::MenuItem(label.c_str(), nullptr, c.prefs().uiScale == pct)) c.setUiScale(pct);
+      remember("scale:" + std::to_string(pct));
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("表示設定…")) openDialog(f, Dlg::AppSettings);
+    ImGui::TextDisabled("Ctrl+ホイールで調整 / Ctrl+0で100%%");
+    ImGui::EndPopup();
+  }
   ImGui::SameLine(0, u.m.s(4));
   if (iconButton(u, "more", "more", S::kMore)) ImGui::OpenPopup("##more");
+  remember("more");
   if (ImGui::BeginPopup("##more")) {
     if (ImGui::MenuItem("アプリの設定…", "Ctrl+,")) openDialog(f, Dlg::AppSettings);
     if (ImGui::MenuItem("プロジェクト設定", nullptr, false, s != nullptr)) openDialog(f, Dlg::Settings);
     if (ImGui::MenuItem("担当者の負荷", nullptr, false, s != nullptr)) openDialog(f, Dlg::Workload);
     if (ImGui::MenuItem("読み込み時の注意", nullptr, false, s != nullptr)) openDialog(f, Dlg::Warnings);
-    ImGui::Separator();
-    if (ImGui::MenuItem("HTML に書き出す…", nullptr, false, s != nullptr && s->tree() != nullptr)) openDialog(f, Dlg::ExportHtml);
-    if (ImGui::MenuItem("週次レポート…", nullptr, false, s != nullptr && s->tree() != nullptr)) openDialog(f, Dlg::Weekly);
     ImGui::Separator();
     if (ImGui::MenuItem("ベースラインを保存…", nullptr, false, s != nullptr && s->tree() != nullptr && !c.readOnly())) openDialog(f, Dlg::BaselineSave);
     if (ImGui::MenuItem("ベースラインの管理…", nullptr, false, s != nullptr)) openDialog(f, Dlg::BaselineManage);
@@ -728,6 +719,96 @@ void drawTopBar(Frame& f) {
     if (ImGui::MenuItem("保存先フォルダ")) openDialog(f, Dlg::Folder);
     if (ImGui::MenuItem("ショートカット一覧", "?")) openDialog(f, Dlg::Shortcuts);
     ImGui::EndPopup();
+  }
+  // 表示の切り替え・検索は、プロジェクトの操作と別の行に置く。
+  dl->AddLine(ImVec2(p0.x + u.m.s(12), p0.y + rowH), ImVec2(p0.x + W - u.m.s(12), p0.y + rowH), u.t->line);
+  by += rowH;
+  ImGui::SetCursorScreenPos(ImVec2(p0.x + u.m.s(12), by));
+  // ビュー切替
+  const View cur = c.view();
+  const struct {
+    View v;
+    const char* icon;
+    const char* label;
+  } tabs[] = {{View::Gantt, "gantt", S::kViewGantt}, {View::Board, "board", S::kViewBoard},
+              {View::List, "list", S::kViewList}, {View::Goals, "target", S::kViewGoals}, {View::Stats, "chart", S::kViewStats},
+              {View::Today, "sun", S::kViewToday}};
+  const float searchW = std::clamp(W * 0.25f, u.m.s(180), u.m.s(360));
+  float labelledW = searchW + u.m.s(24);
+  for (const auto& tab : tabs) labelledW += ImGui::CalcTextSize(tab.label).x + u.m.s(42);
+  if (s && s->tree()) {
+    const Summary sm = s->summary();
+    const std::string summary = std::string(S::kLate) + " " + std::to_string(sm.late) + S::kTight + " " + std::to_string(sm.tight) +
+        "完了 " + std::to_string(sm.done) + " / 全体 " + std::to_string(sm.total) + S::kGoal;
+    labelledW += ImGui::CalcTextSize(summary.c_str()).x + u.m.s(108);
+  }
+  const bool narrow = W < labelledW;
+  for (const auto& t : tabs) {
+    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
+    const bool pressed = narrow ? iconButton(u, t.label, t.icon, t.label, s != nullptr, cur == t.v)
+                                : iconTextButton(u, t.label, t.icon, t.label, false, cur == t.v, s != nullptr);
+    if (pressed) c.setView(t.v);
+    remember(std::string("view:") + t.label);
+    if (!narrow) tip(t.label);
+    ImGui::SameLine(0, u.m.s(2));
+  }
+  ImGui::SameLine(0, u.m.s(12));
+  // 絞り込み欄
+  {
+    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
+    const float w = searchW;
+    const ImVec2 q = ImGui::GetCursorScreenPos();
+    if (u.focusSearch) {
+      ImGui::SetWindowFocus();  // Esc で外したフォーカスも戻してから入力欄へ移す
+      ImGui::SetKeyboardFocusHere();
+      u.focusSearch = false;
+    }
+    const float clearButtonW = c.filter().q.empty() ? 0.f : u.m.s(28);
+    ImGui::SetNextItemWidth(w - clearButtonW);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(u.m.s(26), u.m.s(5)));
+    ImGui::InputTextWithHint("##q", S::kSearchHint, &c.filter().q);
+    ImGui::PopStyleVar();
+    remember("search");
+    // InputText は Esc を受けたフレームで非アクティブになる。そのフレームも解除する。
+    if ((ImGui::IsItemActive() || ImGui::IsItemDeactivated()) && !u.imeComposing && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+      c.filter().q.clear();
+      ImGui::SetWindowFocus(nullptr);
+    }
+    drawIcon(dl, "search", ImVec2(q.x + u.m.s(6), q.y + u.m.s(6)), u.m.s(14), u.t->muted);
+    if (!c.filter().q.empty()) {
+      ImGui::SameLine(0, 0);
+      ImGui::SetCursorScreenPos(ImVec2(q.x + w - clearButtonW, q.y + u.m.s(2)));
+      if (iconButton(u, "clrq", "x", "消す")) c.filter().q.clear();
+      remember("searchClear");
+    }
+  }
+  // 状況チップ
+  if (s && s->tree()) {
+    const Summary sm = s->summary();
+    ImGui::SameLine(0, u.m.s(10));
+    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by + u.m.s(2)));
+    auto& flt = c.filter().flt;
+    if (chipButton(u, "late", std::string(S::kLate) + " " + std::to_string(sm.late), u.t->late, u.t->lateBg, sm.late == 0))
+      flt = flt == FltFilter::Late ? FltFilter::None : FltFilter::Late;
+    remember("late");
+    ImGui::SameLine(0, u.m.s(4));
+    if (chipButton(u, "tight", std::string(S::kTight) + " " + std::to_string(sm.tight), u.t->tight, u.t->tightBg, sm.tight == 0))
+      flt = flt == FltFilter::Tight ? FltFilter::None : FltFilter::Tight;
+    remember("tight");
+    ImGui::SameLine(0, u.m.s(4));
+    chip(u, "完了 " + std::to_string(sm.done) + " / 全体 " + std::to_string(sm.total), u.t->muted, u.t->surface3);
+    remember("summary");
+    // ゴールボタン（ルート課題が1つもなければ出さない）
+    const Tree& T = *s->tree();
+    bool anyRoot = false;
+    for (int r : T.roots) anyRoot |= !T.kids[r].empty() || isEpic(s->viewIssues()[r]);
+    if (anyRoot) {
+      ImGui::SameLine(0, u.m.s(6));
+      ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
+      if (iconTextButton(u, "goal", "flag", S::kGoal)) ImGui::OpenPopup("##goalpop");
+      remember("goal");
+      drawGoalPopover(f);
+    }
   }
   ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + H));
   ImGui::Dummy(ImVec2(0, 0));
@@ -755,13 +836,23 @@ void drawToolBar(Frame& f) {
   Session* s = c.session();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 p0 = ImGui::GetCursorScreenPos();
-  const float W = ImGui::GetContentRegionAvail().x, H = u.m.toolBar();
+  const float W = ImGui::GetContentRegionAvail().x;
+  // 狭いガントでは横スクロールバーの分だけ高さを取り、操作の下端を切らない。
+  const bool scrollRoom = s && c.view() == View::Gantt && W < u.m.s(s->baselines().list.empty() ? 1280.f : 1450.f);
+  const float H = u.m.toolBar() + (scrollRoom ? ImGui::GetStyle().ScrollbarSize : 0.f);
   dl->AddRectFilled(p0, ImVec2(p0.x + W, p0.y + H), u.t->surface2);
   dl->AddLine(ImVec2(p0.x, p0.y + H - 1), ImVec2(p0.x + W, p0.y + H - 1), u.t->line);
   ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y));
-  ImGui::BeginChild("##toolbar", ImVec2(W, H), ImGuiChildFlags_None,
+  std::string planLabel = "計画: " + (s ? s->settings().baseDate : std::string("基準日"));
+  if (s && s->settings().scenario != kStdScenario) planLabel += " / " + ellipsize(s->settings().scenario, u.m.s(80));
+  if (s && s->settings().resource.on) planLabel += " / 制限 " + std::to_string(s->settings().resource.cap);
+  planLabel += " ▼";
+  const float planW = ImGui::CalcTextSize(planLabel.c_str()).x + u.m.s(40);
+  const auto warns = s ? s->allWarns() : std::vector<std::string>{};
+  const float warnW = warns.empty() ? 0.f : ImGui::CalcTextSize(("注意 " + std::to_string(warns.size())).c_str()).x + u.m.s(44);
+  ImGui::BeginChild("##toolbar", ImVec2(std::max(u.m.s(160), W - planW - warnW - u.m.s(24)), H), ImGuiChildFlags_None,
                     ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
-  const float by = (H - ImGui::GetFrameHeight()) / 2;
+  const float by = (u.m.toolBar() - std::max(ImGui::GetFrameHeight(), u.m.s(28))) / 2;
   ImGui::SetCursorPos(ImVec2(u.m.s(12), by));
   if (!s) {
     ImGui::Dummy(ImVec2(0, 0));
@@ -892,60 +983,80 @@ void drawToolBar(Frame& f) {
       if (k == cur) pv = l;
     if (combo("##lane", u.m.s(170), pv.c_str(), items, cur)) c.setUi("lane", cur);
   }
-  if (c.filterActive()) {
-    ImGui::SameLine(0, u.m.s(12));
-    const std::string l = "絞り込み解除（" + c.filterLabel() + "）";
-    if (iconTextButton(u, "clrf", "x", l.c_str())) c.clearFilter();
-  }
-  // 右側
-  const auto warns = s->allWarns();
-  const float rightW = u.m.s(140 + 130 + 150) + (warns.empty() ? 0 : u.m.s(80));
-  ImGui::SameLine(0, 0);
-  const float rx = ImGui::GetWindowWidth() - rightW - u.m.s(12);
-  ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX() + u.m.s(12), rx));
+  ImGui::EndChild();
+  // 日程の計算条件は横スクロールの外に置き、いつでも開けるようにする。
+  float x = p0.x + W - planW - warnW - u.m.s(12);
+  const float y = p0.y + (u.m.toolBar() - u.m.s(28)) / 2;
   if (!warns.empty()) {
-    const std::string l = "注意 " + std::to_string(warns.size());
-    if (iconTextButton(u, "warns", "warn", l.c_str())) openDialog(f, Dlg::Warnings);
-    ImGui::SameLine();
+    ImGui::SetCursorScreenPos(ImVec2(x, y));
+    if (iconTextButton(u, "warns", "warn", ("注意 " + std::to_string(warns.size())).c_str())) openDialog(f, Dlg::Warnings);
+    x += warnW;
   }
-  ImGui::BeginDisabled(c.readOnly());  // プロジェクトの設定は、読み取り専用では変えられない
-  {
-    ImGui::SetNextItemWidth(u.m.s(130));
-    std::string base = s->settings().baseDate;
-    ImGui::InputText("##base", &base, ImGuiInputTextFlags_EnterReturnsTrue);
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-      if (auto d = csv::parseDate(base)) {
-        s->setBaseDate(fmtIso(*d));
+  ImGui::SetCursorScreenPos(ImVec2(x, y));
+  if (iconTextButton(u, "plan", "calendar", planLabel.c_str())) ImGui::OpenPopup("##planmenu");
+  u.headerControls["plan"] = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
+  tip("基準日・シナリオ・担当者の同時作業の制限");
+  const ImVec2 planAnchor = u.headerControls["plan"].second;
+  ImGui::SetNextWindowPos(ImVec2(planAnchor.x, planAnchor.y + u.m.s(4)), ImGuiCond_Appearing, ImVec2(1, 0));
+  if (ImGui::BeginPopup("##planmenu")) {
+    if (!u.imeComposing && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+      ImGui::CloseCurrentPopup();
+      u.popupEscFrame = ImGui::GetFrameCount();
+    }
+    ImGui::TextDisabled("日程の計算条件");
+    ImGui::BeginDisabled(c.readOnly());  // プロジェクトの設定は、読み取り専用では変えられない
+    {
+      ImGui::TextUnformatted("基準日");
+      ImGui::SetNextItemWidth(u.m.s(150));
+      std::string base = s->settings().baseDate;
+      ImGui::InputText("##base", &base, ImGuiInputTextFlags_EnterReturnsTrue);
+      if (ImGui::IsItemDeactivatedAfterEdit()) {
+        if (auto d = csv::parseDate(base)) {
+          s->setBaseDate(fmtIso(*d));
+          c.afterEdit();
+        }
+      }
+      tip("基準日（YYYY-MM-DD。変更すると再計算します）");
+    }
+    ImGui::SameLine();
+    const bool today = ImGui::Button("今日にする");
+    u.headerControls["planToday"] = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
+    if (today) {
+      s->setBaseDate(c.clock().todayIso());
+      c.afterEdit();
+    }
+    ImGui::Spacing();
+    {
+      ImGui::TextUnformatted("シナリオ");
+      const Tree* T = s->tree();
+      std::vector<std::pair<std::string, std::string>> items;
+      if (T)
+        for (const auto& sc : T->scenarios) items.emplace_back(sc, sc);
+      else items.emplace_back(kStdScenario, kStdScenario);
+      std::string cur = s->settings().scenario;
+      if (combo("##scn", u.m.s(240), ("シナリオ: " + cur).c_str(), items, cur)) {
+        s->setScenario(cur);
         c.afterEdit();
       }
     }
-    tip("基準日（YYYY-MM-DD。変更すると再計算します）");
-  }
-  ImGui::SameLine();
-  {
-    const Tree* T = s->tree();
-    std::vector<std::pair<std::string, std::string>> items;
-    if (T)
-      for (const auto& sc : T->scenarios) items.emplace_back(sc, sc);
-    else items.emplace_back(kStdScenario, kStdScenario);
-    std::string cur = s->settings().scenario;
-    if (combo("##scn", u.m.s(140), ("シナリオ: " + cur).c_str(), items, cur)) {
-      s->setScenario(cur);
-      c.afterEdit();
+    ImGui::Spacing();
+    {
+      const ResourceLimit r = s->settings().resource;
+      const std::string l = r.on ? "同時作業の制限 " + std::to_string(r.cap) : "同時作業の制限";
+      if (iconTextButton(u, "res", "user", l.c_str(), false, r.on)) {
+        s->setResource({!r.on, r.cap});
+        c.afterEdit();
+      }
+      tip("担当者ごとの同時作業の制限（同時に持てる件数はプロジェクト設定で変えられます）");
     }
-  }
-  ImGui::SameLine();
-  {
-    const ResourceLimit r = s->settings().resource;
-    const std::string l = r.on ? "同時作業の制限 " + std::to_string(r.cap) : "同時作業の制限";
-    if (iconTextButton(u, "res", "user", l.c_str(), false, r.on)) {
-      s->setResource({!r.on, r.cap});
-      c.afterEdit();
+    ImGui::Spacing();
+    if (ImGui::Button("プロジェクト設定…")) {
+      ImGui::CloseCurrentPopup();
+      openDialog(f, Dlg::Settings);
     }
-    tip("担当者ごとの同時作業の制限（同時に持てる件数はプロジェクト設定で変えられます）");
+    ImGui::EndDisabled();
+    ImGui::EndPopup();
   }
-  ImGui::EndDisabled();
-  ImGui::EndChild();
   ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + H));
   ImGui::Dummy(ImVec2(0, 0));
 }
@@ -1375,6 +1486,7 @@ void handleKeys(Frame& f) {
   const bool modal = u.dlg != Dlg::None || u.paletteOpen || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
   if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !io.WantTextInput) {
     if (modal) return;  // ダイアログ・パレット・メニューはそれぞれで閉じる
+    if (u.popupEscFrame == ImGui::GetFrameCount()) return;  // 上部のメニューを閉じた Esc
     if (u.linkMenu.escFrame == ImGui::GetFrameCount()) return;  // 依存のメニューを閉じた Esc（選択などは変えない）
     if (u.attachDragEscFrame == ImGui::GetFrameCount()) return;  // 添付のドラッグを取り消した Esc（選択などは変えない）
     if (u.attachDrag.active) {  // 添付のサムネイルのドラッグを取り消し
@@ -1577,6 +1689,7 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
 
   drawTopBar(f);
   drawToolBar(f);
+  drawActiveFilters(f);
   drawBanners(f);
 
   const ImVec2 area = ImGui::GetContentRegionAvail();

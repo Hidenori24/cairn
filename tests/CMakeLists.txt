@@ -79,5 +79,8 @@ add_test(NAME cli_check_jira COMMAND rmcli check-jira --raw ${PROJECT_SOURCE_DIR
 add_test(NAME cli_check_jira_samples COMMAND rmcli check-jira --base 2026-10-19 ${PROJECT_SOURCE_DIR}/golden/samples/scenario_demo.csv
   ${PROJECT_SOURCE_DIR}/golden/samples/hierarchy_demo.csv ${PROJECT_SOURCE_DIR}/golden/samples/leveling_demo.csv)
 add_test(NAME cli_help COMMAND rmcli --help)
+add_test(NAME cli_reports COMMAND ${CMAKE_COMMAND}
+  -DRMCLI=$<TARGET_FILE:rmcli> -DSAMPLE=${PROJECT_SOURCE_DIR}/golden/samples/scenario_demo.csv
+  -DOUT=${CMAKE_CURRENT_BINARY_DIR}/cli_reports -P ${CMAKE_CURRENT_SOURCE_DIR}/cli_reports.cmake)
 add_test(NAME cli_bad_input COMMAND rmcli validate ${PROJECT_SOURCE_DIR}/README.md)
 set_tests_properties(cli_bad_input PROPERTIES WILL_FAIL TRUE)

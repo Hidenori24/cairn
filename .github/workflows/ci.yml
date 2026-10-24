@@ -1,5 +1,5 @@
 # CI（SPEC 12.6）
-# - Linux: core と cli を GCC・Clang で -Werror、ASan + UBSan で ctest。UI はヘッドレスの煙テスト
+# - Linux: core と cli を GCC・Clang で -Werror、ASan + UBSan で ctest。UI はヘッドレスのスモークテスト
 # - Windows: MSVC（/MT・/W4 /WX）で exe とテスト。ポータブル版のフォルダ（exe・data\projects・samples）と、インストーラ（Inno Setup。無人でインストール・アンインストールまで確かめる）をアーティファクトに
 # - タグ v*: ポータブル版の zip・インストーラ・チェックサムをリリースに添付（配布物の名前は Cairn-windows-x64.zip・Cairn-Setup-<版>.exe・SHA256SUMS.txt。Issue #82）
 #   タグに「-」を含む（1.0.0-rc.1 など）ときは pre-release にして「最新」にしない
@@ -54,7 +54,7 @@ jobs:
         run: ctest --preset linux-asan
 
   linux-ui:
-    name: linux (UI の煙テスト)
+    name: linux (UI のスモークテスト)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5

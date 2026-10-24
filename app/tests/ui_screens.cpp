@@ -181,21 +181,28 @@ int main(int argc, char** argv) {
   }
   ImVector<ImWchar> ranges;
   rb.BuildRanges(&ranges);
-  ImFontConfig cfg;
-  cfg.FontNo = fontNo;
-  cfg.OversampleH = 1;
-  u.fontBody = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 13.f, &cfg, ranges.Data);
-  if (!u.fontBody) {
+  Tex tex;
+  const auto buildFonts = [&](float scale) {
+    io.Fonts->Clear();
+    ImFontConfig cfg;
+    cfg.FontNo = fontNo;
+    cfg.OversampleH = 1;
+    u.fontBody = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), ui::kBodyFontSize * scale, &cfg, ranges.Data);
+    if (!u.fontBody) return false;
+    u.fontMono = u.fontBold = u.fontBody;
+    u.fontLarge = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), ui::kHeadingFontSize * scale, &cfg, ranges.Data);
+    io.FontDefault = u.fontBody;
+    unsigned char* pixels;
+    io.Fonts->GetTexDataAsRGBA32(&pixels, &tex.w, &tex.h);
+    tex.rgba = pixels;
+    u.m.scale = scale;
+    ui::applyStyle(*u.t, u.m);
+    return true;
+  };
+  if (!buildFonts(1.f)) {
     std::fprintf(stderr, "フォントを読めません: %s\n", fontPath.c_str());
     return 1;
   }
-  u.fontMono = u.fontBold = u.fontBody;
-  u.fontLarge = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 17.f, &cfg, ranges.Data);
-  Tex tex;
-  unsigned char* pixels;
-  io.Fonts->GetTexDataAsRGBA32(&pixels, &tex.w, &tex.h);
-  tex.rgba = pixels;
-  ui::applyStyle(*u.t, u.m);
   c.start();
 
   const auto frames = [&](int n) {
@@ -234,6 +241,72 @@ int main(int argc, char** argv) {
   }
   c.prefs().hintDismissed = false;
   c.select("9");
+  if (only && onlyBuf == "readability") {
+    c.prefs().hintDismissed = true;
+    clk.advanceMs(15000);
+    shot("readability_01_default");
+    const auto box = u.headerControls.at("scale");
+    io.AddMousePosEvent((box.first.x + box.second.x) / 2, (box.first.y + box.second.y) / 2);
+    io.AddMouseButtonEvent(0, true);
+    frames(1);
+    io.AddMouseButtonEvent(0, false);
+    frames(2);
+    shot("readability_02_scale_menu");
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    frames(1);
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    frames(2);
+    io.DisplaySize = ImVec2(3840, 2160);
+    for (int pct : {100, 150}) {
+      c.setUiScale(pct);
+      // Windows の表示倍率200%に、アプリの倍率を追加した4Kの見本。
+      if (!buildFonts(2.f * static_cast<float>(pct) / 100.f)) return 1;
+      shot("readability_4k_" + std::to_string(pct));
+    }
+    ImGui::DestroyContext();
+    return 0;
+  }
+  if (only && onlyBuf == "ux") {
+    c.prefs().hintDismissed = true;
+    clk.advanceMs(15000);
+    shot("ux_01_overview");
+    c.filter().q = "フェーズ2";
+    c.filter().asg = AsgFilter::Unassigned;
+    c.filter().st = StFilter::Todo;
+    shot("ux_02_conditions");
+    io.DisplaySize = ImVec2(960, 700);
+    shot("ux_03_narrow");
+    io.DisplaySize = ImVec2(1440, 900);
+    c.clearFilter();
+    frames(3);
+    const auto clickControl = [&](const std::string& id) {
+      const auto box = u.headerControls.at(id);
+      io.AddMousePosEvent((box.first.x + box.second.x) / 2, (box.first.y + box.second.y) / 2);
+      io.AddMouseButtonEvent(0, true);
+      frames(1);
+      io.AddMouseButtonEvent(0, false);
+      frames(2);
+    };
+    clickControl("reports");
+    shot("ux_04_reports");
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    frames(1);
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    frames(2);
+    clickControl("plan");
+    shot("ux_05_plan");
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    frames(1);
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    frames(2);
+    c.filter().q = "フェーズ2";
+    c.filter().asg = AsgFilter::Unassigned;
+    u.t = &ui::darkTokens();
+    ui::applyStyle(*u.t, u.m);
+    shot("ux_06_dark");
+    ImGui::DestroyContext();
+    return 0;
+  }
   shot("01_gantt_week");
   c.setUi("zoom", "day");
   shot("02_gantt_day");

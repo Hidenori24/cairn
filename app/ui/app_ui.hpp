@@ -190,6 +190,12 @@ struct UiState {
     ImVec2 a{0, 0}, b{0, 0};
     bool enabled = true;
   };
+  // 上部の操作と、適用中の条件（画面の確認・操作テストにも使う）。
+  std::map<std::string, std::pair<ImVec2, ImVec2>> headerControls;
+  std::vector<MenuItemGeom> reportMenuItems, filterChips;
+  std::string filterSummary;
+  std::pair<ImVec2, ImVec2> clearFiltersBtn{{0, 0}, {0, 0}};
+  int popupEscFrame = -10;  // メニューを閉じた Esc で、課題の選択まで解除しない
   std::vector<MenuItemGeom> linkCtxItems;
   // 行・カードのリンクのバッジの範囲（前のフレームのものが linkBadges）と、最後に出したバッジのツールチップの行（スモークテスト用）
   std::vector<DropTarget> linkBadges, linkBadgeBuild;
