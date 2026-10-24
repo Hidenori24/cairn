@@ -358,6 +358,7 @@ int cmdWeekly(const Args& a) {
   WeeklyInput in(c->T, L.imp.issues, c->R, L.cal, stats, loadReport);
   in.base = L.opt.base;
   in.projectName = documentName(a);
+  in.meta = &L.imp.meta;
   const auto report = buildWeeklyReport(in, opt);
   writeOut(a, html ? weeklyHtml(report) : weeklyMarkdown(report));
   return kOk;
