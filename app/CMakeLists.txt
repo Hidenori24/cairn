@@ -27,6 +27,7 @@ add_library(roadmap_ui STATIC
   ui/theme.cpp
   ui/icons.cpp
   ui/widgets.cpp
+  ui/filter_bar.cpp
   ui/app_ui.cpp
   ui/view_list.cpp
   ui/view_gantt.cpp

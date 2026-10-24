@@ -234,6 +234,47 @@ int main(int argc, char** argv) {
   }
   c.prefs().hintDismissed = false;
   c.select("9");
+  if (only && onlyBuf == "ux") {
+    c.prefs().hintDismissed = true;
+    clk.advanceMs(15000);
+    shot("ux_01_overview");
+    c.filter().q = "フェーズ2";
+    c.filter().asg = AsgFilter::Unassigned;
+    c.filter().st = StFilter::Todo;
+    shot("ux_02_conditions");
+    io.DisplaySize = ImVec2(960, 700);
+    shot("ux_03_narrow");
+    io.DisplaySize = ImVec2(1440, 900);
+    c.clearFilter();
+    frames(3);
+    const auto clickControl = [&](const std::string& id) {
+      const auto box = u.headerControls.at(id);
+      io.AddMousePosEvent((box.first.x + box.second.x) / 2, (box.first.y + box.second.y) / 2);
+      io.AddMouseButtonEvent(0, true);
+      frames(1);
+      io.AddMouseButtonEvent(0, false);
+      frames(2);
+    };
+    clickControl("reports");
+    shot("ux_04_reports");
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    frames(1);
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    frames(2);
+    clickControl("plan");
+    shot("ux_05_plan");
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    frames(1);
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    frames(2);
+    c.filter().q = "フェーズ2";
+    c.filter().asg = AsgFilter::Unassigned;
+    u.t = &ui::darkTokens();
+    ui::applyStyle(*u.t, u.m);
+    shot("ux_06_dark");
+    ImGui::DestroyContext();
+    return 0;
+  }
   shot("01_gantt_week");
   c.setUi("zoom", "day");
   shot("02_gantt_day");

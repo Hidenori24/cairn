@@ -20,7 +20,7 @@ const Tokens& darkTokens();
 struct Metrics {
   float scale = 1.0f;   // 高DPI の倍率
   bool compact = false;
-  float topBar() const { return (compact ? 44.f : 48.f) * scale; }
+  float topBar() const { return (compact ? 76.f : 84.f) * scale; }
   float toolBar() const { return (compact ? 36.f : 40.f) * scale; }
   float rowH() const { return (compact ? 26.f : 30.f) * scale; }
   float s(float v) const { return v * scale; }

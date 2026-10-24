@@ -495,9 +495,117 @@ void keyboardUxScenario() {
     break;
   }
 }
+void navigationUxScenario() {
+  Harness h;
+  h.c.createProject(app::SampleKind::Hierarchy, "操作の確認", "DEV");
+  h.frame(3);
+  h.u.focusSearch = true;
+  h.frame(3);
+  const ImGuiWindow* root = ImGui::FindWindowByName("##root");
+  check(root && root->NavRectRel[ImGuiNavLayer_Main].Min.y >= h.u.m.s(36),
+        "検索・表示切替は、プロジェクトの操作とは別の行にまとめる");
+  h.key(ImGuiKey_Escape);
+  const auto control = [&](const std::string& name) {
+    const auto it = h.u.headerControls.find(name);
+    check(it != h.u.headerControls.end(), ("上部に操作がある: " + name).c_str());
+    return it == h.u.headerControls.end() ? std::pair<ImVec2, ImVec2>{{0, 0}, {0, 0}} : it->second;
+  };
+  for (float scale : {1.f, 1.5f}) {
+    for (bool compact : {false, true}) {
+      for (float width : {960.f, 1280.f, 1440.f}) {
+        ImGui::GetIO().DisplaySize = ImVec2(width * scale, 900 * scale);
+        h.u.m.scale = scale;
+        h.u.m.compact = compact;
+        ui::applyStyle(*h.u.t, h.u.m);
+        h.frame(3);
+        for (const char* id : {"project", "save", "palette", "undo", "redo", "reports", "add", "more", "search", "late", "tight", "summary", "goal", "plan"}) {
+          const auto rect = control(id);
+          check(hasRect(rect) && rect.first.x >= 0 && rect.second.x <= width * scale,
+                (std::string("画面幅と密度によらず操作が収まる: ") + id).c_str());
+        }
+        const auto reports = control("reports"), search = control("search");
+        check(search.first.y >= reports.second.y, "検索はプロジェクトの操作と重ならない");
+      }
+    }
+  }
+  h.u.m = ui::Metrics{};
+  ui::applyStyle(*h.u.t, h.u.m);
+  ImGui::GetIO().DisplaySize = ImVec2(1440, 900);
+  h.frame(3);
+  h.c.select(h.c.session()->tree()->ids.front());
+  const std::string selected = h.c.cursor();
+  h.click(center(control("reports")).x, center(control("reports")).y);
+  h.frame(2);
+  check(!h.u.reportMenuItems.empty(), "上部からレポートの選択肢を開ける");
+  h.key(ImGuiKey_Escape);
+  h.frame(2);
+  check(h.u.reportMenuItems.empty() && h.c.isSelected(selected), "Esc はメニューだけを閉じ、課題の選択を保つ");
+  for (const auto& [label, dlg] : {std::pair<const char*, ui::Dlg>{"HTML レポート…", ui::Dlg::ExportHtml},
+                                  {"週次レポート…", ui::Dlg::Weekly}}) {
+    h.click(center(control("reports")).x, center(control("reports")).y);
+    h.frame(3);
+    bool clicked = false;
+    for (const auto& item : std::vector<ui::UiState::MenuItemGeom>(h.u.reportMenuItems)) {
+      if (item.label != label) continue;
+      h.click((item.a.x + item.b.x) / 2, (item.a.y + item.b.y) / 2);
+      clicked = true;
+      break;
+    }
+    check(clicked && h.u.dlg == dlg, "レポートの入口から出力ダイアログへ進める");
+    h.key(ImGuiKey_Escape);
+    h.frame(2);
+  }
+  h.c.session()->setBaseDate("2026-09-01");
+  h.c.afterEdit();
+  h.frame(3);
+  h.click(center(control("plan")).x, center(control("plan")).y);
+  h.frame(3);
+  const auto today = control("planToday");
+  h.click(center(today).x, center(today).y);
+  check(h.c.session()->settings().baseDate == h.clk.todayIso(), "計画の入口から基準日を今日に戻せる");
+  h.key(ImGuiKey_Escape);
+  h.frame(2);
+  h.c.filter().q = "DEV";
+  h.c.filter().asg = AsgFilter::Unassigned;
+  h.c.filter().st = StFilter::Todo;
+  h.c.columnFilter().name = "確認";
+  h.frame(3);
+  check(h.u.filterChips.size() == 4 && contains(h.u.filterSummary, "強調"), "検索・列・強調の条件を個別に表示する");
+  bool cleared = false;
+  for (const auto& item : std::vector<ui::UiState::MenuItemGeom>(h.u.filterChips)) {
+    if (!contains(item.label, "表示: 検索")) continue;
+    h.click((item.a.x + item.b.x) / 2, (item.a.y + item.b.y) / 2);
+    cleared = true;
+    break;
+  }
+  check(cleared && h.c.filter().q.empty() && h.c.filter().asg == AsgFilter::Unassigned &&
+        h.c.filter().st == StFilter::Todo && h.c.columnFilter().name == "確認", "検索だけを解除し、ほかの条件を保つ");
+  h.c.setView(app::View::Stats);
+  h.frame(3);
+  check(contains(h.u.filterSummary, "全体を表示"), "条件が適用されないビューでは全体の表示であることを案内する");
+  h.click(center(h.u.clearFiltersBtn).x, center(h.u.clearFiltersBtn).y);
+  h.frame(3);
+  check(!h.c.filterActive() && h.u.filterChips.empty(), "すべて解除すると条件の表示も消える");
+  ImGui::GetIO().DisplaySize = ImVec2(960, 900);
+  h.c.setView(app::View::Gantt);
+  for (int i = 0; i < 100; ++i) h.c.filter().q += "長い検索語";
+  for (const char* key : {"type", "status", "asg", "prio", "float", "pred", "plan"}) h.c.columnFilter().toggle(key, "確認");
+  h.frame(3);
+  float firstY = 0, lastY = 0;
+  for (const auto& chip : h.u.filterChips) {
+    if (firstY == 0) firstY = chip.a.y;
+    lastY = chip.a.y;
+    check(chip.a.x >= 0 && chip.b.x <= 960, "長い条件や複数の条件も画面の幅に収まる");
+  }
+  check(lastY > firstY && hasRect(h.u.clearFiltersBtn), "条件が多いときは折り返し、解除の入口を保つ");
+}
 }  // namespace
 
 int main(int argc, char** argv) {
+  if (argc == 2 && std::string(argv[1]) == "--ux") {
+    navigationUxScenario();
+    return failures ? 1 : 0;
+  }
   if (argc == 2 && std::string(argv[1]) == "--keyboard") {
     keyboardUxScenario();
     return failures ? 1 : 0;
@@ -505,6 +613,7 @@ int main(int argc, char** argv) {
   readOnlyScenario(false);
   readOnlyScenario(true);
   keyboardUxScenario();
+  navigationUxScenario();
   Harness h;
   h.frame(3);  // はじめに
   check(h.c.firstRun(), "初回はプロジェクトなし");
