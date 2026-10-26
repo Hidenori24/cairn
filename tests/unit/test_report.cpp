@@ -533,7 +533,7 @@ TEST_CASE("report: 拡大率（日・週・月・全体）で 1 日の幅と見�
     if (std::string(z) == "day") CHECK(contains(h, "text-anchor=\"middle\" fill="));  // 日付の数字の行
     CHECK(contains(h, "<h2>ガント</h2>"));
   }
-  CHECK(widths[0] > widths[1]);  // 日 > 週
+  CHECK(widths[0] >= widths[1]);  // 日・週は全期間をページ幅に収める場合、同じ幅になる
   CHECK(widths[1] > widths[2]);  // 週 > 月
   CHECK(widths[3] <= 590 + 900 + 2);  // 全体は幅に収める
   // 不明な名前は週
@@ -914,7 +914,8 @@ TEST_CASE("report: 長いガントは行ごとに区切った SVG になり、�
   CHECK(chunks >= 3);
   CHECK(count(h, "id=\"gh\"") == 1);
   CHECK(count(h, "id=\"gb\"") == 1);
-  CHECK(count(h, "<use href=\"#gh\"/>") == chunks);
+  const std::size_t horizontalPanels = 1 + count(h, "class=\"gseg gantt-panel-start\"");
+  CHECK(count(h, "<use href=\"#gh\"/>") == horizontalPanels);
   // どのチャンクの SVG も同じ幅（印刷で同じ倍率になる）
   std::set<std::string> widths;
   for (std::size_t q = h.find("<svg xmlns"); q != std::string::npos; q = h.find("<svg xmlns", q + 1)) {
@@ -1146,8 +1147,7 @@ TEST_CASE("report: 日程が大きく動いても、ガントの時間軸は計�
     ExportInput in = p.input();
     in.baseline = &cmp.value();
     const std::string h = exportHtml(in, o);
-    // 各期間の SVG は約 2 か月幅。計画バーは全期間の座標を共有 defs に
-    // 持つため、最後の表示 viewBox の右端までを全体の有効幅とする。
+    // 時間軸パネルの viewBox 右端までを全体の有効幅とする。
     double axisRight = 0;
     for (std::size_t q = h.find("viewBox=\""); q != std::string::npos; q = h.find("viewBox=\"", q + 1)) {
       const std::size_t start = q + 9;
@@ -1166,7 +1166,7 @@ TEST_CASE("report: 日程が大きく動いても、ガントの時間軸は計�
       const double x = std::stod(h.substr(r + 9, h.find('"', r + 9) - r - 9));
       const std::size_t wq = h.find("width=\"", r);
       const double w = std::stod(h.substr(wq + 7, h.find('"', wq + 7) - wq - 7));
-      CHECK(x >= 590.0 - 1e-6);       // 左の表（幅 590）に重ならない
+      CHECK(x >= 493.0 - 1e-6);       // 左の表（幅 493）に重ならない
       CHECK(x + w <= axisRight + 1e-6);  // 全期間の SVG の外に出ない
       ++n;
     }

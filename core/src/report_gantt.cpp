@@ -15,12 +15,13 @@ namespace roadmap::report {
 namespace {
 
 constexpr double kRowH = 26;
-constexpr double kNameW = 300, kAsgW = 84, kStatusW = 92, kDurW = 52, kFloatW = 62;
+constexpr double kNameW = 255, kAsgW = 58, kStatusW = 92, kDurW = 40, kFloatW = 48;
 constexpr double kLeftW = kNameW + kAsgW + kStatusW + kDurW + kFloatW;
 constexpr float kAllTimelineW = 900;  // 拡大率「全体」のときの時間軸の幅
 constexpr double kPrintPx = 1047;     // A4 横（余白 10mm）の幅（96dpi）
 constexpr double kChunkPagePx = 460;  // 1 ページに入れたい高さ（最初のページの見出し・凡例の分を見込む）
 constexpr int kPrintDaysPerPanel = 62;
+constexpr int kPrintSinglePanelDays = 400;
 
 
 std::string pathNum(double v) { return n1(v); }
@@ -75,6 +76,7 @@ struct Gantt {
   std::string styleZoom;
   double headH = 46;
   double totalW = 0;
+  int daysPerPanel = kPrintDaysPerPanel;
   std::size_t nRows = 0;
   std::size_t rowsPerChunk = 20;
   bool detail = false;
@@ -136,8 +138,8 @@ struct Gantt {
     for (Day d = ax.rs; d <= capHi; ++d) {
       const Ymd ymd = civilFromDays(d);
       const float x = ax.x(d);
-      const bool panelStart = (d - ax.rs) % kPrintDaysPerPanel == 0;
-      const int daysToPanelEnd = kPrintDaysPerPanel - ((d - ax.rs) % kPrintDaysPerPanel);
+      const bool panelStart = (d - ax.rs) % daysPerPanel == 0;
+      const int daysToPanelEnd = daysPerPanel - ((d - ax.rs) % daysPerPanel);
       const bool labelNearPanelEnd = static_cast<float>(daysToPanelEnd) * ax.px < 58.f;
       if (panelStart) {
         // 各パネルの先頭に必ず日付を置き、直前パネルのラベルは境界に近づけない。
@@ -152,7 +154,7 @@ struct Gantt {
       }
       if (ymd.d == 1) vlines += "M" + pathNum(x) + " 0v" + pathNum(headH);
       if (styleZoom == "day") {
-        const int dayInPanel = (d - ax.rs) % kPrintDaysPerPanel;
+        const int dayInPanel = (d - ax.rs) % daysPerPanel;
         if (dayInPanel % dayEvery == 0) {
           const int w = dow(d);
           std::string& tgt = (w == 0 || w == 6) ? dayWe : dayWd;
@@ -452,11 +454,10 @@ std::string renderGantt(const Ctx& cx) {
   g.capHi = g.ax.hi;
   const int days = g.ax.hi - g.ax.rs + 1;
   g.ax.px = ganttZoomPx(zoom, 1.f, kAllTimelineW - 24.f, days);
-  // 印刷用の横幅に合わせ、時間軸を約 2 か月ずつ表示する。
-  // 「全体」でも極端に縮小しないよう、月表示相当を下限にする。
+  // 400 日以内なら対象期間全体を横 1 ページに収め、長期計画だけ約 2 か月ごとに分ける。
   const double timelinePrintW = kPrintPx - kLeftW - 12;
-  g.ax.px = std::min(g.ax.px, static_cast<float>(timelinePrintW / kPrintDaysPerPanel));
-  if (zoom == "all") g.ax.px = std::max(g.ax.px, 2.4f);
+  g.daysPerPanel = days <= kPrintSinglePanelDays ? days : kPrintDaysPerPanel;
+  g.ax.px = std::min(g.ax.px, static_cast<float>(timelinePrintW / g.daysPerPanel));
   g.ax.left = static_cast<float>(kLeftW);
   g.totalW = kLeftW + static_cast<double>(days) * static_cast<double>(g.ax.px);
 
@@ -505,7 +506,9 @@ std::string renderGantt(const Ctx& cx) {
   // 見出し
   const char* const zoomName = zoom == "day" ? "日" : zoom == "month" ? "月" : zoom == "all" ? "全体" : "週";
   const char* const colorName = g.by == GanttColorBy::Float ? "余裕" : g.by == GanttColorBy::Assignee ? "担当者" : "Epic";
-  out += std::string("<p class=\"note\">拡大率: ") + zoomName + "　色分け: " + colorName + "　時間軸は約2か月ごとに分割　‹/› は前後の期間へ続く印　基準日の線: " + escapeXml(fmtLong(in.base)) + "</p>\n";
+  const std::string timeNote = days <= kPrintSinglePanelDays ? "時間軸は全期間を横1ページに表示" : "時間軸は約2か月ごとに分割";
+  out += std::string("<p class=\"note\">拡大率: ") + zoomName + "　色分け: " + colorName + "　" + timeNote +
+         "　‹/› は前後の期間へ続く印　基準日の線: " + escapeXml(fmtLong(in.base)) + "</p>\n";
   if (cx.rows.size() > g.nRows)
     out += "<p class=\"warn\">課題が " + std::to_string(cx.rows.size()) + " 行あるため、ガントには先頭の " + std::to_string(g.nRows) +
            " 行だけを出しています（リストには全部出ます）。</p>\n";
@@ -586,19 +589,23 @@ std::string renderGantt(const Ctx& cx) {
   }
   sharedDefs += "</defs>\n";
 
-  const int panels = (days + kPrintDaysPerPanel - 1) / kPrintDaysPerPanel;
+  const int panels = (days + g.daysPerPanel - 1) / g.daysPerPanel;
   const double maxTimelineW = timelinePrintW;
   out += "<div class=\"scroll\">\n";
   for (int panel = 0; panel < panels; ++panel) {
-    const int firstDay = panel * kPrintDaysPerPanel;
+    const int firstDay = panel * g.daysPerPanel;
     const double x0 = kLeftW + static_cast<double>(firstDay) * g.ax.px;
-    const double timelineW = std::min(maxTimelineW, kPrintDaysPerPanel * static_cast<double>(g.ax.px));
+    const int panelSpan = std::min(g.daysPerPanel, days - firstDay);
+    const double timelineW = std::min(maxTimelineW, g.daysPerPanel * static_cast<double>(g.ax.px));
     const double panelW = kLeftW + timelineW;
     for (std::size_t c = 0; c < nChunks; ++c) {
       const DrawChunk& draw = drawChunks[c];
+      const bool firstRowChunk = c == 0;
+      const double rowChunkOffset = firstRowChunk ? 0 : g.headH;
+      const double rowChunkH = draw.height - rowChunkOffset;
       std::string continuations;
       const std::size_t r0 = c * g.rowsPerChunk, r1 = std::min(g.nRows, r0 + g.rowsPerChunk);
-      const double windowEnd = x0 + std::min(kPrintDaysPerPanel, days - firstDay) * static_cast<double>(g.ax.px);
+      const double windowEnd = x0 + panelSpan * static_cast<double>(g.ax.px);
       for (std::size_t i = r0; i < r1; ++i) {
         const VisibleRow& vr = rows[i];
         const ScheduleRow& sr = in.rows[static_cast<std::size_t>(vr.id)];
@@ -614,11 +621,19 @@ std::string renderGantt(const Ctx& cx) {
           addText(continuations, windowEnd - 9, y, "›", TextStyle{15, true, "middle", hex(g.k.ink), 1});
         }
       }
-      std::string svg = "<div class=\"gseg" + std::string(panel > 0 && c == 0 ? " gantt-panel-start" : "") + "\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" + pathNum(panelW) + "\" height=\"" + pathNum(draw.height) + "\" viewBox=\"0 0 " + pathNum(panelW) + " " + pathNum(draw.height) + "\" role=\"img\" aria-label=\"ガント、期間 " + std::to_string(panel + 1) + " / " + std::to_string(panels) + "、行 " + std::to_string(c + 1) + " / " + std::to_string(nChunks) + "\">\n";
+      std::string svg = "<div class=\"gseg" + std::string(panel > 0 && c == 0 ? " gantt-panel-start" : "") + "\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" + pathNum(panelW) + "\" height=\"" + pathNum(rowChunkH) + "\" viewBox=\"0 0 " + pathNum(panelW) + " " + pathNum(rowChunkH) + "\" role=\"img\" aria-label=\"ガント、期間 " + std::to_string(panel + 1) + " / " + std::to_string(panels) + "、行 " + std::to_string(c + 1) + " / " + std::to_string(nChunks) + "\">\n";
       if (panel == 0 && c == 0) svg += sharedDefs;
-      svg += "<rect width=\"" + pathNum(panelW) + "\" height=\"" + pathNum(draw.height) + "\" fill=\"" + hex(g.k.surface) + "\"/>" + g.leftHeader();
-      svg += "<svg x=\"" + pathNum(kLeftW) + "\" y=\"0\" width=\"" + pathNum(timelineW) + "\" height=\"" + pathNum(draw.height) + "\" viewBox=\"" + pathNum(x0) + " 0 " + pathNum(timelineW) + " " + pathNum(draw.height) + "\"><use href=\"#gb\"/><use href=\"#gh\"/><use href=\"#gbars" + std::to_string(c) + "\"/><use href=\"#garrows" + std::to_string(c) + "\"/>" + continuations + "</svg>";
-      svg += "<use href=\"#gseps" + std::to_string(c) + "\"/><use href=\"#gleft" + std::to_string(c) + "\"/>";
+      svg += "<rect width=\"" + pathNum(panelW) + "\" height=\"" + pathNum(rowChunkH) + "\" fill=\"" + hex(g.k.surface) + "\"/>";
+      if (firstRowChunk) svg += g.leftHeader();
+      svg += "<svg x=\"" + pathNum(kLeftW) + "\" y=\"0\" width=\"" + pathNum(timelineW) + "\" height=\"" + pathNum(rowChunkH) + "\" viewBox=\"" + pathNum(x0) + " " + pathNum(rowChunkOffset) + " " + pathNum(timelineW) + " " + pathNum(rowChunkH) + "\"><use href=\"#gb\"/>";
+      if (firstRowChunk) svg += "<use href=\"#gh\"/>";
+      svg += "<use href=\"#gbars" + std::to_string(c) + "\"/><use href=\"#garrows" + std::to_string(c) + "\"/>" + continuations + "</svg>";
+      if (firstRowChunk) {
+        svg += "<use href=\"#gseps" + std::to_string(c) + "\"/><use href=\"#gleft" + std::to_string(c) + "\"/>";
+      } else {
+        const std::string shift = "translate(0 -" + pathNum(g.headH) + ")";
+        svg += "<g transform=\"" + shift + "\"><use href=\"#gseps" + std::to_string(c) + "\"/><use href=\"#gleft" + std::to_string(c) + "\"/></g>";
+      }
       svg += "</svg></div>\n";
       out += svg;
     }

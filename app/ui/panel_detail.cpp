@@ -1,6 +1,7 @@
 // 詳細パネル（SPEC 10.9）: 詳細 / 依存関係 / コメント
 #include <algorithm>
 #include <functional>
+#include <string_view>
 #include <unordered_map>
 
 #include <imgui_internal.h>
@@ -185,12 +186,31 @@ void detailTab(Frame& f, int i) {
   } else {
     ImGui::TextDisabled("—");
   }
+  const bool std0 = s->settings().scenario == kStdScenario;
   label("種別");
   ImGui::SetNextItemWidth(half);
   if (ImGui::BeginCombo("##type", o.type.c_str())) {
     for (const char* t : {"Epic", "Story", "Task", "Sub-task", "Bug", "Milestone"})
       if (ImGui::Selectable(t, o.type == t)) {
-        s->setField(id, [&](Issue& x) { x.type = t; });
+        const bool wasMilestone = T.kind[i] == Kind::Ms;
+        const bool becomesMilestone = std::string_view(t) == "Milestone";
+        s->setField(id, [&](Issue& x) {
+          x.type = t;
+          if (!leaf) return;
+          if (becomesMilestone) {
+            x.durW = 0.0;
+            for (const auto& [scenario, _] : x.alt.items()) x.alt.set(scenario, 0.0);
+          } else if (wasMilestone) {
+            x.labels.erase(std::remove_if(x.labels.begin(), x.labels.end(), [](const std::string& l) {
+              return text::icontains(l, "milestone") || l.find("マイルストーン") != std::string::npos;
+            }), x.labels.end());
+            if (std0) {
+              if (!x.durW || *x.durW == 0) x.durW = 1.0;
+            } else if (const double* w = x.alt.find(s->settings().scenario); !w || *w == 0) {
+              x.alt.set(s->settings().scenario, 1.0);
+            }
+          }
+        });
         c.afterEdit();
       }
     ImGui::EndCombo();
@@ -240,7 +260,6 @@ void detailTab(Frame& f, int i) {
           }
         }));
   ImGui::SeparatorText("日程");
-  const bool std0 = s->settings().scenario == kStdScenario;
   if (leaf) {
     bool durationDays = c.uiStr("detailDurationUnit", "weeks") == "days";
     std::string h = "期間";
@@ -284,35 +303,6 @@ void detailTab(Frame& f, int i) {
       }
     } else {
       ImGui::TextUnformatted((csv::fmtNum(durationValue) + (durationDays ? "営業日" : "週")).c_str());
-    }
-    label("日程での扱い");
-    ImGui::SameLine();
-    const bool milestone = T.kind[i] == Kind::Ms;
-    ImGui::SetNextItemWidth(std::max(u.m.s(80), std::min(u.m.s(150), half - u.m.s(35))));
-    if (ImGui::BeginCombo("##task-kind", milestone ? "◆ マイルストーン" : "作業（タスク）")) {
-      if (ImGui::Selectable("タスクにする", !milestone)) {
-        s->setField(id, [&](Issue& x) {
-          x.type = "Task";
-          x.labels.erase(std::remove_if(x.labels.begin(), x.labels.end(), [](const std::string& l) {
-            return text::icontains(l, "milestone") || l.find("マイルストーン") != std::string::npos;
-          }), x.labels.end());
-          if (std0) {
-            if (!x.durW || *x.durW == 0) x.durW = 1.0;
-          } else if (const double* w = x.alt.find(s->settings().scenario); !w || *w == 0) {
-            x.alt.set(s->settings().scenario, 1.0);
-          }
-        });
-        c.afterEdit();
-      }
-      if (ImGui::Selectable("マイルストーンにする", milestone)) {
-        s->setField(id, [&](Issue& x) {
-          x.type = "Milestone";
-          x.durW = 0.0;
-          for (const auto& [scenario, _] : x.alt.items()) x.alt.set(scenario, 0.0);
-        });
-        c.afterEdit();
-      }
-      ImGui::EndCombo();
     }
   } else {
     ImGui::TextDisabled("配下の %d 件から集計（完了 %d）", r.n, r.nDone);
