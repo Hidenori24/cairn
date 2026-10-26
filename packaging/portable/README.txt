@@ -62,7 +62,8 @@ Cairn（ポータブル版）— オフラインで動く、JIRA 互換のガン
   公式配布元: https://github.com/Hidenori24/cairn/releases
   使い方: https://github.com/Hidenori24/cairn/blob/main/docs/GUIDE.md
   CLI: https://github.com/Hidenori24/cairn/blob/main/docs/CLI.md
-  現在の配布物は未署名で、ブラウザや SmartScreen の警告が出ることがあります。公式配布元と
+  Windows の実行ファイルは署名済みの場合もありますが、SmartScreen は評判などにより警告を
+  表示することがあります。署名の有無と最新情報は公式リリースで確認してください。
   SHA256SUMS.txt を確認し、信頼できる場合は「詳細情報」→「実行」で起動してください。
 
 ■ rmcli の例（このフォルダでコマンドプロンプトを開いて）
