@@ -534,6 +534,9 @@ struct UiState {
   float ganttSx = 0;                // ガントの横スクロール（前のフレームの値）
   float ganttLeft = 0;              // 時間軸の左端（ガントの左の表の右端。画面の座標）
   float ganttPx = 1;                // 1日の幅（画面の座標。前のフレームの値）
+  bool hasVisibleGanttRange = false;
+  Day visibleGanttStart = 0, visibleGanttEnd = 0;
+  std::string visibleGanttProject;
   float pendingScrollX = 0;
   bool hasPendingScroll = false;
   // アプリの設定: 選んだ新しい保存先（切り替えの確認中）

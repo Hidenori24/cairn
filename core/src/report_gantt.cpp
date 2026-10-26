@@ -446,6 +446,14 @@ std::string renderGantt(const Ctx& cx) {
   const GanttDayRange rg = ganttDayRange(T, in.rows, in.base, cx.bl);
   g.ax.rs = ganttAxisStart(rg.lo);
   g.ax.hi = rg.hi;
+  if (opt.ganttVisibleOnly && opt.ganttVisibleEnd >= opt.ganttVisibleStart) {
+    const Day clippedStart = std::max(g.ax.rs, opt.ganttVisibleStart);
+    const Day clippedEnd = std::min(g.ax.hi, opt.ganttVisibleEnd);
+    if (clippedStart <= clippedEnd) {
+      g.ax.rs = clippedStart;
+      g.ax.hi = clippedEnd;
+    }
+  }
   bool axisCut = false;
   if (g.ax.hi - g.ax.rs > kReportMaxAxisDays) {
     g.ax.hi = g.ax.rs + kReportMaxAxisDays;
@@ -453,10 +461,10 @@ std::string renderGantt(const Ctx& cx) {
   }
   g.capHi = g.ax.hi;
   const int days = g.ax.hi - g.ax.rs + 1;
-  g.ax.px = ganttZoomPx(zoom, 1.f, kAllTimelineW - 24.f, days);
-  // 400 日以内なら対象期間全体を横 1 ページに収め、長期計画だけ約 2 か月ごとに分ける。
+  g.ax.px = opt.ganttDayWidth > 0 ? opt.ganttDayWidth : ganttZoomPx(zoom, 1.f, kAllTimelineW - 24.f, days);
+  // 400 日以内は全期間を横 1 ページに収め、長期計画だけ約 2 か月ごとに分ける。
   const double timelinePrintW = kPrintPx - kLeftW - 12;
-  g.daysPerPanel = days <= kPrintSinglePanelDays ? days : kPrintDaysPerPanel;
+  g.daysPerPanel = opt.ganttVisibleOnly || days <= kPrintSinglePanelDays ? days : kPrintDaysPerPanel;
   g.ax.px = std::min(g.ax.px, static_cast<float>(timelinePrintW / g.daysPerPanel));
   g.ax.left = static_cast<float>(kLeftW);
   g.totalW = kLeftW + static_cast<double>(days) * static_cast<double>(g.ax.px);
@@ -506,7 +514,8 @@ std::string renderGantt(const Ctx& cx) {
   // 見出し
   const char* const zoomName = zoom == "day" ? "日" : zoom == "month" ? "月" : zoom == "all" ? "全体" : "週";
   const char* const colorName = g.by == GanttColorBy::Float ? "余裕" : g.by == GanttColorBy::Assignee ? "担当者" : "Epic";
-  const std::string timeNote = days <= kPrintSinglePanelDays ? "時間軸は全期間を横1ページに表示" : "時間軸は約2か月ごとに分割";
+  const std::string timeNote = opt.ganttVisibleOnly ? "時間軸は画面に表示中の期間" :
+                               days <= kPrintSinglePanelDays ? "時間軸は全期間を横1ページに表示" : "時間軸は約2か月ごとに分割";
   out += std::string("<p class=\"note\">拡大率: ") + zoomName + "　色分け: " + colorName + "　" + timeNote +
          "　‹/› は前後の期間へ続く印　基準日の線: " + escapeXml(fmtLong(in.base)) + "</p>\n";
   if (cx.rows.size() > g.nRows)
