@@ -76,6 +76,7 @@ struct Prefs {
   std::string me = "自分";
   std::string currentProject;
   std::vector<std::string> recentProjects;  // この端末で最近開いたプロジェクトの ID（新しい順）
+  std::vector<std::string> quickAccess;  // 上部に固定する操作（端末ごと）
   std::vector<Template> templates;  // 利用者のテンプレート
   WindowPlacement window;
   bool hintDismissed = false;

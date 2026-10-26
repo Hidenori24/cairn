@@ -290,6 +290,17 @@ Prefs prefsFromJson(const Json& j) {
       if (p.recentProjects.size() == Prefs::kRecentProjectLimit) break;
     }
   }
+  if (j.contains("quickAccess") && j["quickAccess"].is_array()) {
+    static const std::vector<std::string> valid = {"view-gantt", "view-board", "view-list", "view-goals", "view-stats",
+                                                    "view-today", "add-issue", "html", "weekly", "csv", "workload"};
+    for (const auto& item : j["quickAccess"]) {
+      if (!item.is_string()) continue;
+      const auto id = item.get<std::string>();
+      if (std::find(valid.begin(), valid.end(), id) != valid.end() &&
+          std::find(p.quickAccess.begin(), p.quickAccess.end(), id) == p.quickAccess.end() && p.quickAccess.size() < 5)
+        p.quickAccess.push_back(id);
+    }
+  }
   if (j.contains("templates")) p.templates = templatesFromJson(j["templates"]);
   if (j.contains("window") && j["window"].is_object()) {
     const auto& w = j["window"];
@@ -339,7 +350,7 @@ Prefs prefsFromJson(const Json& j) {
   static const char* const known[] = {"theme",   "density", "me",         "currentProject", "templates",    "window",
                                       "hintDismissed", "dataDir", "uiScale", "dimPercent", "mtaLateDays", "confirmDelete",
                                       "autoBaseToday", "autoCompleteGitHub", "useLock", "newNameFormat", "newNameCustom", "inherit",
-                                      "recentProjects"};
+                                      "recentProjects", "quickAccess"};
   for (auto it = j.begin(); it != j.end(); ++it) {
     const std::string& k = it.key();
     if (std::find(std::begin(known), std::end(known), k) == std::end(known)) p.unknown[k] = it.value();
@@ -354,6 +365,7 @@ Json prefsToJson(const Prefs& p) {
   j["me"] = p.me;
   j["currentProject"] = p.currentProject;
   j["recentProjects"] = p.recentProjects;
+  j["quickAccess"] = p.quickAccess;
   j["templates"] = templatesToJson(p.templates);
   Json window = p.window.extra.is_object() ? p.window.extra : Json::object();
   for (const char* k : {"x", "y", "w", "h", "maximized"}) window.erase(k);
