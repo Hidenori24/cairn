@@ -5,21 +5,21 @@
 - `main` への push と `v*` タグで CI が動きます。作業ブランチの検査は PR 作成・更新時に行い、ブランチの push と PR 更新で同じ検査が二重に走るのを防ぎます。PR 作成前に検査したい場合は、そのブランチを選んで `workflow_dispatch` を実行できます。
 - PR 更新では同じ PR の古い実行をキャンセルします。main・タグ・手動実行とは別のグループで管理し、公開処理を PR の更新で取り消さないようにします。
 - GCC・Clang・UI・clang-tidy は各15分、Windows は25分、公開ジョブは各10分を上限とします。各検査とインストーラの確認は従来どおり実行します。
-- Actions の `Cairn-windows` 成果物は7日保存します。GitHub Releases に添付した配布物の保持期間は変わりません。`artifact_run` で古い成果物を使う場合は、期限内であることを確認してください。期限切れなら対象コミットから再ビルドが必要です。この保持期限は既存の成果物には遡って適用されません。
+- Actions の `Cairn-windows` と PR 用の `Cairn-exe-preview` 成果物は7日保存します。後者はダウンロード時に ZIP になり、中身は確認用の `Cairn.exe` だけです。GitHub Releases に添付した配布物の保持期間は変わりません。`artifact_run` で古い成果物を使う場合は、期限内であることを確認してください。期限切れなら対象コミットから再ビルドが必要です。この保持期限は既存の成果物には遡って適用されません。
 
 ## 正式版を出す手順
 
-1. 対象 PR を main にマージし、そのコミットの CI 全体が成功したことを確認します（GCC・Clang・UI・clang-tidy・Windows）。
-2. 版を揃えます。`CMakeLists.txt`、`vcpkg.json`、`app/resources/app.rc`（数値と文字列の両方）、`app/resources/app.manifest`、`cli/rmcli.manifest` が対象です。インストーラとアプリ内の版表示は CMake から引き継ぎます。
-3. `docs/CHANGELOG.md` に対象版の節を作り、公開日・変更・互換上の注意を記載します。生成処理は `tools/release_notes.sh` で、その見出しの節だけを使います。
-4. 未タグであることを確認し、CI が成功したコミットにタグを付けて push します。既存の公開タグは動かしません。
+1. 公開する変更の PR を main にマージし、必要な Windows 実機確認を済ませます。
+2. リリース準備 PR で版を揃えます。`CMakeLists.txt`、`vcpkg.json`、`app/resources/app.rc`（数値と文字列の両方）、`app/resources/app.manifest`、`cli/rmcli.manifest` が対象です。インストーラとアプリ内の版表示は CMake から引き継ぎます。
+3. 同じ PR で `docs/CHANGELOG.md` に対象版の節を作り、公開日・変更・互換上の注意を記載します。生成処理は `tools/release_notes.sh` で、その見出しの節だけを使います。PR の CI 全体（GCC・Clang・UI・clang-tidy・Windows）が成功したらマージし、main の CI も確認します。
+4. main の版と変更履歴が揃っており、タグが未作成であることを確認します。main のマージコミットにタグを付けて push します。既存の公開タグは動かしません。
 
 ```sh
-git fetch origin --tags
-git ls-remote --tags origin 'v1.1.0*'
-# <CIが成功したコミットSHA> は実際の値に置き換える
-git tag -a v1.1.0 <CIが成功したコミットSHA> -m "Cairn v1.1.0"
-git push origin refs/tags/v1.1.0
+release_tag=vX.Y.Z  # 公開する版に置き換える
+git fetch origin main --tags
+git ls-remote --tags origin "$release_tag"  # 出力がないことを確認
+git tag -a "$release_tag" origin/main -m "Cairn $release_tag"
+git push origin "refs/tags/$release_tag"
 ```
 
 5. タグの CI が再度ビルド・テストして GitHub Release を公開します。**タグを付けただけでは配布の完了ではありません。** 最後の `release` ジョブと、次の3ファイルの添付を確認します。
@@ -38,7 +38,7 @@ GitHub Actions → `ci` → `Run workflow` で、main を選び `release_tag` �
 
 | 入力 | 通常の正式版 |
 |---|---|
-| `release_tag` | `v1.1.0` など |
+| `release_tag` | 公開する未使用のタグ（例: `vX.Y.Z`） |
 | `target` | 空（実行したブランチのコミット） |
 | `artifact_run` | 空（この実行で作る配布物） |
 | `keep_notes` | 空 |
@@ -56,7 +56,7 @@ cmake --install build/windows-release --component portable --prefix dist/Cairn
 Windows で Inno Setup の `ISCC` を使います。例はリポジトリ直下からの実行です。版は CMake と揃えます。
 
 ```text
-ISCC /DAppVersion=1.1.0 /DSourceDir=<絶対パス>\dist\Cairn /DRepoDir=<リポジトリの絶対パス> /DOutDir=<絶対パス>\dist packaging\installer\Cairn.iss
+ISCC /DAppVersion=<版> /DSourceDir=<絶対パス>\dist\Cairn /DRepoDir=<リポジトリの絶対パス> /DOutDir=<絶対パス>\dist packaging\installer\Cairn.iss
 ```
 
 AppId・設定ファイルの旧名・データの退避先は、以前の版から更新できるよう変更しません。
@@ -64,6 +64,8 @@ AppId・設定ファイルの旧名・データの退避先は、以前の版か
 ## コード署名
 
 Windows 配布 exe は、信頼された認証局が発行した秘密鍵つき PFX 証明書が設定されていれば Authenticode 署名して検証します。証明書が設定されていない場合は未署名で配布します。署名する場合は次の **GitHub Actions repository secrets** を両方設定してください。片方だけ設定されている場合は Windows ジョブが失敗します。
+
+v1.3.2 のタグビルドでは証明書が設定されておらず、配布物は未署名です。署名の有無は版ごとの Windows ジョブと実行ファイルのプロパティで確認してください。
 
 - `CAIRN_SIGNING_CERTIFICATE_BASE64`: 信頼された認証局のコード署名証明書（秘密鍵を含む PFX）を Base64 化した値。
 - `CAIRN_SIGNING_CERTIFICATE_PASSWORD`: PFX のパスワード。

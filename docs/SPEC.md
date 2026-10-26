@@ -2,7 +2,7 @@
 
 - 名前: **Cairn**（ケルン。登山道で道しるべに石を積んだもの）。1.0.0-rc.1 で、それまでの「プロジェクト管理ツール」「Project Roadmap」から改名した（Issue #82）。実行ファイルは `Cairn.exe`。**内部のターゲット名（`roadmap_*`）・名前空間（`roadmap::`）・CLI（`rmcli`）・設定ファイル（`roadmap_prefs.json`）・データの場所と名前（`data/projects/`・`project.settings.json`）・`%LOCALAPPDATA%\ProjectRoadmap`（保存先を書き込めないときの退避先）・インストーラの AppId は、互換のため変えていない**。この文書の過去の経緯の記述に出る旧称はそのまま
 
-- 対応版: **v1.1.0**（2026-10-24 改訂。初版は2026-10-19）。
+- 対応版: **v1.3.2**（初版は2026-10-19）。
 - 対象読者: 実装・保守する開発者。操作手順は [GUIDE.md](GUIDE.md)、CLI は [CLI.md](CLI.md)。
 - 位置づけ: ブラウザ版（HTML/JavaScript、以下「JS版」）から移植した日程計算・CSV の互換性と、C++版で拡張した画面・保存・報告機能の仕様。第13章は初期実装の工程表として残す。採用済みの判断と未確定の点は [spec-questions.md](spec-questions.md)。
 
@@ -595,11 +595,13 @@ Windows では `ReadDirectoryChangesW` でフォルダを監視し、アクテ�
 
 ### 8.6 設定ファイル `roadmap_prefs.json`
 ```json
-{ "theme": "auto", "density": "normal", "me": "自分", "currentProject": "プロジェクト名",
+{ "theme": "auto", "density": "normal", "me": "自分", "currentProject": "プロジェクトID",
+  "recentProjects": ["プロジェクトID"], "quickAccess": ["view-gantt", "html"],
   "templates": [ /* 利用者のテンプレート。形式は付録A */ ], "window": { "x": 100, "y": 100, "w": 1440, "h": 900, "maximized": false },
   "hintDismissed": false }
 ```
 - `theme`: `auto`（OSの設定に従う）/ `light` / `dark`。`density`: `normal` / `compact`。
+- `recentProjects` は最近使ったプロジェクトの ID、`quickAccess` は固定した操作の ID。どちらも順序つきで最大5件（1.2.0 から）。
 - `useLock`: 編集中のロック（8.5.1）を使うか（既定 `true`）。アプリの設定の「編集中のロックを使う」。
 - 書き込めないときは黙って失敗してよい（次回は既定値）。
 
@@ -1235,9 +1237,9 @@ P0〜P7 は v0.1.0 までの初期実装の工程表。現行版の次の作業�
 
 ---
 
-## 14. 未確定事項・実装者への注意
+## 14. 初期実装時の判断と実装者への注意
 
-仕様を決め切れていない点。**暫定の判断で進め、決めたことを `docs/spec-questions.md` に書く**。
+初期実装時の論点を含む記録です。現行の操作・報告機能は 10 章と [GUIDE.md](GUIDE.md) を参照してください。新しく仕様を決め切れない点は、**暫定の判断で進め、決めたことを `docs/spec-questions.md` に書きます**。
 
 1. **UIフレームワーク**: Dear ImGui + Win32/DX11 を採用済み（3.4）。
 2. **日本語の並べ替え**: JS版は `localeCompare("ja")`（ICU）。C++版は「Unicode のコードポイント順」を既定とし、**かな（ひらがな/カタカナ）と漢字の並びが自然になる**簡易照合（カタカナ→ひらがなに正規化してから比較）を入れてよい。担当者の並びとリストの並べ替えだけに影響し、golden には出ない。
@@ -1248,7 +1250,7 @@ P0〜P7 は v0.1.0 までの初期実装の工程表。現行版の次の作業�
 7. **大きなファイル**: 50MB を超えるCSVは「大きすぎる」として拒否し、読み込みは試みない。
 8. **JS版との既知の差**: 1.4 と判断記録に記載。それ以外の差を見つけたら、`docs/spec-questions.md` に書いて**JS版に合わせる**（意図した変更と区別するため）。
 9. **アイコン**: 画面内のアイコンは `app/ui/icons.hpp` の定義を描画する。実行ファイル・インストーラ用の ICO は `tools/make_icon.py` で生成する。
-10. **印刷**: 範囲外。必要なら、ガントのPNG/PDF出力を将来の拡張にする。
+10. **印刷**: HTML 報告の印刷と Windows での直接 PDF 保存を実装済み（10.7.5）。ガントだけ選択した用紙幅にし、ほかの節は A4 縦にする。PNG の直接出力はこの報告機能に含まない。
 
 ---
 
@@ -1358,7 +1360,7 @@ JS版は使わなくなったため、JS版との互換は求めない（形式�
 `dataDir`（保存先）・`uiScale`（70〜200、既定100）・`dimPercent`（10〜80、既定30）・`confirmDelete`・`autoBaseToday`・`newNameFormat`・`newNameCustom`・`inherit`・`useLock`（既定true）も保存する。キーの導入履歴は COMPAT 7章、現在の定義は `core/include/roadmap/project_io.hpp` と `core/src/project_io.cpp`。
 （`autoCompleteGitHub`: GitHub のリンクが閉じられたら自動で完了にする（8.11）。真偽。既定は偽。）
 （`mtaLateDays`: マイルストーンの予測が前の記録からこの営業日以上遅れたら警告する（10.7.10）。整数 1〜260。既定 5。）
-8.6 のとおり。`theme`、`density`、`me`、`templates`、`currentProject`（最後に開いたプロジェクトの id）、`window`、`hintDismissed`。未知のキーは保持する。
+8.6 のとおり。`theme`、`density`、`me`、`templates`、`currentProject`（最後に開いたプロジェクトの id）、`recentProjects`（最近開いたプロジェクトの id。新しい順で最大5件）、`quickAccess`（上部に固定する操作の id。最大5件）、`window`、`hintDismissed`。未知のキーは保持する。
 
 ## 付録C. 実装者向けの指示
 
