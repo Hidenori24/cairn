@@ -166,11 +166,22 @@ void detailTab(Frame& f, int i) {
         (o.key.empty() ? o.id : o.key).c_str());
   label("担当者");
   if (leaf) {
-    field(f, id, "asg", o.assignee, half, applier(f, id, [](AC&, Session& ss, const std::string& k, const std::string& v) {
+    const float pickW = u.m.s(28);
+    ImGui::PushID("assignee-picker");
+    field(f, id, "asg", o.assignee, std::max(1.f, half - pickW - ImGui::GetStyle().ItemSpacing.x),
+          applier(f, id, [](AC&, Session& ss, const std::string& k, const std::string& v) {
             ss.setField(k, [&](Issue& x) { x.assignee = text::trim(v); });
           }));
-    if (ImGui::IsItemHovered() && !s->assignees().empty())
-      ImGui::SetTooltip("候補: %s", text::join(s->assignees(), "、").c_str());
+    ImGui::SameLine();
+    if (iconButton(u, "open", "down", "担当者候補から選ぶ", !s->assignees().empty())) ImGui::OpenPopup("##assignees");
+    if (ImGui::BeginPopup("##assignees")) {
+      for (const std::string& a : s->assignees()) {
+        if (ImGui::Selectable(a.c_str(), a == o.assignee))
+          s->setField(id, [&](Issue& x) { x.assignee = a; }), c.afterEdit();
+      }
+      ImGui::EndPopup();
+    }
+    ImGui::PopID();
   } else {
     ImGui::TextDisabled("—");
   }
@@ -231,24 +242,37 @@ void detailTab(Frame& f, int i) {
   ImGui::SeparatorText("日程");
   const bool std0 = s->settings().scenario == kStdScenario;
   if (leaf) {
-    std::string h = "期間（週）";
+    bool durationDays = c.uiStr("detailDurationUnit", "weeks") == "days";
+    std::string h = "期間";
     if (!std0) h += " @" + s->settings().scenario;
     label(h.c_str());
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(std::max(u.m.s(78), std::min(u.m.s(100), half - u.m.s(35))));
+    if (ImGui::BeginCombo("##duration-unit", durationDays ? "営業日" : "週")) {
+      if (ImGui::Selectable("週", !durationDays)) c.setUi("detailDurationUnit", "weeks");
+      if (ImGui::Selectable("営業日", durationDays)) c.setUi("detailDurationUnit", "days");
+      ImGui::EndCombo();
+    }
+    const double durationValue = durationDays ? r.weeks * 5.0 : r.weeks;
     if (T.kind[i] == Kind::Ms && r.weeks == 0) {
       ImGui::TextUnformatted("◆ マイルストーン（期間0）");
     } else if (!r.done) {
-      if (iconButton(u, "dmin", "minus", "1週減らす")) {
-        s->setDuration(id, std::max(0.0, r.weeks - 1));
+      const double step = durationDays ? 0.2 : 1.0;
+      const char* unit = durationDays ? "営業日" : "週";
+      if (iconButton(u, "dmin", "minus", (std::string("1") + unit + "減らす").c_str())) {
+        s->setDuration(id, std::max(0.0, r.weeks - step));
         c.afterEdit();
       }
       ImGui::SameLine();
-      field(f, id, "dur", csv::fmtNum(r.weeks), u.m.s(80),
-            applier(f, id, [](AC&, Session& ss, const std::string& k, const std::string& v) {
-              if (auto d = csv::parseDur(v, true); d && *d >= 0) ss.setDuration(k, text::jsRound(*d * 2) / 2);
+      field(f, id, "dur", csv::fmtNum(durationValue), std::max(u.m.s(40), half - u.m.s(72)),
+            applier(f, id, [durationDays](AC&, Session& ss, const std::string& k, const std::string& v) {
+              if (auto d = csv::parseDur(v, true); d && *d >= 0) {
+                ss.setDuration(k, durationDays ? *d / 5.0 : text::jsRound(*d * 2) / 2);
+              }
             }));
       ImGui::SameLine();
-      if (iconButton(u, "dplus", "plus", "1週増やす")) {
-        s->setDuration(id, r.weeks + 1);
+      if (iconButton(u, "dplus", "plus", (std::string("1") + unit + "増やす").c_str())) {
+        s->setDuration(id, r.weeks + step);
         c.afterEdit();
       }
       if (!std0 && o.alt.find(s->settings().scenario)) {
@@ -259,7 +283,36 @@ void detailTab(Frame& f, int i) {
         }
       }
     } else {
-      ImGui::TextUnformatted((csv::fmtNum(r.weeks) + "週").c_str());
+      ImGui::TextUnformatted((csv::fmtNum(durationValue) + (durationDays ? "営業日" : "週")).c_str());
+    }
+    label("日程での扱い");
+    ImGui::SameLine();
+    const bool milestone = T.kind[i] == Kind::Ms;
+    ImGui::SetNextItemWidth(std::max(u.m.s(80), std::min(u.m.s(150), half - u.m.s(35))));
+    if (ImGui::BeginCombo("##task-kind", milestone ? "◆ マイルストーン" : "作業（タスク）")) {
+      if (ImGui::Selectable("タスクにする", !milestone)) {
+        s->setField(id, [&](Issue& x) {
+          x.type = "Task";
+          x.labels.erase(std::remove_if(x.labels.begin(), x.labels.end(), [](const std::string& l) {
+            return text::icontains(l, "milestone") || l.find("マイルストーン") != std::string::npos;
+          }), x.labels.end());
+          if (std0) {
+            if (!x.durW || *x.durW == 0) x.durW = 1.0;
+          } else if (const double* w = x.alt.find(s->settings().scenario); !w || *w == 0) {
+            x.alt.set(s->settings().scenario, 1.0);
+          }
+        });
+        c.afterEdit();
+      }
+      if (ImGui::Selectable("マイルストーンにする", milestone)) {
+        s->setField(id, [&](Issue& x) {
+          x.type = "Milestone";
+          x.durW = 0.0;
+          for (const auto& [scenario, _] : x.alt.items()) x.alt.set(scenario, 0.0);
+        });
+        c.afterEdit();
+      }
+      ImGui::EndCombo();
     }
   } else {
     ImGui::TextDisabled("配下の %d 件から集計（完了 %d）", r.n, r.nDone);
@@ -267,7 +320,9 @@ void detailTab(Frame& f, int i) {
   const auto dateField = [&](const char* key, const char* l, const OptDay& cur,
                              std::function<void(Session&, const std::string&, OptDay)> fn) {
     label(l);
-    field(f, id, key, fmtIso(cur), half,
+    const float pickerW = u.m.s(28);
+    ImGui::PushID(key);
+    field(f, id, key, fmtIso(cur), std::max(1.f, half - pickerW - ImGui::GetStyle().ItemSpacing.x),
           applier(f, id, [fn](AC& cc, Session& ss, const std::string& k, const std::string& raw) {
             const std::string v = text::trim(raw);
             if (v.empty()) fn(ss, k, std::nullopt);
@@ -275,6 +330,73 @@ void detailTab(Frame& f, int i) {
             else cc.toast("日付として読めません: " + v);
           }),
           false, "YYYY-MM-DD");
+    ImGui::SameLine();
+    if (iconButton(u, "calendar", "calendar", "カレンダーから選ぶ")) {
+      const Day initial = cur.value_or(c.clock().today());
+      const Ymd ym = civilFromDays(initial);
+      ImGui::GetStateStorage()->SetInt(ImGui::GetID("##calendar-month"), ym.y * 12 + ym.m - 1);
+      ImGui::OpenPopup("##calendar-popup");
+    }
+    if (ImGui::BeginPopup("##calendar-popup")) {
+      const ImGuiID monthId = ImGui::GetID("##calendar-month");
+      const Day today = c.clock().today();
+      const Ymd todayYmd = civilFromDays(today);
+      int monthIndex = ImGui::GetStateStorage()->GetInt(monthId, todayYmd.y * 12 + todayYmd.m - 1);
+      int year = monthIndex / 12;
+      int month = monthIndex % 12 + 1;
+      if (ImGui::SmallButton("<")) {
+        if (--month <= 0) month = 12, --year;
+        ImGui::GetStateStorage()->SetInt(monthId, year * 12 + month - 1);
+      }
+      ImGui::SameLine();
+      ImGui::Text("%d年%d月", year, month);
+      ImGui::SameLine();
+      if (ImGui::SmallButton(">")) {
+        if (++month > 12) month = 1, ++year;
+        ImGui::GetStateStorage()->SetInt(monthId, year * 12 + month - 1);
+      }
+      if (ImGui::BeginTable("##calendar-days", 7, ImGuiTableFlags_SizingStretchSame)) {
+        for (const char* wd : {"日", "月", "火", "水", "木", "金", "土"}) {
+          ImGui::TableNextColumn();
+          ImGui::TextDisabled("%s", wd);
+        }
+        const Day first = *makeDay(year, month, 1);
+        const int offset = dow(first);
+        for (int cell = 0; cell < 42; ++cell) {
+          ImGui::TableNextColumn();
+          const Day d = first + cell - offset;
+          const Ymd dayYmd = civilFromDays(d);
+          const std::string dayText = std::to_string(dayYmd.d);
+          const bool selected = cur && *cur == d;
+          ImGui::PushID(cell);
+          if (dayYmd.m != month) ImGui::PushStyleColor(ImGuiCol_Text, u.t->muted);
+          if (ImGui::Selectable(dayText.c_str(), selected || d == today, ImGuiSelectableFlags_DontClosePopups,
+                                ImVec2(-1, u.m.s(24)))) {
+            fn(*s, id, d);
+            c.afterEdit();
+            ImGui::CloseCurrentPopup();
+          }
+          if (dayYmd.m != month) ImGui::PopStyleColor();
+          ImGui::PopID();
+        }
+        ImGui::EndTable();
+      }
+      if (ImGui::SmallButton("今日")) {
+        fn(*s, id, today);
+        c.afterEdit();
+        ImGui::CloseCurrentPopup();
+      }
+      if (cur) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("日付を消す")) {
+          fn(*s, id, std::nullopt);
+          c.afterEdit();
+          ImGui::CloseCurrentPopup();
+        }
+      }
+      ImGui::EndPopup();
+    }
+    ImGui::PopID();
   };
   ImGui::BeginGroup();
   dateField("dl", "期限", T.ownDl[i], [](Session& ss, const std::string& k, OptDay d) { ss.setDeadline(k, d); });
@@ -625,13 +747,14 @@ void commentsTab(Frame& f, int i) {
     avatar(u, cm.who.empty() ? "?" : cm.who);
     ImGui::SameLine();
     ImGui::BeginGroup();
-    ImGui::TextUnformatted(cm.who.c_str());
-    ImGui::SameLine();
+    const float deleteW = u.m.s(28);
+    const float authorW = std::max(0.f, ImGui::GetContentRegionAvail().x - deleteW - ImGui::GetStyle().ItemSpacing.x);
+    ImGui::TextUnformatted(ellipsize(cm.who, authorW).c_str());
+    ImGui::SameLine(ImGui::GetContentRegionMax().x - deleteW);
+    if (iconButton(u, "del", "trash", "コメントを削除")) del = k;
     std::string at = cm.at;
     if (at.size() == 16) at[10] = ' ';
     ImGui::TextDisabled("%s", at.c_str());
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - u.m.s(10));
-    if (iconButton(u, "del", "trash", "削除")) del = k;
     ImGui::PushTextWrapPos(0);
     ImGui::TextUnformatted(cm.text.c_str());
     ImGui::PopTextWrapPos();
