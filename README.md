@@ -39,7 +39,7 @@ JIRA 互換の CSV を原本に、課題の階層・依存関係・期間から 
 - **見方いろいろ**: ガント（日・週・月）・ボード・リスト・ギャップ（ゴールまでの差）・統計・今日（今日と今週にやること）。依存の矢印・クリティカルな経路の強調
 - **編集**: その場の編集・ドラッグで日程と依存を変更・一括編集・元に戻す／やり直し・コマンドパレット（`Ctrl+K`）
 - **JIRA 互換の CSV**: 取り込み・書き出し・互換チェック。Excel などで CSV を編集して保存すると、編集中の操作が終わった後に反映
-- **週報・報告**: 週次レポート（今週の完了・触った課題・先週から変わったこと・遅れ・余裕小）、HTML の書き出し
+- **週報・報告**: 週次レポート（今週の完了・触った課題・先週から変わったこと・遅れ・余裕小）、HTML と PDF の書き出し
 - **ベースライン比較**: 計画を保存して、いまの日程との差を見る。EVM（出来高管理）・マイルストーンの予測の推移・状況の件数の推移（累積フロー図）・負荷のヒートマップ
 - **添付・関連リンク**: 課題へのファイル添付、GitHub の PR・Issue へのリンク
 - **共有フォルダで交代して使う**: 編集中のロック（読み取り専用で開く・引き継ぎ）
@@ -133,7 +133,7 @@ Versions with `-rc` (for example `1.0.0-rc.1`) are release candidates, published
 - **Views**: Gantt (day / week / month), board, list, gap (distance to the goal), statistics, and "today" (what to do today and this week). Dependency arrows and critical path highlighting
 - **Editing**: in-place editing, drag to change dates and dependencies, bulk edit, undo / redo, command palette (`Ctrl+K`)
 - **JIRA-compatible CSV**: import, export and a compatibility check. Edit the CSV in Excel and save; Cairn picks the change up after active edits finish
-- **Weekly report**: completed and touched issues, what changed since last week, late / tight issues; HTML export
+- **Weekly reports and exports**: completed and touched issues, what changed since last week, late / tight issues; HTML and PDF project reports
 - **Baseline comparison**: save a plan and compare it with the current schedule. Also EVM, milestone forecast trends, cumulative flow, workload heatmap
 - **Attachments and links**: attach files to issues, link GitHub pull requests and issues
 - **Shared-folder editing lock**: take turns on a shared drive (read-only open, take over)
@@ -154,7 +154,7 @@ cmake --preset linux-asan && cmake --build --preset linux-asan && ctest --preset
 
 ### Usage and documentation
 
-v1.1.0 adds a two-row header, persistent display-scale presets and CLI report exports. Use the percentage menu if text is too small. HTML reports use wide Gantt sections and A4 landscape pages for the Gantt, with portrait pages for other sections.
+Use the percentage menu if text is too small. From the Report menu, export an HTML report or save it directly as a PDF. Gantt pages can use A4, A3, or A2 width with A4 height (A3 width by default); statistics and list pages stay A4 portrait. A full-range Gantt is split into time panels according to the selected zoom and page width. The CLI's HTML report uses A4 landscape Gantt pages.
 
 `rmcli report input.csv -o report.html` and `rmcli weekly input.csv -o weekly.md` read CSV only; they do not load GUI settings, history or baselines. Set calculation options explicitly.
 
