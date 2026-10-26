@@ -63,7 +63,7 @@ AppId・設定ファイルの旧名・データの退避先は、以前の版か
 
 ## コード署名
 
-Windows 配布 exe の署名には、信頼された認証局が発行し、秘密鍵を含む PFX 形式の Authenticode コード署名証明書を使います。ワークフローは次の **GitHub Actions repository secrets** が両方設定されていると、インストーラとポータブル版の exe に署名して検証します。片方だけ設定されている場合はエラーになります。`v1.2.1` と `v1.3.0` は署名必須で、設定がなければ Windows ジョブを失敗させます。両方未設定の場合は署名なしで続行します。
+Windows 配布 exe は、信頼された認証局が発行した秘密鍵つき PFX 証明書が設定されていれば Authenticode 署名して検証します。証明書が設定されていない場合は未署名で配布します。署名する場合は次の **GitHub Actions repository secrets** を両方設定してください。片方だけ設定されている場合は Windows ジョブが失敗します。
 
 - `CAIRN_SIGNING_CERTIFICATE_BASE64`: 信頼された認証局のコード署名証明書（秘密鍵を含む PFX）を Base64 化した値。
 - `CAIRN_SIGNING_CERTIFICATE_PASSWORD`: PFX のパスワード。
