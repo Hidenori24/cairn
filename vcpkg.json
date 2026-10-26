@@ -1,6 +1,6 @@
 {
   "name": "project-roadmap",
-  "version-string": "1.2.1",
+  "version-string": "1.3.1",
   "description": "営業日ベースのスケジュール計算つきプロジェクト管理ツール（C++版）",
   "dependencies": [
     "nlohmann-json",
