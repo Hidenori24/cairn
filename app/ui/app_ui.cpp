@@ -566,6 +566,21 @@ void drawTopBar(Frame& f) {
   dl->AddLine(ImVec2(p0.x, p0.y + H - 1), ImVec2(p0.x + W, p0.y + H - 1), u.t->line);
   const float rowH = H / 2;
   float by = p0.y + (rowH - u.m.s(28)) / 2;
+  const std::string saved = c.saveState() == app::SaveState::Error ? S::kSaveError : c.saveState() == app::SaveState::Saving ? S::kSaving
+      : std::string(S::kSaved) + (c.savedAt().empty() ? "" : " " + c.savedAt());
+  const std::string scaleLabel = std::to_string(c.prefs().uiScale) + "% ▼";
+  const float rightW = ImGui::CalcTextSize(saved.c_str()).x + ImGui::CalcTextSize("レポート ▼").x +
+      ImGui::CalcTextSize(S::kAddIssue).x + ImGui::CalcTextSize(scaleLabel.c_str()).x + u.m.s(16 + 28 * 4 + 20 * 3 + 34);
+  const float rx = p0.x + W - rightW - u.m.s(12);
+  struct QuickAction { const char* id; const char* label; const char* icon; bool enabled; };
+  const std::vector<QuickAction> quickActions = {
+      {"view-gantt", S::kViewGantt, "gantt", s != nullptr}, {"view-board", S::kViewBoard, "board", s != nullptr},
+      {"view-list", S::kViewList, "list", s != nullptr}, {"view-goals", S::kViewGoals, "target", s != nullptr},
+      {"view-stats", S::kViewStats, "chart", s != nullptr}, {"view-today", S::kViewToday, "sun", s != nullptr},
+      {"add-issue", S::kAddIssue, "plus", s != nullptr && !c.readOnly()},
+      {"html", "HTML レポート", "download", s && s->tree()}, {"weekly", "週次レポート", "calendar", s && s->tree()},
+      {"csv", "CSV・共有用 JSON", "download", s != nullptr}, {"workload", "担当者の負荷", "chart", s != nullptr}};
+  bool openQuickAccessFromProject = false;
   u.headerControls.clear();
   u.reportMenuItems.clear();
   const auto remember = [&](const std::string& id) {
@@ -603,17 +618,68 @@ void drawTopBar(Frame& f) {
       ImGui::Separator();
       if (ImGui::MenuItem(S::kImportCsv)) openDialog(f, Dlg::Import);
       if (ImGui::MenuItem(S::kExport, nullptr, false, s != nullptr)) openDialog(f, Dlg::Export);
+      ImGui::Separator();
+      if (ImGui::MenuItem("クイックアクセスを設定…")) openQuickAccessFromProject = true;
       ImGui::EndPopup();
     }
   }
+  if (openQuickAccessFromProject) ImGui::OpenPopup("##quickaccess");
+  // よく使う操作をプロジェクト切替の右に固定する。設定は端末ごとに保存。
+  ImGui::SameLine(0, u.m.s(6));
+  const float quickStart = ImGui::GetCursorScreenPos().x;
+  const float quickRoom = std::max(0.0f, rx - quickStart - u.m.s(6));
+  const int visibleQuickCount = std::min<int>(static_cast<int>(c.prefs().quickAccess.size()),
+      std::max(0, static_cast<int>((quickRoom - u.m.s(40)) / u.m.s(30))));
+  for (int i = 0; i < visibleQuickCount; ++i) {
+    const std::string& id = c.prefs().quickAccess[static_cast<std::size_t>(i)];
+    const auto it = std::find_if(quickActions.begin(), quickActions.end(), [&](const QuickAction& a) { return id == a.id; });
+    if (it == quickActions.end()) continue;
+    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
+    if (iconButton(u, ("quick:" + id).c_str(), it->icon, it->label, it->enabled)) {
+      if (id == "view-gantt") c.setView(View::Gantt);
+      else if (id == "view-board") c.setView(View::Board);
+      else if (id == "view-list") c.setView(View::List);
+      else if (id == "view-goals") c.setView(View::Goals);
+      else if (id == "view-stats") c.setView(View::Stats);
+      else if (id == "view-today") c.setView(View::Today);
+      else if (id == "add-issue") {
+        const std::string issue = c.createIssue("", "");
+        if (!issue.empty()) beginEdit(f, issue, EditField::Name, true);
+      } else if (id == "html") openDialog(f, Dlg::ExportHtml);
+      else if (id == "weekly") openDialog(f, Dlg::Weekly);
+      else if (id == "csv") { u.exportKind = "app"; openDialog(f, Dlg::Export); }
+      else if (id == "workload") openDialog(f, Dlg::Workload);
+    }
+    ImGui::SameLine(0, u.m.s(2));
+  }
+  if (quickRoom >= u.m.s(36)) {
+    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
+    if (iconButton(u, "quick-config", "sliders", "クイックアクセスを設定")) ImGui::OpenPopup("##quickaccess");
+  }
+  if (ImGui::BeginPopup("##quickaccess")) {
+    if (!u.imeComposing && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+      ImGui::CloseCurrentPopup();
+      u.popupEscFrame = ImGui::GetFrameCount();
+    }
+    ImGui::TextDisabled("上部に固定する操作（最大5件）");
+    for (std::size_t i = 0; i < quickActions.size(); ++i) {
+      const auto& action = quickActions[i];
+      if (i == 6 || i == 7 || i == 10) ImGui::Separator();
+      const auto& pinned = c.prefs().quickAccess;
+      const bool selected = std::find(pinned.begin(), pinned.end(), action.id) != pinned.end();
+      const bool enabled = selected || pinned.size() < 5;
+      if (ImGui::MenuItem(action.label, nullptr, selected, enabled)) {
+        auto& ids = c.prefs().quickAccess;
+        const auto found = std::find(ids.begin(), ids.end(), action.id);
+        if (found == ids.end()) ids.push_back(action.id);
+        else ids.erase(found);
+        c.savePrefs();
+      }
+    }
+    ImGui::EndPopup();
+  }
   // 右側: 保存状態 / Ctrl+K / 元に戻す / やり直す / ＋課題 / その他
-  const std::string saved = c.saveState() == app::SaveState::Error ? S::kSaveError : c.saveState() == app::SaveState::Saving ? S::kSaving
-      : std::string(S::kSaved) + (c.savedAt().empty() ? "" : " " + c.savedAt());
-  const std::string scaleLabel = std::to_string(c.prefs().uiScale) + "% ▼";
-  const float rightW = ImGui::CalcTextSize(saved.c_str()).x + ImGui::CalcTextSize("レポート ▼").x +
-      ImGui::CalcTextSize(S::kAddIssue).x + ImGui::CalcTextSize(scaleLabel.c_str()).x + u.m.s(16 + 28 * 4 + 20 * 3 + 34);
   ImGui::SameLine(0, 0);
-  const float rx = p0.x + W - rightW - u.m.s(12);
   if (ImGui::GetCursorScreenPos().x < rx) ImGui::SetCursorScreenPos(ImVec2(rx, by));
   else ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x + u.m.s(8), by));
   {
