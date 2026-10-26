@@ -317,7 +317,8 @@ void dlgExportHtml(Frame& f) {
     const std::string cb = c.uiStr("colorBy", "root");
     r.colorBy = (cb == "float" || cb == "asg") ? cb : "root";
     if (haveVisibleGanttRange) {
-      r.ganttVisibleOnly = c.view() == app::View::Gantt;
+      // ビューを切り替えてレポートを開いても、直前のガントの表示期間を使う。
+      r.ganttVisibleOnly = true;
       r.ganttVisibleStart = u.visibleGanttStart;
       r.ganttVisibleEnd = u.visibleGanttEnd;
       r.ganttDayWidth = u.customPx > 0 ? u.ganttPx / std::max(0.01f, u.m.scale) : 0;
@@ -368,7 +369,7 @@ void dlgExportHtml(Frame& f) {
     } else {
       ImGui::TextDisabled(r.ganttVisibleOnly
                               ? "今の横スクロール位置に見えている日付範囲を、A4横の幅に合わせて出します。"
-                              : "チェックを外すと、プロジェクトの日程全体をA4横の幅に合わせて出します。");
+                              : "チェックを外すと、プロジェクトの日程全体を拡大率に合わせて必要な枚数に分けます。");
     }
     ImGui::TextUnformatted("色分け");
     ImGui::SameLine();

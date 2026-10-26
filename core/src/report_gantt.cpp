@@ -20,8 +20,7 @@ constexpr double kLeftW = kNameW + kAsgW + kStatusW + kDurW + kFloatW;
 constexpr float kAllTimelineW = 900;  // 拡大率「全体」のときの時間軸の幅
 constexpr double kPrintPx = 1047;     // A4 横（余白 10mm）の幅（96dpi）
 constexpr double kChunkPagePx = 460;  // 1 ページに入れたい高さ（最初のページの見出し・凡例の分を見込む）
-constexpr int kPrintDaysPerPanel = 62;
-constexpr int kPrintSinglePanelDays = 400;
+constexpr int kMaxTimePanels = 64;
 
 
 std::string pathNum(double v) { return n1(v); }
@@ -76,7 +75,7 @@ struct Gantt {
   std::string styleZoom;
   double headH = 46;
   double totalW = 0;
-  int daysPerPanel = kPrintDaysPerPanel;
+  int daysPerPanel = 1;
   std::size_t nRows = 0;
   std::size_t rowsPerChunk = 20;
   bool detail = false;
@@ -462,9 +461,11 @@ std::string renderGantt(const Ctx& cx) {
   g.capHi = g.ax.hi;
   const int days = g.ax.hi - g.ax.rs + 1;
   g.ax.px = opt.ganttDayWidth > 0 ? opt.ganttDayWidth : ganttZoomPx(zoom, 1.f, kAllTimelineW - 24.f, days);
-  // 400 日以内は全期間を横 1 ページに収め、長期計画だけ約 2 か月ごとに分ける。
+  // 画面の表示範囲は横 1 ページ。全期間は選択した拡大率で読める幅ごとに分ける。
   const double timelinePrintW = kPrintPx - kLeftW - 12;
-  g.daysPerPanel = opt.ganttVisibleOnly || days <= kPrintSinglePanelDays ? days : kPrintDaysPerPanel;
+  const int fitDays = std::max(1, static_cast<int>(std::floor(timelinePrintW / g.ax.px)));
+  const int minDaysForLimit = (days + kMaxTimePanels - 1) / kMaxTimePanels;
+  g.daysPerPanel = opt.ganttVisibleOnly || zoom == "all" ? days : std::min(days, std::max(fitDays, minDaysForLimit));
   g.ax.px = std::min(g.ax.px, static_cast<float>(timelinePrintW / g.daysPerPanel));
   g.ax.left = static_cast<float>(kLeftW);
   g.totalW = kLeftW + static_cast<double>(days) * static_cast<double>(g.ax.px);
@@ -514,8 +515,10 @@ std::string renderGantt(const Ctx& cx) {
   // 見出し
   const char* const zoomName = zoom == "day" ? "日" : zoom == "month" ? "月" : zoom == "all" ? "全体" : "週";
   const char* const colorName = g.by == GanttColorBy::Float ? "余裕" : g.by == GanttColorBy::Assignee ? "担当者" : "Epic";
+  const int timePanels = (days + g.daysPerPanel - 1) / g.daysPerPanel;
   const std::string timeNote = opt.ganttVisibleOnly ? "時間軸は画面に表示中の期間" :
-                               days <= kPrintSinglePanelDays ? "時間軸は全期間を横1ページに表示" : "時間軸は約2か月ごとに分割";
+                               timePanels == 1 ? "時間軸は全期間を横1ページに表示" :
+                               "時間軸は拡大率に合わせて横 " + std::to_string(timePanels) + " ページに分割";
   out += std::string("<p class=\"note\">拡大率: ") + zoomName + "　色分け: " + colorName + "　" + timeNote +
          "　‹/› は前後の期間へ続く印　基準日の線: " + escapeXml(fmtLong(in.base)) + "</p>\n";
   if (cx.rows.size() > g.nRows)

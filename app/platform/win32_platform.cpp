@@ -6,6 +6,7 @@
 #include <shobjidl.h>
 #include <shlwapi.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -427,6 +428,20 @@ std::wstring fileUri(const std::wstring& path) {
   if (!url.empty() && url.back() == L'\0') url.pop_back();
   return url;
 }
+
+bool completePdf(const std::filesystem::path& path) {
+  std::ifstream file(path, std::ios::binary | std::ios::ate);
+  if (!file) return false;
+  const std::streamoff size = file.tellg();
+  if (size < 16) return false;
+  file.seekg(0);
+  char header[5]{};
+  if (!file.read(header, sizeof(header)) || std::memcmp(header, "%PDF-", sizeof(header)) != 0) return false;
+  const std::streamoff tailSize = std::min<std::streamoff>(size, 1024);
+  file.seekg(size - tailSize);
+  std::string tail(static_cast<std::size_t>(tailSize), '\0');
+  return static_cast<bool>(file.read(tail.data(), tailSize)) && tail.find("%%EOF") != std::string::npos;
+}
 }  // namespace
 
 bool Win32Platform::printHtmlToPdf(const std::string& html, const std::string& path, std::string* error) {
@@ -448,6 +463,8 @@ bool Win32Platform::printHtmlToPdf(const std::string& html, const std::string& p
   }
   std::filesystem::path htmlPath(tempName);
   htmlPath.replace_extension(L".html");
+  std::filesystem::path pdfPath = htmlPath;
+  pdfPath.replace_extension(L".pdf");
   std::filesystem::path profilePath = htmlPath;
   profilePath.replace_extension();
   DeleteFileW(tempName);
@@ -483,13 +500,13 @@ bool Win32Platform::printHtmlToPdf(const std::string& html, const std::string& p
   const std::wstring outPath = widen(path);
   std::wstring command = quoteArg(edge) + L" --headless --disable-gpu --no-first-run --disable-background-networking --disable-extensions " +
                          L"--user-data-dir=" + quoteArg(profilePath.wstring()) + L" --no-pdf-header-footer --print-to-pdf=" +
-                         quoteArg(outPath) + L" " + quoteArg(htmlUrl);
+                         quoteArg(pdfPath.wstring()) + L" " + quoteArg(htmlUrl);
   STARTUPINFOW startup{};
   startup.cb = sizeof(startup);
   PROCESS_INFORMATION process{};
   const BOOL started = CreateProcessW(edge.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr,
                                       &startup, &process);
-  bool ok = false;
+  bool edgeOk = false;
   if (started) {
     const DWORD wait = WaitForSingleObject(process.hProcess, 120000);
     DWORD code = 1;
@@ -498,25 +515,41 @@ bool Win32Platform::printHtmlToPdf(const std::string& html, const std::string& p
       TerminateProcess(process.hProcess, ERROR_TIMEOUT);
       WaitForSingleObject(process.hProcess, 5000);
     }
-    ok = wait == WAIT_OBJECT_0 && code == 0;
+    edgeOk = wait == WAIT_OBJECT_0 && code == 0;
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
   }
+  // Edge の起動プロセスが終了しても、別プロセスによる PDF の書き込みが続くことがある。
+  // 完成を確認するまで入力 HTML を残し、完成した PDF だけを保存先へ移す。
+  bool pdfReady = false;
+  bool saved = false;
+  DWORD moveError = ERROR_SUCCESS;
+  if (edgeOk) {
+    const ULONGLONG deadline = GetTickCount64() + 120000;
+    do {
+      if (completePdf(pdfPath)) {
+        pdfReady = true;
+        if (MoveFileExW(pdfPath.c_str(), outPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
+          saved = true;
+          break;
+        }
+        moveError = GetLastError();
+        if (moveError != ERROR_SHARING_VIOLATION && moveError != ERROR_LOCK_VIOLATION) break;
+      }
+      Sleep(100);
+    } while (GetTickCount64() < deadline);
+  }
   DeleteFileW(htmlPath.c_str());
+  DeleteFileW(pdfPath.c_str());
   std::error_code profileError;
   std::filesystem::remove_all(profilePath, profileError);
-  if (!ok) {
+  if (!edgeOk) {
     if (error) *error = started ? "PDF を作成できませんでした（Edge の処理が失敗またはタイムアウトしました）" : "Microsoft Edge を起動できません";
     return false;
   }
-  WIN32_FILE_ATTRIBUTE_DATA pdfInfo{};
-  if (!GetFileAttributesExW(outPath.c_str(), GetFileExInfoStandard, &pdfInfo) ||
-      (pdfInfo.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
-      (pdfInfo.nFileSizeHigh == 0 && pdfInfo.nFileSizeLow == 0)) {
-    if (error) *error = "Edge は正常終了しましたが PDF ファイルが作られていません";
-    return false;
-  }
-  return true;
+  if (!saved && error) *error = pdfReady ? "PDF を保存先へ移せません（エラー " + std::to_string(moveError) + "）"
+                                         : "Edge は終了しましたが PDF の出力が完了しませんでした";
+  return saved;
 }
 
 // 関連リンクを開く（Web は既定のブラウザ、ファイルは関連付けられたアプリ、フォルダはエクスプローラー）。

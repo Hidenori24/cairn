@@ -857,6 +857,25 @@ TEST_CASE("report: 行が少ないときだけバーに説明（title）を付�
   CHECK(contains(h, "余裕 "));
 }
 
+TEST_CASE("report: 全期間は拡大率に合わせて分割し、画面の日付範囲は横1ページに収める") {
+  Proj p = Proj::fromCsv(kBasic);
+  ExportOptions o;
+  o.stats = false;
+  o.list = false;
+  o.zoom = "day";
+  const std::string all = exportHtml(p.input(), o);
+  CHECK(contains(all, "時間軸は拡大率に合わせて横 "));
+  CHECK(contains(all, "class=\"gseg gantt-panel-start\""));
+
+  o.ganttVisibleOnly = true;
+  o.ganttVisibleStart = p.base - 7;
+  o.ganttVisibleEnd = p.base + 30;
+  const std::string visible = exportHtml(p.input(), o);
+  CHECK(contains(visible, "時間軸は画面に表示中の期間"));
+  CHECK_FALSE(contains(visible, "class=\"gseg gantt-panel-start\""));
+  CHECK(contains(visible, "期間 1 / 1"));
+}
+
 TEST_CASE("report: 日付が極端でも出力が膨らまない（時間軸は上限の日数まで）") {
   Proj p = Proj::fromCsv(
       "Issue Id,Issue Type,Summary,Parent,Assignee,Status,Priority,Duration (weeks),Deadline\n"
