@@ -650,7 +650,7 @@ void dlgWeekly(Frame& f) {
   }
   const int b = o.allAssignees
                     ? buttons(f, {"Markdown をコピー", "閉じる", "HTML をまとめて保存…", "Markdown をまとめて保存…", "個別ファイルで保存…"}, false, ok)
-                    : buttons(f, {"Markdown をコピー", "閉じる", "HTML を保存…", "Markdown を保存…", "PDF を保存…"}, false, ok);
+                    : buttons(f, {"Markdown をコピー", "閉じる", "HTML を保存…", "Markdown を保存…"}, false, ok);
   if (b == 1) return close(f);
   if (b < 0) return;
   if (!ok) {
@@ -666,21 +666,6 @@ void dlgWeekly(Frame& f) {
       const auto folder = f.p.pickFolder("");
       if (!folder) return;
       (void)f.c.exportWeeklyMembers(*folder, opt, html);
-    });
-    return;
-  }
-  if (b == 4) {
-    std::string name = c.weeklyFileName(opt, true);
-    if (name.size() >= 5) name.replace(name.size() - 5, 5, ".pdf");
-    deferAfterFrame(f, [&f, opt, name] {
-      const auto path = f.p.pickSaveFile(name, "pdf", "PDF ファイル");
-      if (!path) return;
-      const auto html = f.c.renderWeekly(opt, true);
-      if (!html.ok()) { f.c.toast("PDF を作成できません: " + html.error()); return; }
-      std::string error;
-      if (!f.p.printHtmlToPdf(html.value(), *path, &error)) { f.c.toast("PDF を作成できません: " + error); return; }
-      f.c.recordWeekly(opt);
-      f.c.toast("PDF を保存しました");
     });
     return;
   }
