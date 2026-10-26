@@ -59,7 +59,7 @@ if(ROADMAP_BUILD_APP AND WIN32)
     platform/win32_lock.cpp
     resources/app.rc
   )
-  target_link_libraries(roadmap_app PRIVATE roadmap_ui shell32 ole32 comdlg32 uuid)
+  target_link_libraries(roadmap_app PRIVATE roadmap_ui shell32 ole32 comdlg32 shlwapi uuid)
   roadmap_set_warnings(roadmap_app)
   target_compile_definitions(roadmap_app PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
   if(MINGW)

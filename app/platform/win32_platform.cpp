@@ -4,6 +4,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shobjidl.h>
+#include <shlwapi.h>
 
 #include <cstdlib>
 #include <cstring>
@@ -416,17 +417,15 @@ std::wstring quoteArg(const std::wstring& arg) {
   return out;
 }
 
-std::string fileUri(const std::wstring& path) {
-  std::string utf8 = narrow(path);
-  for (char& ch : utf8) if (ch == '\\') ch = '/';
-  std::string out = "file:///";
-  static constexpr char hex[] = "0123456789ABCDEF";
-  for (unsigned char ch : utf8) {
-    if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '/' || ch == ':' ||
-        ch == '-' || ch == '_' || ch == '.' || ch == '~') out += static_cast<char>(ch);
-    else { out += '%'; out += hex[ch >> 4]; out += hex[ch & 15]; }
-  }
-  return out;
+std::wstring fileUri(const std::wstring& path) {
+  // Let Windows produce the file URL so drive paths, extended-length paths, and Unicode
+  // characters are escaped using the form expected by Edge/Chromium.
+  std::wstring url(32768, L'\0');
+  DWORD chars = static_cast<DWORD>(url.size());
+  if (FAILED(UrlCreateFromPathW(path.c_str(), url.data(), &chars, 0))) return {};
+  url.resize(chars);
+  if (!url.empty() && url.back() == L'\0') url.pop_back();
+  return url;
 }
 }  // namespace
 
@@ -467,10 +466,24 @@ bool Win32Platform::printHtmlToPdf(const std::string& html, const std::string& p
       return false;
     }
   }
+  if (!fileExists(htmlPath)) {
+    std::error_code ec;
+    std::filesystem::remove_all(profilePath, ec);
+    if (error) *error = "一時 HTML が見つかりません";
+    return false;
+  }
+  const std::wstring htmlUrl = fileUri(htmlPath.wstring());
+  if (htmlUrl.empty()) {
+    DeleteFileW(htmlPath.c_str());
+    std::error_code ec;
+    std::filesystem::remove_all(profilePath, ec);
+    if (error) *error = "一時 HTML のファイル URL を作成できません";
+    return false;
+  }
   const std::wstring outPath = widen(path);
   std::wstring command = quoteArg(edge) + L" --headless --disable-gpu --no-first-run --disable-background-networking --disable-extensions " +
                          L"--user-data-dir=" + quoteArg(profilePath.wstring()) + L" --no-pdf-header-footer --print-to-pdf=" +
-                         quoteArg(outPath) + L" " + quoteArg(widen(fileUri(htmlPath.wstring())));
+                         quoteArg(outPath) + L" " + quoteArg(htmlUrl);
   STARTUPINFOW startup{};
   startup.cb = sizeof(startup);
   PROCESS_INFORMATION process{};
