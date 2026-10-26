@@ -291,7 +291,11 @@ void drawCard(const Env& e, int idx, ImVec2 p, float w) {
   const bool hov = ImGui::IsMouseHoveringRect(p, end) && ImGui::IsWindowHovered();
   registerDropTarget(f, sid, p, end);
   const bool sel = f.c.isSelected(sid);
-  dl->AddRectFilled(p, end, sel ? u.t->selbg : (hov ? u.t->hover : u.t->surface), u.m.s(6));
+  ImGui::PushID(sid.c_str());
+  const float fade = hoverAmount(u, "##today-hover", hov);
+  ImGui::PopID();
+  const ImU32 background = u.m.modern ? blendColor(u.t->surface, u.t->accentBg, fade * 0.5f) : (hov ? u.t->hover : u.t->surface);
+  dl->AddRectFilled(p, end, sel ? u.t->selbg : background, u.m.s(u.m.modern ? 10.f : 6.f));
   dl->AddRect(p, end, sid == f.c.cursor() ? u.t->accent : u.t->line, u.m.s(6));
   const RiskColor rc = riskCol(e, idx);
   const bool late = isLate(e, idx);
