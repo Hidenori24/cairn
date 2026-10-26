@@ -66,6 +66,10 @@ struct Ctx {
   std::string ok() const { return hex(k.ok); }
 };
 
+inline int ganttPageWidthMm(const ExportOptions& opt) {
+  return opt.ganttPageWidthMm == 420 || opt.ganttPageWidthMm == 594 ? opt.ganttPageWidthMm : 297;
+}
+
 // 各節（HTML の断片）
 std::string renderGantt(const Ctx& cx);
 std::string renderStats(const Ctx& cx);

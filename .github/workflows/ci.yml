@@ -110,6 +110,13 @@ jobs:
           $exe = Get-Item build/windows-release/app/Cairn.exe
           "{0:N1} MB" -f ($exe.Length / 1MB)
           if ($exe.Length -gt 10MB) { throw "exe が 10MB を超えています" }
+      - name: 確認用 exe だけを保存
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v6
+        with:
+          name: Cairn-exe-preview
+          path: build/windows-release/app/Cairn.exe
+          retention-days: 7
       - name: ポータブル版のフォルダ（exe・data\projects・samples・README）
         run: cmake --install build/windows-release --component portable --prefix dist/Cairn
       - name: インストーラ（Inno Setup）

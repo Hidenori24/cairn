@@ -318,7 +318,7 @@ footer{margin-top:36px;padding-top:8px;border-top:1px solid var(--line);color:va
 @page{size:A4 portrait;margin:10mm;@bottom-right{content:counter(page) " / " counter(pages);font-size:9px;color:#667085}}
 @page gantt{size:A4 landscape;margin:10mm;@bottom-right{content:counter(page) " / " counter(pages);font-size:9px;color:#667085}}
 @media screen{
-.part.gantt{width:100vw;margin-left:calc(50% - 50vw);padding-left:max(20px,calc((100vw - 1087px)/2));padding-right:max(20px,calc((100vw - 1087px)/2))}
+.part.gantt{width:100vw;margin-left:calc(50% - 50vw);padding-left:20px;padding-right:20px}
 .gseg svg{margin-left:auto;margin-right:auto}
 }
 @media screen and (max-width:760px){.tiles{grid-template-columns:repeat(2,1fr)}.page{padding:12px 10px}}
@@ -367,7 +367,9 @@ std::string exportHtml(const ExportInput& in, const ExportOptions& opt) {
   h.reserve(1 << 16);
   h += "<!doctype html>\n<html lang=\"ja\">\n<head>\n<meta charset=\"utf-8\">\n";
   h += "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n";
-  h += "<title>" + escapeXml(title) + " - 報告</title>\n<style>\n" + css(k) + "</style>\n</head>\n<body>\n<div class=\"page\">\n";
+  h += "<title>" + escapeXml(title) + " - 報告</title>\n<style>\n" + css(k);
+  h += "@page gantt{size:" + std::to_string(report::ganttPageWidthMm(opt)) + "mm 210mm}\n";
+  h += "</style>\n</head>\n<body>\n<div class=\"page\">\n";
 
   // ヘッダ: プロジェクト名・基準日・出力した日時
   h += std::string("<header") + (consistent && opt.gantt ? " class=\"gantt-first\"" : std::string()) + ">\n<h1>" + escapeXml(title) + "</h1>\n<p class=\"meta\">基準日 <b>" + escapeXml(fmtLong(in.base)) + "</b>";
