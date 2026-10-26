@@ -70,6 +70,9 @@ struct WeeklyOptions {
   Day from = 0, to = 0;  // period == Custom のとき
   WeeklySections sections;
   std::string notes;     // 所感（自由に書く欄）
+  bool filterAssignee = false; // 担当者別の個人レポート（false = プロジェクト全体）
+  std::string assignee;  // filterAssignee のときだけ使用。空文字は担当なし
+  bool allAssignees = false; // 担当者ごとのレポートをまとめて出力
   std::size_t maxItems = kWeeklyMaxItems;  // テストで小さくできる
 };
 
@@ -267,6 +270,8 @@ struct WeeklyEvm {
 
 struct WeeklyReport {
   std::string projectName;
+  bool assigneeScoped = false;
+  std::string assignee; // 個人レポートの担当者。空 = 担当なし
   Day base = 0;
   WeeklyPeriod period = WeeklyPeriod::ThisWeek;
   WeeklyRange range;      // 期間
@@ -333,9 +338,11 @@ std::string escapeMarkdown(std::string_view s);
 std::string weeklyMarkdown(const WeeklyReport& r);
 // 1 つの HTML（外部のファイル・スクリプトを使わない。印刷向けのライト）。clock があれば出力日時を書く
 std::string weeklyHtml(const WeeklyReport& r, const IClock* clock = nullptr);
+std::string weeklyHtmlBatch(const std::vector<WeeklyReport>& reports, const IClock* clock = nullptr);
 
 // 既定のファイル名 "<プロジェクト名>_週報_<期間の最初の日>.md" / ".html"
 std::string weeklyFileName(const std::string& projectName, Day periodStart, bool html);
+std::string weeklyMemberFileName(const std::string& projectName, const std::string& assignee, Day periodStart, bool html);
 // 保存先の検査: 空でない・制御文字を含まない・ファイル名がある・拡張子が html のとき .html/.htm、Markdown のとき .md/.markdown/.txt
 Status checkWeeklyPath(const std::string& path, bool html);
 // 検査して書く（IFileStore::writeAtomic）。既存のフォルダの名前には書かない

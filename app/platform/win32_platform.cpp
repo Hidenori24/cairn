@@ -369,6 +369,143 @@ void Win32Platform::openFile(const std::string& path) {
   ShellExecuteW(hwnd_, L"open", widen(path).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
+namespace {
+bool fileExists(const std::filesystem::path& path) {
+  std::error_code ec;
+  return std::filesystem::is_regular_file(path, ec) && !ec;
+}
+
+std::wstring edgePath() {
+  for (HKEY root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE}) {
+    for (const DWORD view : {static_cast<DWORD>(RRF_SUBKEY_WOW6464KEY), static_cast<DWORD>(RRF_SUBKEY_WOW6432KEY)}) {
+      wchar_t value[32768]{};
+      DWORD bytes = sizeof(value);
+      if (RegGetValueW(root, L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\msedge.exe", nullptr,
+                       RRF_RT_REG_SZ | view, nullptr, value, &bytes) == ERROR_SUCCESS &&
+          fileExists(value)) return value;
+    }
+  }
+  for (const wchar_t* base : {L"ProgramFiles", L"ProgramFiles(x86)", L"LOCALAPPDATA"}) {
+    const DWORD n = GetEnvironmentVariableW(base, nullptr, 0);
+    if (!n) continue;
+    std::wstring dir(n, L'\0');
+    GetEnvironmentVariableW(base, dir.data(), n);
+    dir.resize(n - 1);
+    const std::filesystem::path p = std::filesystem::path(dir) / L"Microsoft" / L"Edge" / L"Application" / L"msedge.exe";
+    if (fileExists(p)) return p.wstring();
+  }
+  return {};
+}
+
+std::wstring quoteArg(const std::wstring& arg) {
+  std::wstring out = L"\"";
+  std::size_t slashes = 0;
+  for (wchar_t ch : arg) {
+    if (ch == L'\\') { ++slashes; continue; }
+    if (ch == L'"') {
+      out.append(slashes * 2 + 1, L'\\');
+      out += ch;
+    } else {
+      out.append(slashes, L'\\');
+      out += ch;
+    }
+    slashes = 0;
+  }
+  out.append(slashes * 2, L'\\');
+  out += L'"';
+  return out;
+}
+
+std::string fileUri(const std::wstring& path) {
+  std::string utf8 = narrow(path);
+  for (char& ch : utf8) if (ch == '\\') ch = '/';
+  std::string out = "file:///";
+  static constexpr char hex[] = "0123456789ABCDEF";
+  for (unsigned char ch : utf8) {
+    if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '/' || ch == ':' ||
+        ch == '-' || ch == '_' || ch == '.' || ch == '~') out += static_cast<char>(ch);
+    else { out += '%'; out += hex[ch >> 4]; out += hex[ch & 15]; }
+  }
+  return out;
+}
+}  // namespace
+
+bool Win32Platform::printHtmlToPdf(const std::string& html, const std::string& path, std::string* error) {
+  const std::wstring edge = edgePath();
+  if (edge.empty()) {
+    if (error) *error = "Microsoft Edge が見つかりません。HTML を保存してブラウザーから PDF にしてください";
+    return false;
+  }
+  wchar_t tempDir[MAX_PATH + 1]{};
+  const DWORD dirLen = GetTempPathW(MAX_PATH, tempDir);
+  if (!dirLen || dirLen >= MAX_PATH) {
+    if (error) *error = "一時ファイルを作成できません";
+    return false;
+  }
+  wchar_t tempName[MAX_PATH + 1]{};
+  if (!GetTempFileNameW(tempDir, L"cairn", 0, tempName)) {
+    if (error) *error = "一時ファイルを作成できません";
+    return false;
+  }
+  std::filesystem::path htmlPath(tempName);
+  htmlPath.replace_extension(L".html");
+  std::filesystem::path profilePath = htmlPath;
+  profilePath.replace_extension();
+  DeleteFileW(tempName);
+  if (!CreateDirectoryW(profilePath.c_str(), nullptr)) {
+    if (error) *error = "PDF 出力用の一時領域を作成できません";
+    return false;
+  }
+  {
+    std::ofstream file(htmlPath, std::ios::binary | std::ios::trunc);
+    file.write(html.data(), static_cast<std::streamsize>(html.size()));
+    if (!file) {
+      DeleteFileW(htmlPath.c_str());
+      std::error_code ec;
+      std::filesystem::remove_all(profilePath, ec);
+      if (error) *error = "一時 HTML を書き込めません";
+      return false;
+    }
+  }
+  const std::wstring outPath = widen(path);
+  std::wstring command = quoteArg(edge) + L" --headless --disable-gpu --no-first-run --disable-background-networking --disable-extensions " +
+                         L"--user-data-dir=" + quoteArg(profilePath.wstring()) + L" --no-pdf-header-footer --print-to-pdf=" +
+                         quoteArg(outPath) + L" " + quoteArg(widen(fileUri(htmlPath.wstring())));
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  PROCESS_INFORMATION process{};
+  const BOOL started = CreateProcessW(edge.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr,
+                                      &startup, &process);
+  bool ok = false;
+  if (started) {
+    const DWORD wait = WaitForSingleObject(process.hProcess, 120000);
+    DWORD code = 1;
+    if (wait == WAIT_OBJECT_0) GetExitCodeProcess(process.hProcess, &code);
+    else if (wait == WAIT_TIMEOUT) {
+      TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+      WaitForSingleObject(process.hProcess, 5000);
+    }
+    ok = wait == WAIT_OBJECT_0 && code == 0;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+  }
+  DeleteFileW(htmlPath.c_str());
+  std::error_code profileError;
+  std::filesystem::remove_all(profilePath, profileError);
+  if (!ok) {
+    if (error) *error = started ? "PDF を作成できませんでした（Edge の処理が失敗またはタイムアウトしました）" : "Microsoft Edge を起動できません";
+    return false;
+  }
+  WIN32_FILE_ATTRIBUTE_DATA pdfInfo{};
+  if (!GetFileAttributesExW(outPath.c_str(), GetFileExInfoStandard, &pdfInfo) ||
+      (pdfInfo.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
+      (pdfInfo.nFileSizeHigh == 0 && pdfInfo.nFileSizeLow == 0)) {
+    if (error) *error = "Edge は正常終了しましたが PDF ファイルが作られていません";
+    return false;
+  }
+  return true;
+}
+
 // 関連リンクを開く（Web は既定のブラウザ、ファイルは関連付けられたアプリ、フォルダはエクスプローラー）。
 // UI が先に検査・警告しているが、ここでも許可リスト（classifyLink）に通ったものだけを渡す。場所はログに出さない。
 // 存在確認はしない（ネットワークドライブで固まらないため）。開けなければ理由を返す

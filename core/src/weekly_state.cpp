@@ -257,8 +257,19 @@ const WeeklySnapshot* weeklyPreviousSnapshot(const WeeklyMemo& m, Day base) {
 Json weeklyToJson(const WeeklyMemo& m) {
   Json j = m.extra.is_object() ? m.extra : Json::object();
   j.erase("notes");
+  j.erase("memberNotes");
   j.erase("snaps");
   j["notes"] = m.notes;
+  if (!m.memberNotes.empty()) {
+    Json memberNotes = Json::object();
+    std::size_t count = 0;
+    for (const auto& [name, notes] : m.memberNotes) {
+      if (name.size() > kWeeklyMaxAssigneeNameBytes || !text::isValidUtf8(name) || count >= kWeeklyMaxMemberNotes) continue;
+      memberNotes[name] = weeklySanitizeNotes(notes);
+      ++count;
+    }
+    if (!memberNotes.empty()) j["memberNotes"] = std::move(memberNotes);
+  }
   Json snaps = Json::array();
   for (const WeeklySnapshot& s : m.snaps) snaps.push_back(snapshotToJson(s));
   j["snaps"] = std::move(snaps);
@@ -269,8 +280,15 @@ WeeklyMemo weeklyFromJson(const Json& j) {
   WeeklyMemo m;
   if (!j.is_object()) return m;
   for (auto it = j.begin(); it != j.end(); ++it)
-    if (it.key() != "notes" && it.key() != "snaps") m.extra[it.key()] = it.value();
+    if (it.key() != "notes" && it.key() != "memberNotes" && it.key() != "snaps") m.extra[it.key()] = it.value();
   if (j.contains("notes") && j["notes"].is_string()) m.notes = weeklySanitizeNotes(j["notes"].get<std::string>());
+  if (j.contains("memberNotes") && j["memberNotes"].is_object()) {
+    for (auto it = j["memberNotes"].begin(); it != j["memberNotes"].end() && m.memberNotes.size() < kWeeklyMaxMemberNotes; ++it) {
+      const std::string name = text::trim(text::sanitizeUtf8(it.key()));
+      if (name.size() > kWeeklyMaxAssigneeNameBytes || !text::isValidUtf8(name) || !it.value().is_string()) continue;
+      m.memberNotes.emplace(name, weeklySanitizeNotes(it.value().get<std::string>()));
+    }
+  }
   if (j.contains("snaps") && j["snaps"].is_array()) {
     for (const Json& x : j["snaps"]) {
       WeeklySnapshot s;

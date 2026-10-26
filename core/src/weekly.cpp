@@ -110,9 +110,20 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
   const Calendar& cal = in.calendar;
   WeeklyReport r;
   r.projectName = cleanText(in.projectName);
+  r.assigneeScoped = opt.filterAssignee;
+  const std::string scopedAssignee = text::trim(opt.assignee);
+  r.assignee = cleanText(scopedAssignee);
+  if (r.assigneeScoped)
+    r.projectName += " — " + (r.assignee.empty() ? std::string("担当なし") : r.assignee);
   r.base = in.base;
   r.period = opt.period;
   r.sections = opt.sections;
+  if (opt.filterAssignee) {
+    // 比較・EVM・MTA はプロジェクト全体の履歴に基づくため、個人別ページには混ぜない。
+    r.sections.changes = false;
+    r.sections.baseline = false;
+    r.sections.evm = false;
+  }
   r.notes = weeklySanitizeNotes(opt.notes);
   r.range = weeklyRange(in.base, opt.period, opt.from, opt.to);
   if (opt.period == WeeklyPeriod::Custom) {
@@ -137,6 +148,7 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
   const std::size_t cap = std::max<std::size_t>(1, opt.maxItems);
   const auto inTree = [&](int id) { return id >= 0 && static_cast<std::size_t>(id) < n; };
   const auto assigneeOf = [&](int i) { return text::trim(in.issues[static_cast<std::size_t>(i)].assignee); };
+  const auto includeAssignee = [&](int i) { return !opt.filterAssignee || assigneeOf(i) == scopedAssignee; };
 
   const auto makeItem = [&](int i) {
     const std::size_t k = static_cast<std::size_t>(i);
@@ -186,7 +198,10 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
   std::vector<Cand> cDone, cProg, cStart, cFinish, cRisk;
   std::vector<Cand> cMs;  // key = 並べ替えの鍵
   struct Acc {
-    int doneInPeriod = 0, inProgress = 0, open = 0, late = 0;
+    int tasks = 0, done = 0, doneInPeriod = 0, inProgress = 0, open = 0, late = 0, tight = 0;
+    int milestones = 0, msDone = 0, msLate = 0;
+    bool hasFinish = false;
+    Day finish = 0;
   };
   std::map<std::string, Acc> byWho;  // 名前順（std::map の順 = バイト順。順位にしない）
 
@@ -194,15 +209,21 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
     if (!inTree(i)) continue;
     const std::size_t k = static_cast<std::size_t>(i);
     if (!T.kids[k].empty()) continue;  // 葉だけ
+    if (!includeAssignee(i)) continue;
     const ScheduleRow& row = in.rows[k];
     const Issue& iss = in.issues[k];
+    Acc& acc = byWho[assigneeOf(i)];
     if (T.kind[k] == Kind::Ms) {
+      ++acc.milestones;
+      if (row.done) ++acc.msDone;
+      else if (row.floatDays < 0) ++acc.msLate;
       const bool achievedInPeriod = row.done && iss.resolved && inRange(*iss.resolved, r.range);
       if (achievedInPeriod) cMs.push_back({i, static_cast<std::int64_t>(*iss.resolved) - 1000000000LL});  // 達成は先に
       else if (!row.done) cMs.push_back({i, static_cast<std::int64_t>(T.dl[k] ? *T.dl[k] : row.asapFinish)});
       continue;
     }
-    Acc& acc = byWho[assigneeOf(i)];
+    ++acc.tasks;
+    if (row.done) ++acc.done;
     if (row.done) {
       if (iss.resolved) {
         if (inRange(*iss.resolved, r.range)) {
@@ -216,6 +237,11 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
     }
     acc.open++;
     if (row.floatDays < 0) acc.late++;
+    if (row.floatDays <= kWeeklyTightDays) acc.tight++;
+    if (!acc.hasFinish || row.asapFinish > acc.finish) {
+      acc.hasFinish = true;
+      acc.finish = row.asapFinish;
+    }
     if (row.prog) {
       acc.inProgress++;
       cProg.push_back({i, row.floatDays});
@@ -246,6 +272,23 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
   sm.milestones = st.milestones;
   sm.hasFinish = st.hasFinish;
   sm.finish = st.finish;
+  if (opt.filterAssignee) {
+    const auto it = byWho.find(opt.assignee);
+    const Acc a = it == byWho.end() ? Acc{} : it->second;
+    sm.tasks = a.tasks;
+    sm.done = a.done;
+    sm.prog = a.inProgress;
+    sm.todo = std::max(0, a.open - a.inProgress);
+    sm.late = a.late;
+    sm.tight = a.tight;
+    sm.milestones = a.milestones;
+    sm.msDone = a.msDone;
+    sm.msLate = a.msLate;
+    sm.progress = a.tasks > 0 ? static_cast<double>(a.done) / static_cast<double>(a.tasks) : 0;
+    sm.hasFinish = a.hasFinish;
+    sm.finish = a.finish;
+    sm.hasPrev = false;
+  }
   sm.doneInPeriod = r.done.total;
 
   // ---- マイルストーン ----
@@ -352,6 +395,7 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
     int added = 0;
     for (int i : T.dfs) {
       if (!inTree(i)) continue;
+      if (!includeAssignee(i)) continue;
       const std::size_t k = static_cast<std::size_t>(i);
       if (!T.kids[k].empty() || T.kind[k] == Kind::Ms) continue;
       const ScheduleRow& row = in.rows[k];
@@ -437,8 +481,13 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
     }
   }
 
+  if (opt.filterAssignee) {
+    sm.hasPrev = false; // 全体スナップショットとの比較値は個人の数値として表示しない
+    r.changes = WeeklyChanges{}; // 担当者の変更履歴を記録していないため、全体比較を個人ページに出さない
+  }
+
   // ---- EVM（出来高管理） ----
-  if (opt.sections.evm && in.evmBaseline) {
+  if (r.sections.evm && in.evmBaseline) {
     auto ev = computeEvm(T, in.issues, in.rows, cal, in.base, in.evmBaseline, in.evm);
     if (ev.ok()) {
       r.evm.available = true;
@@ -472,6 +521,7 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
       std::vector<Hit> hits;
       for (int i : T.dfs) {
         if (!inTree(i)) continue;
+        if (!includeAssignee(i)) continue;
         const std::size_t k = static_cast<std::size_t>(i);
         if (!T.kids[k].empty() || T.kind[k] == Kind::Ms || in.rows[k].done) continue;  // 作業（葉）の未完了だけ
         const OptDay upd = stampDay(in.issues[k], updatedCol), cr = stampDay(in.issues[k], createdCol);
@@ -570,7 +620,7 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
   }
 
   // ---- ベースラインとの差 ----
-  if (opt.sections.baseline && in.baseline && in.baseline->entries.size() == n) {
+  if (r.sections.baseline && in.baseline && in.baseline->entries.size() == n) {
     const BaselineCompare& bc = *in.baseline;
     WeeklyBaseline& wb = r.baseline;
     fillBaselineHeader(wb, bc, cap);
@@ -593,6 +643,7 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
     std::vector<Cand> cLate, cEarly, cAdded;
     for (int i : T.dfs) {
       if (!inTree(i)) continue;
+      if (!includeAssignee(i)) continue;
       const std::size_t k = static_cast<std::size_t>(i);
       if (!T.kids[k].empty()) continue;  // 親のまとめは子の差を言い換えたものなので数えない
       const BaselineEntry& e = bc.entries[k];
@@ -610,7 +661,7 @@ WeeklyReport buildWeeklyReport(const WeeklyInput& in, const WeeklyOptions& opt) 
     fillB(wb.added, cAdded);
   }
 
-  fillMta(r, in, cap);  // マイルストーンの予測の推移と遅れの警告（Issue #75）
+  if (!opt.filterAssignee) fillMta(r, in, cap);  // マイルストーンの予測の推移と遅れの警告（Issue #75）は全体週報だけ
   return r;
 }
 
@@ -706,6 +757,17 @@ std::string weeklyFileName(const std::string& projectName, Day periodStart, bool
   const std::size_t dot = stem.rfind('.');
   if (dot != std::string::npos) stem.erase(dot);
   return stem + "_週報_" + fmtIso(periodStart) + (html ? ".html" : ".md");
+}
+
+std::string weeklyMemberFileName(const std::string& projectName, const std::string& assignee, Day periodStart, bool html) {
+  const auto safeStem = [](const std::string& value) {
+    std::string out = reportFileName(value, "");
+    const std::size_t dot = out.rfind('.');
+    if (dot != std::string::npos) out.erase(dot);
+    return out;
+  };
+  return safeStem(projectName) + "_担当_" + safeStem(assignee.empty() ? std::string("担当なし") : assignee) + "_週報_" +
+         fmtIso(periodStart) + (html ? ".html" : ".md");
 }
 
 Status checkWeeklyPath(const std::string& path, bool html) {

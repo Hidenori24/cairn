@@ -28,7 +28,7 @@ const char* const kExtraCss = R"(
 .wk .pred{color:var(--muted);font-size:12px}
 @media screen and (max-width:760px){.wk .tiles{grid-template-columns:repeat(2,1fr)}}
 @media print{.part.wsec{break-before:auto;page-break-before:auto;margin-top:16px}}
-@page{size:A4 portrait;margin:12mm}
+@page{size:A4 portrait;margin:12mm;@bottom-right{content:counter(page) " / " counter(pages);font-size:9px;color:#667085}}
 )";
 
 struct Tbl {
@@ -465,6 +465,37 @@ std::string weeklyHtml(const WeeklyReport& r, const IClock* clock) {
   }
   h += "</main>\n<footer>このアプリで出力（Cairn）</footer>\n</div>\n</body>\n</html>\n";
   return h;
+}
+
+std::string weeklyHtmlBatch(const std::vector<WeeklyReport>& reports, const IClock* clock) {
+  if (reports.empty()) return {};
+  const std::string first = weeklyHtml(reports.front(), clock);
+  constexpr std::string_view pageTag = "<div class=\"page wk\">";
+  const std::size_t pageStart = first.find(pageTag);
+  const std::size_t bodyEnd = first.find("</body>");
+  if (pageStart == std::string::npos || bodyEnd == std::string::npos) return first;
+  std::string out = first.substr(0, pageStart);
+  out.reserve(first.size() * reports.size());
+  for (std::size_t i = 0; i < reports.size(); ++i) {
+    const std::string page = i == 0 ? first : weeklyHtml(reports[i], clock);
+    const std::size_t start = page.find(pageTag);
+    const std::size_t end = page.find("</body>");
+    if (start == std::string::npos || end == std::string::npos || end < start) continue;
+    std::string body = page.substr(start, end - start);
+    if (i + 1 < reports.size()) {
+      const std::size_t cls = body.find("class=\"page wk\"");
+      if (cls != std::string::npos) body.replace(cls, 15, "class=\"page wk member-page\"");
+    }
+    out += body;
+    out += '\n';
+  }
+  out += first.substr(bodyEnd);
+  const std::size_t styleEnd = out.find("</style>");
+  if (styleEnd != std::string::npos) out.insert(styleEnd, "@media print{.member-page{break-after:page;page-break-after:always}}\n");
+  const std::size_t title = out.find("<title>");
+  const std::size_t titleEnd = title == std::string::npos ? std::string::npos : out.find("</title>", title);
+  if (titleEnd != std::string::npos) out.replace(title, titleEnd + 8 - title, "<title>担当者別 週次レポート</title>");
+  return out;
 }
 
 }  // namespace roadmap

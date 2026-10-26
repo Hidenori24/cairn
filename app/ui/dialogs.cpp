@@ -78,7 +78,10 @@ float widthOf(const UiState& u, Dlg d) {
 
 void close(Frame& f) {
   // 週次レポートの所感はプロジェクトに覚える（次の週の下書きに前回の所感を残す）
-  if (f.u.dlg == Dlg::Weekly && f.c.currentId() == f.u.wkProject) f.c.setWeeklyNotes(f.u.wk.notes);
+  if (f.u.dlg == Dlg::Weekly && f.c.currentId() == f.u.wkProject) {
+    if (f.u.wk.filterAssignee) f.c.setWeeklyMemberNotes(f.u.wk.assignee, f.u.wk.notes);
+    else if (!f.u.wk.allAssignees) f.c.setWeeklyNotes(f.u.wk.notes);
+  }
   f.u.dlg = Dlg::None;
   f.u.blRenameId.clear();
   f.u.paste = Outline{};  // 貼り付けた内容は残さない
@@ -390,7 +393,7 @@ void dlgExportHtml(Frame& f) {
     ImGui::PopStyleColor();
   }
 
-  const int b = buttons(f, {"書き出す…", "閉じる"}, false, any);
+  const int b = buttons(f, {"HTML を書き出す…", "閉じる", "PDF を保存…"}, false, any);
   if (b == 0) {
     ExportOptions opt = r;
     opt.scope = u.repScope == 1 ? ReportScope::Current : u.repScope == 2 ? ReportScope::Subtree : ReportScope::All;
@@ -404,6 +407,21 @@ void dlgExportHtml(Frame& f) {
     });
   } else if (b == 1) {
     close(f);
+  } else if (b == 2) {
+    ExportOptions opt = r;
+    opt.scope = u.repScope == 1 ? ReportScope::Current : u.repScope == 2 ? ReportScope::Subtree : ReportScope::All;
+    std::string name = c.reportFileName();
+    if (name.size() >= 5) name.replace(name.size() - 5, 5, ".pdf");
+    close(f);
+    deferAfterFrame(f, [&f, opt, name] {
+      const auto path = f.p.pickSaveFile(name, "pdf", "PDF ファイル");
+      if (!path) return;
+      const auto html = f.c.buildReport(opt);
+      if (!html.ok()) { f.c.toast("PDF を作成できません: " + html.error()); return; }
+      std::string error;
+      if (!f.p.printHtmlToPdf(html.value(), *path, &error)) { f.c.toast("PDF を作成できません: " + error); return; }
+      f.c.toast("PDF を保存しました");
+    });
   }
 }
 
@@ -418,6 +436,9 @@ void dlgWeekly(Frame& f) {
     u.wkProject = c.currentId();
     o = WeeklyOptions{};
     o.notes = c.weeklyNotes();  // 前回の所感を下書きに残す
+    u.wkAudience = 0;
+    const std::vector<std::string> assignees = c.weeklyAssignees();
+    u.wkAssignee = assignees.empty() ? std::string() : assignees.front();
     u.wkPeriod = 0;
     const WeeklyRange tw = weeklyRange(s->baseDay(), WeeklyPeriod::ThisWeek, 0, 0);
     u.wkFrom = fmtIso(tw.from);
@@ -428,6 +449,42 @@ void dlgWeekly(Frame& f) {
   ImGui::PushTextWrapPos(0);
   ImGui::TextUnformatted("今週の完了・来週の予定・遅れ・リスクを、数字と一覧は自動で、所感だけ自分で書く週報の下書きにします。");
   ImGui::PopTextWrapPos();
+
+  const int oldAudience = u.wkAudience;
+  const std::string oldAssignee = u.wkAssignee;
+  const std::vector<std::string> reportAssignees = c.weeklyAssignees();
+  ImGui::SeparatorText("対象");
+  ImGui::RadioButton("プロジェクト全体", &u.wkAudience, 0);
+  ImGui::SameLine(0, u.m.s(16));
+  ImGui::BeginDisabled(reportAssignees.empty());
+  ImGui::RadioButton("担当者 1 人", &u.wkAudience, 1);
+  ImGui::SameLine(0, u.m.s(16));
+  ImGui::RadioButton("担当者ごと", &u.wkAudience, 2);
+  ImGui::EndDisabled();
+  if (u.wkAudience == 1) {
+    const std::vector<std::string> assignees = c.weeklyAssignees();
+    const std::string shownAssignee = u.wkAssignee.empty() ? "担当なし" : u.wkAssignee;
+    ImGui::SetNextItemWidth(std::min(u.m.s(260), ImGui::GetContentRegionAvail().x));
+    if (ImGui::BeginCombo("##wkAssignee", shownAssignee.c_str())) {
+      for (const std::string& name : assignees) {
+        const std::string label = name.empty() ? "担当なし" : name;
+        if (ImGui::Selectable(label.c_str(), name == u.wkAssignee)) u.wkAssignee = name;
+      }
+      ImGui::EndCombo();
+    }
+  }
+  if (oldAudience != u.wkAudience || oldAssignee != u.wkAssignee) {
+    if (oldAudience == 0) c.setWeeklyNotes(o.notes);
+    else if (oldAudience == 1) c.setWeeklyMemberNotes(oldAssignee, o.notes);
+    o.filterAssignee = u.wkAudience == 1;
+    o.allAssignees = u.wkAudience == 2;
+    o.assignee = u.wkAssignee;
+    o.notes = o.filterAssignee ? c.weeklyMemberNotes(o.assignee) : u.wkAudience == 0 ? c.weeklyNotes() : std::string();
+    u.wkPreviewKey.clear();
+  }
+  o.filterAssignee = u.wkAudience == 1;
+  o.allAssignees = u.wkAudience == 2;
+  o.assignee = u.wkAssignee;
 
   ImGui::SeparatorText("期間（月曜始まり。基準日に合わせます）");
   ImGui::RadioButton("今週", &u.wkPeriod, 0);
@@ -484,15 +541,20 @@ void dlgWeekly(Frame& f) {
   ImGui::SameLine(0, u.m.s(16));
   ImGui::Checkbox("担当別", &sec.assignees);
   ImGui::SameLine(0, u.m.s(16));
+  if (o.filterAssignee) ImGui::BeginDisabled();
   ImGui::Checkbox("先週から変わったこと", &sec.changes);
+  if (o.filterAssignee) ImGui::EndDisabled();
   ImGui::SameLine(0, u.m.s(16));
   ImGui::Checkbox("所感・課題・お願い", &sec.notes);
+  if (o.filterAssignee) ImGui::TextDisabled("個人別では、全員分の履歴を使う比較・ベースライン・EVM は含めません。");
   {
     // 表示するベースラインがあるときだけ選べる（既定はオフ）
     const Baseline* bl = s->shownBaseline();
+    if (o.filterAssignee) ImGui::BeginDisabled();
     ImGui::BeginDisabled(bl == nullptr);
     ImGui::Checkbox("ベースラインとの差", &sec.baseline);
     ImGui::EndDisabled();
+    if (o.filterAssignee) ImGui::EndDisabled();
     ImGui::SameLine();
     if (bl) ImGui::TextDisabled("（「%s」と比べます）", bl->name.c_str());
     else ImGui::TextDisabled("（「ベースラインの管理…」で表示するものを選ぶと使えます）");
@@ -502,9 +564,11 @@ void dlgWeekly(Frame& f) {
   {
     // EVM に使うベースライン（表示中のもの、なければ一番新しいもの）があるときだけ選べる（既定はオン）
     const Baseline* eb = evmBl;
+    if (o.filterAssignee) ImGui::BeginDisabled();
     ImGui::BeginDisabled(eb == nullptr);
     ImGui::Checkbox("EVM（SPI・ES の遅れ・SV）", &sec.evm);
     ImGui::EndDisabled();
+    if (o.filterAssignee) ImGui::EndDisabled();
     ImGui::SameLine();
     if (eb) ImGui::TextDisabled("（ベースライン「%s」の日程と比べます）", eb->name.c_str());
     else ImGui::TextDisabled("（ベースラインを保存すると使えます）");
@@ -512,12 +576,24 @@ void dlgWeekly(Frame& f) {
   // 使えない項目（ベースラインがない EVM）は、選ばれていても数えない（ほかを全部オフにしたら、コピー・保存を使えなくする）。チェックの値は残す
   WeeklySections effective = sec;
   if (!evmBl) effective.evm = false;
+  if (o.filterAssignee) {
+    effective.changes = false;
+    effective.baseline = false;
+    effective.evm = false;
+  }
   const bool any = effective.any();
 
-  if (sec.notes) {
-    ImGui::SeparatorText("所感・課題・お願い（自由に書きます。プロジェクトに覚え、次回の下書きに残ります）");
+  if (sec.notes && o.allAssignees) {
+    ImGui::SeparatorText("所感・課題・お願い");
+    ImGui::TextDisabled("担当者ごとの所感を各人の週報に含めます。個別の所感は「担当者 1 人」で編集できます。");
+  } else if (sec.notes) {
+    ImGui::SeparatorText(o.filterAssignee ? "所感・課題・お願い（担当者別の下書き）" : "所感・課題・お願い（自由に書きます。次回の下書きに残ります）");
     ImGui::InputTextMultiline("##wknotes", &o.notes, ImVec2(-1, u.m.s(72)));
-    if (ImGui::IsItemDeactivatedAfterEdit()) c.setWeeklyNotes(o.notes);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      if (o.filterAssignee) c.setWeeklyMemberNotes(o.assignee, o.notes);
+      else c.setWeeklyNotes(o.notes);
+    }
+    if (o.filterAssignee) ImGui::TextDisabled("この所感はプロジェクト設定に保存され、共有プロジェクトの他の利用者にも見えます。");
     if (o.notes.size() > kWeeklyMaxNoteBytes) {
       ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->tight));
       ImGui::TextUnformatted("長すぎる分は切って出力します。");
@@ -526,7 +602,8 @@ void dlgWeekly(Frame& f) {
   }
 
   // プレビュー（条件が変わったときだけ作り直す）
-  std::string key = std::to_string(s->version()) + "|" + std::to_string(u.wkPeriod) + "|" + std::to_string(o.from) + "|" + std::to_string(o.to) + "|";
+  std::string key = std::to_string(s->version()) + "|" + std::to_string(u.wkPeriod) + "|" + std::to_string(o.from) + "|" + std::to_string(o.to) + "|" +
+                    (o.allAssignees ? "all|" : o.filterAssignee ? "member|" + o.assignee : "project|");
   for (bool b : {sec.summary, sec.done, sec.touched, sec.progress, sec.next, sec.risks, sec.milestones, sec.assignees, sec.changes, sec.notes, sec.baseline, sec.evm}) key += b ? '1' : '0';
   {
     const Baseline* eb = evmPickBaseline(s->baselines(), std::string());
@@ -564,7 +641,16 @@ void dlgWeekly(Frame& f) {
   ImGui::PopTextWrapPos();
 
   const bool ok = any && u.wkError.empty();
-  const int b = buttons(f, {"Markdown をコピー", "閉じる", "HTML を保存…", "Markdown を保存…"}, false, ok);
+  if (o.allAssignees) {
+    ImGui::TextDisabled("個別ファイルの形式");
+    ImGui::SameLine();
+    if (ImGui::RadioButton("HTML", u.wkBatchHtml)) u.wkBatchHtml = true;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Markdown", !u.wkBatchHtml)) u.wkBatchHtml = false;
+  }
+  const int b = o.allAssignees
+                    ? buttons(f, {"Markdown をコピー", "閉じる", "HTML をまとめて保存…", "Markdown をまとめて保存…", "個別ファイルで保存…"}, false, ok)
+                    : buttons(f, {"Markdown をコピー", "閉じる", "HTML を保存…", "Markdown を保存…", "PDF を保存…"}, false, ok);
   if (b == 1) return close(f);
   if (b < 0) return;
   if (!ok) {
@@ -572,7 +658,32 @@ void dlgWeekly(Frame& f) {
     return;
   }
   WeeklyOptions opt = o;
-  c.setWeeklyNotes(opt.notes);
+  if (opt.filterAssignee) c.setWeeklyMemberNotes(opt.assignee, opt.notes);
+  else if (!opt.allAssignees) c.setWeeklyNotes(opt.notes);
+  if (b == 4 && opt.allAssignees) {
+    const bool html = u.wkBatchHtml;
+    deferAfterFrame(f, [&f, opt, html] {
+      const auto folder = f.p.pickFolder("");
+      if (!folder) return;
+      (void)f.c.exportWeeklyMembers(*folder, opt, html);
+    });
+    return;
+  }
+  if (b == 4) {
+    std::string name = c.weeklyFileName(opt, true);
+    if (name.size() >= 5) name.replace(name.size() - 5, 5, ".pdf");
+    deferAfterFrame(f, [&f, opt, name] {
+      const auto path = f.p.pickSaveFile(name, "pdf", "PDF ファイル");
+      if (!path) return;
+      const auto html = f.c.renderWeekly(opt, true);
+      if (!html.ok()) { f.c.toast("PDF を作成できません: " + html.error()); return; }
+      std::string error;
+      if (!f.p.printHtmlToPdf(html.value(), *path, &error)) { f.c.toast("PDF を作成できません: " + error); return; }
+      f.c.recordWeekly(opt);
+      f.c.toast("PDF を保存しました");
+    });
+    return;
+  }
   if (b == 0) {
     // クリップボードへ。描画が終わってから行う（設定への記録が描画中の参照に触れないように）
     deferAfterFrame(f, [&f, opt] {

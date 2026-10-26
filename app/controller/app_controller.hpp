@@ -133,12 +133,16 @@ class AppController {
   // プロジェクトに覚えている所感（次の週の下書きに前回の所感を残す）。開いていなければ空
   std::string weeklyNotes() const;
   void setWeeklyNotes(const std::string& notes);
+  std::string weeklyMemberNotes(const std::string& assignee) const;
+  void setWeeklyMemberNotes(const std::string& assignee, const std::string& notes);
+  std::vector<std::string> weeklyAssignees() const; // 葉課題の担当者。空文字（担当なし）は最後
   // 今の状態（統計・負荷・先週のスナップショット）から構造体を組み立てる。ファイルにも設定にも触れない
   Result<WeeklyReport> buildWeekly(const WeeklyOptions& opt) const;
   // Markdown（html = false）か HTML の文字列。副作用なし（プレビュー・コピーに使う）
   Result<std::string> renderWeekly(const WeeklyOptions& opt, bool html) const;
   // 既定のファイル名 "<プロジェクト名>_週報_<期間の最初の日>.md" / ".html"
   std::string weeklyFileName(const WeeklyOptions& opt, bool html) const;
+  Status exportWeeklyMembers(const std::string& folder, const WeeklyOptions& opt, bool html);
   // 書き出した（コピー・保存した）ときに呼ぶ。所感とスナップショット（次回の「先週から変わったこと」）を設定に覚える
   void recordWeekly(const WeeklyOptions& opt);
   // 組み立てて path に書く。成功したら recordWeekly と「フォルダを開く」つきの通知、失敗したら理由を通知する（例外は出さない）
