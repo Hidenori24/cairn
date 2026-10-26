@@ -596,7 +596,7 @@ std::string renderGantt(const Ctx& cx) {
     const int firstDay = panel * g.daysPerPanel;
     const double x0 = kLeftW + static_cast<double>(firstDay) * g.ax.px;
     const int panelSpan = std::min(g.daysPerPanel, days - firstDay);
-    const double timelineW = std::min(maxTimelineW, panelSpan * static_cast<double>(g.ax.px));
+    const double timelineW = std::min(maxTimelineW, g.daysPerPanel * static_cast<double>(g.ax.px));
     const double panelW = kLeftW + timelineW;
     for (std::size_t c = 0; c < nChunks; ++c) {
       const DrawChunk& draw = drawChunks[c];

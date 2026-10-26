@@ -914,7 +914,7 @@ TEST_CASE("report: 長いガントは行ごとに区切った SVG になり、�
   CHECK(chunks >= 3);
   CHECK(count(h, "id=\"gh\"") == 1);
   CHECK(count(h, "id=\"gb\"") == 1);
-  const std::size_t horizontalPanels = 1 + count(h, "gantt-panel-start");
+  const std::size_t horizontalPanels = 1 + count(h, "class=\"gseg gantt-panel-start\"");
   CHECK(count(h, "<use href=\"#gh\"/>") == horizontalPanels);
   // どのチャンクの SVG も同じ幅（印刷で同じ倍率になる）
   std::set<std::string> widths;
