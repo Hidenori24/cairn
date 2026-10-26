@@ -38,6 +38,7 @@ class Win32Platform final : public ui::IPlatform {
   std::vector<std::string> pickOpenFiles(const std::string& title) override;
   std::optional<std::string> clipboardImage() override;
   bool systemDark() override { return systemDarkMode(); }
+  bool reducedMotion() override { BOOL enabled = TRUE; return SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0) && !enabled; }
   void requestQuit() override { quit_ = true; }
   std::optional<std::string> clipboardText() override;
   bool setClipboardText(const std::string& text) override;

@@ -230,3 +230,7 @@ CSV・フォルダ構成・`project.settings.json`・`roadmap_prefs.json`・共�
 ## 11. 設定ファイルの形式の版番号
 
 入れるかどうかの検討と暫定の判断は [spec-questions.md の B49](spec-questions.md) です。要点: **今のところ実装しない**（読み取り専用で開く仕組みは #62 で入ったので、次に結べる）。入れるなら、新しいキー `format` ではなく、すでに全部のファイルにある `"version": 3` を形式の版として使う案を第一候補にしています。
+
+## 開発中: 表示モード
+
+端末設定に `appearance`（classic / modern）と `motion`（none / subtle）を追加。未指定・不正値は classic / none。旧版は未知のキーとして保持します。プロジェクトのCSV・共有JSONには影響しません。

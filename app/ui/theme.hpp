@@ -22,6 +22,8 @@ const Tokens& darkTokens();
 
 struct Metrics {
   float scale = 1.0f;   // 高DPI の倍率
+  bool modern = false;
+  bool animate = false;
   bool compact = false;
   float topBar() const { return (compact ? 76.f : 84.f) * scale; }
   float toolBar() const { return (compact ? 36.f : 40.f) * scale; }
@@ -30,6 +32,7 @@ struct Metrics {
 };
 
 // ImGui のスタイルにトークンを反映する
+float motionStep(float current, bool target, float seconds, bool enabled);
 void applyStyle(const Tokens& t, const Metrics& m);
 ImVec4 v4(ImU32 c);
 ImU32 withAlpha(ImU32 c, float a);

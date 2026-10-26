@@ -71,6 +71,8 @@ struct WindowPlacement {
 };
 struct Prefs {
   static constexpr std::size_t kRecentProjectLimit = 5;
+  std::string appearance = "classic"; // classic / modern
+  std::string motion = "none"; // none / subtle
   std::string theme = "auto";     // auto / light / dark
   std::string density = "normal";  // normal / compact
   std::string me = "自分";

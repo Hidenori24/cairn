@@ -7,6 +7,21 @@
 
 namespace roadmap::ui {
 
+ImU32 blendColor(ImU32 a, ImU32 b, float amount) {
+  const ImVec4 x = v4(a), y = v4(b);
+  const float t = std::clamp(amount, 0.f, 1.f);
+  return ImGui::ColorConvertFloat4ToU32(ImVec4(x.x+(y.x-x.x)*t, x.y+(y.y-x.y)*t,
+      x.z+(y.z-x.z)*t, x.w+(y.w-x.w)*t));
+}
+
+float hoverAmount(UiState& u, const char* id, bool hovered) {
+  ImGuiStorage* state = ImGui::GetStateStorage();
+  const ImGuiID key = ImGui::GetID(id);
+  const float next = motionStep(state->GetFloat(key, 0.f), hovered, ImGui::GetIO().DeltaTime, u.m.animate);
+  state->SetFloat(key, next);
+  return next;
+}
+
 RiskColor riskColor(const UiState& u, Risk r) {
   const Tokens& t = *u.t;
   switch (r) {
@@ -70,7 +85,10 @@ bool iconButton(UiState& u, const char* id, const char* icon, const char* tipTex
   const bool hov = ImGui::IsItemHovered();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   if (active) dl->AddRectFilled(p, ImVec2(p.x + sz, p.y + sz), u.t->accentBg, u.m.s(6));
-  else if (hov) dl->AddRectFilled(p, ImVec2(p.x + sz, p.y + sz), u.t->surface3, u.m.s(6));
+  else {
+    const float fade = hoverAmount(u, "##hover", hov);
+    if (fade > 0.001f) dl->AddRectFilled(p, ImVec2(p.x + sz, p.y + sz), withAlpha(u.t->surface3, fade), u.m.s(u.m.modern ? 8.f : 6.f));
+  }
   const ImU32 col = !enabled ? withAlpha(u.t->muted, 0.5f) : (active ? u.t->accent : u.t->ink);
   drawIcon(dl, icon, ImVec2(p.x + u.m.s(6), p.y + u.m.s(6)), u.m.s(16), col);
   if (!enabled) ImGui::EndDisabled();
@@ -100,7 +118,7 @@ bool iconTextButton(UiState& u, const char* id, const char* icon, const char* la
     bg = u.t->accentBg;
     fg = u.t->accent;
   } else {
-    bg = hov ? u.t->surface3 : u.t->surface;
+    bg = blendColor(u.t->surface, u.m.modern ? u.t->accentBg : u.t->surface3, hoverAmount(u, "##hover", hov));
     border = u.t->line2;
   }
   if (!enabled) fg = withAlpha(fg, 0.5f);

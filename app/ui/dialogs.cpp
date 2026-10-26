@@ -1023,6 +1023,17 @@ void dlgAppSettings(Frame& f) {
 
   // ---- 表示 ----
   ImGui::SeparatorText("表示");
+  ImGui::TextUnformatted("見た目");
+  ImGui::SameLine();
+  if (ImGui::RadioButton("現行", pr.appearance == "classic")) { pr.appearance = "classic"; c.savePrefs(); }
+  ImGui::SameLine();
+  if (ImGui::RadioButton("モダン", pr.appearance == "modern")) { pr.appearance = "modern"; c.savePrefs(); }
+  ImGui::TextUnformatted("動き");
+  ImGui::SameLine();
+  if (ImGui::RadioButton("なし", pr.motion == "none")) { pr.motion = "none"; c.savePrefs(); }
+  ImGui::SameLine();
+  if (ImGui::RadioButton("控えめ", pr.motion == "subtle")) { pr.motion = "subtle"; c.savePrefs(); }
+  ImGui::TextDisabled("モダン表示に適用。OS のアニメーション設定も尊重します。");
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted("テーマ");
   for (const auto& [k, l] : {std::pair<const char*, const char*>{"auto", "自動（Windows に合わせる）"}, {"light", "ライト"}, {"dark", "ダーク"}}) {

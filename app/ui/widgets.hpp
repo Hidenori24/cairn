@@ -14,6 +14,8 @@ namespace roadmap::ui {
 struct RiskColor {
   ImU32 fg, bg;
 };
+float hoverAmount(UiState& u, const char* id, bool hovered);
+ImU32 blendColor(ImU32 a, ImU32 b, float amount);
 RiskColor riskColor(const UiState& u, Risk r);
 ImU32 rootColor(const UiState& u, int idx);
 
