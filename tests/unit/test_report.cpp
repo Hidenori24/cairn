@@ -519,6 +519,7 @@ TEST_CASE("report: 余裕の影（斜線）は未完了で最遅が最早より�
 TEST_CASE("report: 拡大率（日・週・月・全体）で 1 日の幅と見出しが変わる") {
   Proj p = Proj::fromCsv(kBasic);
   std::vector<std::size_t> widths;
+  std::vector<std::size_t> panels;
   for (const char* z : {"day", "week", "month", "all"}) {
     ExportOptions o;
     o.stats = false;
@@ -530,12 +531,14 @@ TEST_CASE("report: 拡大率（日・週・月・全体）で 1 日の幅と見�
     const std::size_t w = h.find("width=\"", sv);
     REQUIRE(w != std::string::npos);
     widths.push_back(static_cast<std::size_t>(std::stod(h.substr(w + 7))));
+    panels.push_back(1 + count(h, "class=\"gseg gantt-panel-start\""));
     if (std::string(z) == "day") CHECK(contains(h, "text-anchor=\"middle\" fill="));  // 日付の数字の行
     CHECK(contains(h, "<h2>ガント</h2>"));
   }
-  CHECK(widths[0] >= widths[1]);  // 日・週は全期間をページ幅に収める場合、同じ幅になる
-  CHECK(widths[1] > widths[2]);  // 週 > 月
-  CHECK(widths[3] <= 590 + 900 + 2);  // 全体は幅に収める
+  CHECK(panels[0] > panels[1]);   // 日は週より細かく、時間軸のページが増える
+  CHECK(panels[1] >= panels[2]);  // 週は月以上
+  CHECK(panels[2] >= panels[3]);  // 「全体」は最も少ないページ数
+  for (const std::size_t width : widths) CHECK(width <= 1047);  // どの拡大率も A4 横の幅に収める
   // 不明な名前は週
   ExportOptions o;
   o.stats = false;
