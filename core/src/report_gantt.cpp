@@ -600,6 +600,9 @@ std::string renderGantt(const Ctx& cx) {
     const double panelW = kLeftW + timelineW;
     for (std::size_t c = 0; c < nChunks; ++c) {
       const DrawChunk& draw = drawChunks[c];
+      const bool firstRowChunk = c == 0;
+      const double rowChunkOffset = firstRowChunk ? 0 : g.headH;
+      const double rowChunkH = draw.height - rowChunkOffset;
       std::string continuations;
       const std::size_t r0 = c * g.rowsPerChunk, r1 = std::min(g.nRows, r0 + g.rowsPerChunk);
       const double windowEnd = x0 + panelSpan * static_cast<double>(g.ax.px);
@@ -618,11 +621,19 @@ std::string renderGantt(const Ctx& cx) {
           addText(continuations, windowEnd - 9, y, "›", TextStyle{15, true, "middle", hex(g.k.ink), 1});
         }
       }
-      std::string svg = "<div class=\"gseg" + std::string(panel > 0 && c == 0 ? " gantt-panel-start" : "") + "\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" + pathNum(panelW) + "\" height=\"" + pathNum(draw.height) + "\" viewBox=\"0 0 " + pathNum(panelW) + " " + pathNum(draw.height) + "\" role=\"img\" aria-label=\"ガント、期間 " + std::to_string(panel + 1) + " / " + std::to_string(panels) + "、行 " + std::to_string(c + 1) + " / " + std::to_string(nChunks) + "\">\n";
+      std::string svg = "<div class=\"gseg" + std::string(panel > 0 && c == 0 ? " gantt-panel-start" : "") + "\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" + pathNum(panelW) + "\" height=\"" + pathNum(rowChunkH) + "\" viewBox=\"0 0 " + pathNum(panelW) + " " + pathNum(rowChunkH) + "\" role=\"img\" aria-label=\"ガント、期間 " + std::to_string(panel + 1) + " / " + std::to_string(panels) + "、行 " + std::to_string(c + 1) + " / " + std::to_string(nChunks) + "\">\n";
       if (panel == 0 && c == 0) svg += sharedDefs;
-      svg += "<rect width=\"" + pathNum(panelW) + "\" height=\"" + pathNum(draw.height) + "\" fill=\"" + hex(g.k.surface) + "\"/>" + g.leftHeader();
-      svg += "<svg x=\"" + pathNum(kLeftW) + "\" y=\"0\" width=\"" + pathNum(timelineW) + "\" height=\"" + pathNum(draw.height) + "\" viewBox=\"" + pathNum(x0) + " 0 " + pathNum(timelineW) + " " + pathNum(draw.height) + "\"><use href=\"#gb\"/><use href=\"#gh\"/><use href=\"#gbars" + std::to_string(c) + "\"/><use href=\"#garrows" + std::to_string(c) + "\"/>" + continuations + "</svg>";
-      svg += "<use href=\"#gseps" + std::to_string(c) + "\"/><use href=\"#gleft" + std::to_string(c) + "\"/>";
+      svg += "<rect width=\"" + pathNum(panelW) + "\" height=\"" + pathNum(rowChunkH) + "\" fill=\"" + hex(g.k.surface) + "\"/>";
+      if (firstRowChunk) svg += g.leftHeader();
+      svg += "<svg x=\"" + pathNum(kLeftW) + "\" y=\"0\" width=\"" + pathNum(timelineW) + "\" height=\"" + pathNum(rowChunkH) + "\" viewBox=\"" + pathNum(x0) + " " + pathNum(rowChunkOffset) + " " + pathNum(timelineW) + " " + pathNum(rowChunkH) + "\"><use href=\"#gb\"/>";
+      if (firstRowChunk) svg += "<use href=\"#gh\"/>";
+      svg += "<use href=\"#gbars" + std::to_string(c) + "\"/><use href=\"#garrows" + std::to_string(c) + "\"/>" + continuations + "</svg>";
+      if (firstRowChunk) {
+        svg += "<use href=\"#gseps" + std::to_string(c) + "\"/><use href=\"#gleft" + std::to_string(c) + "\"/>";
+      } else {
+        const std::string shift = "translate(0 -" + pathNum(g.headH) + ")";
+        svg += "<g transform=\"" + shift + "\"><use href=\"#gseps" + std::to_string(c) + "\"/><use href=\"#gleft" + std::to_string(c) + "\"/></g>";
+      }
       svg += "</svg></div>\n";
       out += svg;
     }
