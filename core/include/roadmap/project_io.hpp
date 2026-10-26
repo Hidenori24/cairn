@@ -70,10 +70,12 @@ struct WindowPlacement {
   Json extra = Json::object();
 };
 struct Prefs {
+  static constexpr std::size_t kRecentProjectLimit = 5;
   std::string theme = "auto";     // auto / light / dark
   std::string density = "normal";  // normal / compact
   std::string me = "自分";
   std::string currentProject;
+  std::vector<std::string> recentProjects;  // この端末で最近開いたプロジェクトの ID（新しい順）
   std::vector<Template> templates;  // 利用者のテンプレート
   WindowPlacement window;
   bool hintDismissed = false;

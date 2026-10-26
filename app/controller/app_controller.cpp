@@ -727,6 +727,16 @@ std::vector<AppController::ProjectItem> AppController::projects() const {
   return v;
 }
 
+std::vector<AppController::ProjectItem> AppController::recentProjects() const {
+  std::vector<ProjectItem> recent;
+  recent.reserve(prefs_.recentProjects.size());
+  for (const std::string& id : prefs_.recentProjects) {
+    const ProjectEntry* e = ws_->find(id);
+    if (e) recent.push_back({e->id(), e->rec.settings.name, e->rec.settings.key});
+  }
+  return recent;
+}
+
 void AppController::openSession(const std::string& id, bool keepHistory) {
   (void)keepHistory;
   const ProjectEntry* e = ws_->find(id);
@@ -755,10 +765,16 @@ void AppController::openSession(const std::string& id, bool keepHistory) {
   sel_.clear();
   cursor_.clear();
   anchor_.clear();
-  if (prefs_.currentProject != id) {
-    prefs_.currentProject = id;
-    savePrefs();
-  }
+  bool prefsChanged = false;
+  if (prefs_.currentProject != id) prefs_.currentProject = id, prefsChanged = true;
+  std::vector<std::string> recent = prefs_.recentProjects;
+  recent.erase(std::remove_if(recent.begin(), recent.end(), [&](const std::string& recentId) { return !ws_->find(recentId); }),
+                             recent.end());
+  recent.erase(std::remove(recent.begin(), recent.end(), id), recent.end());
+  recent.insert(recent.begin(), id);
+  if (recent.size() > Prefs::kRecentProjectLimit) recent.resize(Prefs::kRecentProjectLimit);
+  if (recent != prefs_.recentProjects) prefs_.recentProjects = std::move(recent), prefsChanged = true;
+  if (prefsChanged) savePrefs();
   recordHistory(HistoryTrigger::Open);  // 開いたとき、その週の点がなければ記録する（Issue #64）
   recordWeeklyAuto(WeeklyAutoTrigger::Open);  // 開いたとき、その週の頭のスナップショットがなければ取る（Issue #70）
 }
@@ -809,6 +825,7 @@ void AppController::duplicateProject() {
 
 bool AppController::deleteCurrentProject() {
   if (!session_ || !canEdit()) return false;
+  const std::string deletedId = currentId_;
   const ProjectEntry* e = ws_->find(currentId_);
   const std::string stem = e ? e->stem : "";
   const bool folder = !e || e->layout == Layout::Folder;
@@ -834,7 +851,10 @@ bool AppController::deleteCurrentProject() {
     toast(folder ? "フォルダ「" + stem + "」を「_削除済み」に移しました" : "フォルダの「" + stem + ".csv」を「_削除済み」に移しました");
   retiredSessions_.push_back(std::move(session_));
   currentId_.clear();
+  prefs_.recentProjects.erase(std::remove(prefs_.recentProjects.begin(), prefs_.recentProjects.end(), deletedId), prefs_.recentProjects.end());
   if (ws_->entries().empty()) {
+    prefs_.currentProject.clear();
+    savePrefs();
     firstRun_ = true;
     return true;
   }
