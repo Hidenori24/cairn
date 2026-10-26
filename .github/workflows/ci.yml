@@ -183,17 +183,19 @@ jobs:
           foreach ($f in "Cairn-windows-x64.zip","Cairn-Setup-$ver.exe","SHA256SUMS.txt") {
             if (-not (Test-Path (Join-Path $rel $f))) { throw "配布物 $f がありません" }
           }
-      - name: リリース配布物にコード署名（証明書がある場合）
+      - name: 配布 exe にコード署名（v1.2.1 は必須）
         if: (github.event_name == 'workflow_dispatch' && inputs.release_tag != '') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
         shell: pwsh
         env:
           CAIRN_SIGNING_CERTIFICATE_BASE64: ${{ secrets.CAIRN_SIGNING_CERTIFICATE_BASE64 }}
           CAIRN_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.CAIRN_SIGNING_CERTIFICATE_PASSWORD }}
+          CAIRN_RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:CAIRN_SIGNING_CERTIFICATE_BASE64)
           $hasPassword = -not [string]::IsNullOrWhiteSpace($env:CAIRN_SIGNING_CERTIFICATE_PASSWORD)
-          if ($hasCertificate -ne $hasPassword) {
-            throw "署名する場合は Actions secrets CAIRN_SIGNING_CERTIFICATE_BASE64 と CAIRN_SIGNING_CERTIFICATE_PASSWORD の両方が必要です"
+          $signingRequired = $env:CAIRN_RELEASE_TAG -eq "v1.2.1"
+          if ($hasCertificate -ne $hasPassword -or ($signingRequired -and -not $hasCertificate)) {
+            throw "v1.2.1 は署名が必須です。Actions secrets CAIRN_SIGNING_CERTIFICATE_BASE64 と CAIRN_SIGNING_CERTIFICATE_PASSWORD の両方を設定してください"
           }
           if (-not $hasCertificate) {
             Write-Host "Trusted signing certificate is not configured; release files will remain unsigned."

@@ -63,10 +63,16 @@ AppId・設定ファイルの旧名・データの退避先は、以前の版か
 
 ## コード署名
 
-現在の公式配布物は未署名です。ワークフローには証明書を用意した場合の署名処理があり、次の **GitHub Actions repository secrets** を両方設定すると使います。
+Windows 配布 exe の署名には、信頼された認証局が発行し、秘密鍵を含む PFX 形式の Authenticode コード署名証明書を使います。ワークフローは次の **GitHub Actions repository secrets** が両方設定されていると、インストーラとポータブル版の exe に署名して検証します。片方だけ設定されている場合はエラーになります。`v1.2.1` は署名必須で、設定がなければ Windows ジョブを失敗させます。以降の版は両方未設定なら署名なしで続行するため、署名付きリリースを出す前に必ず登録してください。
 
 - `CAIRN_SIGNING_CERTIFICATE_BASE64`: 信頼された認証局のコード署名証明書（秘密鍵を含む PFX）を Base64 化した値。
 - `CAIRN_SIGNING_CERTIFICATE_PASSWORD`: PFX のパスワード。
+
+GitHub の `Settings → Secrets and variables → Actions → New repository secret` で登録します。PFX を Base64 にする例（PowerShell。出力をチャットや Issue に貼らず、そのまま secret に登録してください）:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\codesign.pfx")) | Set-Clipboard
+```
 
 証明書は発行者が配布するプログラムに署名するためのもので、ダウンロードする各 PC に購入・設定するものではありません。自己署名証明書を付けても、一般の PC が信頼する署名にはなりません。信頼された署名があっても、SmartScreen の評判などにより警告が出る場合があります。
 
