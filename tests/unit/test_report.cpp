@@ -1166,7 +1166,7 @@ TEST_CASE("report: 日程が大きく動いても、ガントの時間軸は計�
       const double x = std::stod(h.substr(r + 9, h.find('"', r + 9) - r - 9));
       const std::size_t wq = h.find("width=\"", r);
       const double w = std::stod(h.substr(wq + 7, h.find('"', wq + 7) - wq - 7));
-      CHECK(x >= 459.0 - 1e-6);       // 左の表（幅 459）に重ならない
+      CHECK(x >= 493.0 - 1e-6);       // 左の表（幅 493）に重ならない
       CHECK(x + w <= axisRight + 1e-6);  // 全期間の SVG の外に出ない
       ++n;
     }

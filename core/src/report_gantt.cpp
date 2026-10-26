@@ -15,7 +15,7 @@ namespace roadmap::report {
 namespace {
 
 constexpr double kRowH = 26;
-constexpr double kNameW = 255, kAsgW = 58, kStatusW = 58, kDurW = 40, kFloatW = 48;
+constexpr double kNameW = 255, kAsgW = 58, kStatusW = 92, kDurW = 40, kFloatW = 48;
 constexpr double kLeftW = kNameW + kAsgW + kStatusW + kDurW + kFloatW;
 constexpr float kAllTimelineW = 900;  // 拡大率「全体」のときの時間軸の幅
 constexpr double kPrintPx = 1047;     // A4 横（余白 10mm）の幅（96dpi）
