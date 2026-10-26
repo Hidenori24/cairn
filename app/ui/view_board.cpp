@@ -61,8 +61,9 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, const 
     if (!u.ro && !u.linkPick.active && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 5.f))
       gCardDrag = {sid, true};
   }
-  dl->AddRectFilled(p, q, sel ? u.t->accentBg : u.t->surface, u.m.s(6));
-  dl->AddRect(p, q, sel ? u.t->accent : (hov ? u.t->line2 : u.t->line), u.m.s(6));
+  const bool dragSource = gCardDrag.active && gCardDrag.id == sid;
+  dl->AddRectFilled(p, q, dragSource ? withAlpha(u.t->accentBg, 0.9f) : (sel ? u.t->accentBg : u.t->surface), u.m.s(6));
+  dl->AddRect(p, q, dragSource || sel ? u.t->accent : (hov ? u.t->line2 : u.t->line), u.m.s(6), 0, dragSource ? u.m.s(2.5f) : u.m.s(1.f));
   dl->AddRectFilled(p, ImVec2(p.x + u.m.s(3), q.y), u.t->c[rootIdx[id]], u.m.s(6), ImDrawFlags_RoundCornersLeft);
   // 1行目: 種別・表示ID・余裕
   const float x0 = p.x + u.m.s(10);
@@ -169,6 +170,8 @@ void drawBoardView(Frame& f, ImVec2 size) {
       if (text::toLower(colNames[k]) == text::toLower(st)) return static_cast<int>(k);
     return 0;
   };
+  const int draggedIssue = gCardDrag.active ? T.find(gCardDrag.id) : -1;
+  const int dragFromCol = draggedIssue >= 0 ? colOf(draggedIssue) : -1;
   // スイムレーン
   const std::string lane = c.uiStr("lane", "none");
   std::vector<std::pair<std::string, std::vector<int>>> lanes;
@@ -256,10 +259,14 @@ void drawBoardView(Frame& f, ImVec2 size) {
         }
       const float colBottom = std::max(cy, y + u.m.s(60));
       const ImVec2 a(x, y), b(x + colW, colBottom + u.m.s(4));
-      dl->AddRect(a, b, u.t->line, u.m.s(8));
-      if (gCardDrag.active && ImGui::IsMouseHoveringRect(a, b)) {
-        dl->AddRect(a, b, u.t->accent, u.m.s(8), 0, 2.f);
+      const bool dropTarget = gCardDrag.active && ImGui::IsMouseHoveringRect(a, b);
+      if (dropTarget) {
+        const bool willMove = k != dragFromCol;
+        dl->AddRectFilled(a, b, withAlpha(willMove ? u.t->accentBg : u.t->surface3, willMove ? 0.2f : 0.16f), u.m.s(8));
+        dl->AddRect(a, b, willMove ? u.t->accent : u.t->line2, u.m.s(8), 0, willMove ? u.m.s(2.5f) : u.m.s(1.5f));
         dropCol = k;
+      } else {
+        dl->AddRect(a, b, u.t->line, u.m.s(8));
       }
       maxY = std::max(maxY, colBottom);
     }
@@ -267,6 +274,30 @@ void drawBoardView(Frame& f, ImVec2 size) {
   }
   ImGui::SetCursorScreenPos(ImVec2(origin.x, y));
   ImGui::Dummy(ImVec2(pad + (colW + pad) * static_cast<float>(nc), u.m.s(20)));
+  if (gCardDrag.active) {
+    std::string hint = "列の上へドロップして移動";
+    if (dropCol >= 0) {
+      hint = dropCol == dragFromCol ? "移動元と同じ列です" : "状況を「" + colNames[dropCol] + "」へ変更";
+    }
+    const ImRect inner = ImGui::GetCurrentWindow()->InnerRect;
+    const float maxTextW = std::max(0.f, inner.Max.x - inner.Min.x - u.m.s(32));
+    hint = ellipsize(hint, std::max(0.f, maxTextW - u.m.s(20)));
+    const ImVec2 ts = ImGui::CalcTextSize(hint.c_str());
+    const float px = u.m.s(10), py = u.m.s(6);
+    const ImVec2 sz(ts.x + px * 2, ts.y + py * 2);
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    float x = mouse.x + u.m.s(16), y0 = mouse.y + u.m.s(16);
+    if (x + sz.x > inner.Max.x - u.m.s(4)) x = mouse.x - sz.x - u.m.s(12);
+    if (y0 + sz.y > inner.Max.y - u.m.s(4)) y0 = mouse.y - sz.y - u.m.s(12);
+    x = std::clamp(x, inner.Min.x + u.m.s(4), std::max(inner.Min.x + u.m.s(4), inner.Max.x - sz.x - u.m.s(4)));
+    y0 = std::clamp(y0, inner.Min.y + u.m.s(4), std::max(inner.Min.y + u.m.s(4), inner.Max.y - sz.y - u.m.s(4)));
+    const ImVec2 a(x, y0), b(x + sz.x, y0 + sz.y);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(a, b, u.t->surface, u.m.s(6));
+    draw->AddRect(a, b, dropCol >= 0 && dropCol != dragFromCol ? u.t->accent : u.t->line2, u.m.s(6), 0,
+                  dropCol >= 0 && dropCol != dragFromCol ? u.m.s(2.f) : u.m.s(1.f));
+    draw->AddText(ImVec2(a.x + px, a.y + py), u.t->ink, hint.c_str());
+  }
   linkOpts.busy = gCardDrag.active;
   drawLinkOverlay(f, app::View::Board, linkOpts);  // ハンドル・ゴムひも・相手のカードの強調・確定
   if (gCardDrag.active && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
