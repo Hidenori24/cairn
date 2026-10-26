@@ -312,6 +312,7 @@ void dlgExportHtml(Frame& f) {
   if (ImGui::IsWindowAppearing()) {
     // 画面の今の状態から始める（拡大率・色分け）。テーマは印刷向けのライトが既定
     r = ExportOptions{};
+    r.ganttPageWidthMm = 420;
     const std::string z = c.uiStr("zoom", "week");
     r.zoom = (z == "day" || z == "month" || z == "all") ? z : "week";
     const std::string cb = c.uiStr("colorBy", "root");
@@ -326,7 +327,7 @@ void dlgExportHtml(Frame& f) {
     u.repScope = 0;
   }
   ImGui::PushTextWrapPos(0);
-  ImGui::TextUnformatted("ガント・統計・リストを、ブラウザで開ける1つのHTMLファイルに書き出します。印刷時はガントを横向き、統計とリストを縦向きで出力します。");
+  ImGui::TextUnformatted("ガント・統計・リストを、ブラウザで開ける1つのHTMLファイルに書き出します。印刷時はガントだけ幅広、統計とリストは A4 縦で出力します。");
   ImGui::PopTextWrapPos();
 
   ImGui::SeparatorText("書き出す内容");
@@ -368,9 +369,16 @@ void dlgExportHtml(Frame& f) {
       ImGui::TextDisabled("ガント画面を開くと選べます");
     } else {
       ImGui::TextDisabled(r.ganttVisibleOnly
-                              ? "今の横スクロール位置に見えている日付範囲を、A4横の幅に合わせて出します。"
+                              ? "今の横スクロール位置に見えている日付範囲を、選んだ用紙幅に合わせて出します。"
                               : "チェックを外すと、プロジェクトの日程全体を拡大率に合わせて必要な枚数に分けます。");
     }
+    ImGui::TextUnformatted("ガントの用紙幅（高さは A4）");
+    ImGui::SameLine();
+    for (const auto& [mm, label] : {std::pair<int, const char*>{297, "A4 幅"}, {420, "A3 幅"}, {594, "A2 幅"}}) {
+      if (ImGui::RadioButton(label, r.ganttPageWidthMm == mm)) r.ganttPageWidthMm = mm;
+      ImGui::SameLine();
+    }
+    ImGui::NewLine();
     ImGui::TextUnformatted("色分け");
     ImGui::SameLine();
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"root", "Epic"}, {"float", "余裕"}, {"asg", "担当者"}}) {

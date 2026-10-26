@@ -18,7 +18,7 @@ constexpr double kRowH = 26;
 constexpr double kNameW = 255, kAsgW = 58, kStatusW = 92, kDurW = 40, kFloatW = 48;
 constexpr double kLeftW = kNameW + kAsgW + kStatusW + kDurW + kFloatW;
 constexpr float kAllTimelineW = 900;  // 拡大率「全体」のときの時間軸の幅
-constexpr double kPrintPx = 1047;     // A4 横（余白 10mm）の幅（96dpi）
+constexpr double kPrintA4Px = 1047;   // A4 横（余白 10mm）の幅（96dpi）
 constexpr double kChunkPagePx = 460;  // 1 ページに入れたい高さ（最初のページの見出し・凡例の分を見込む）
 constexpr int kMaxTimePanels = 64;
 
@@ -462,7 +462,8 @@ std::string renderGantt(const Ctx& cx) {
   const int days = g.ax.hi - g.ax.rs + 1;
   g.ax.px = opt.ganttDayWidth > 0 ? opt.ganttDayWidth : ganttZoomPx(zoom, 1.f, kAllTimelineW - 24.f, days);
   // 画面の表示範囲は横 1 ページ。全期間は選択した拡大率で読める幅ごとに分ける。
-  const double timelinePrintW = kPrintPx - kLeftW - 12;
+  const double paperPrintW = kPrintA4Px + (ganttPageWidthMm(opt) - 297) * 96.0 / 25.4;
+  const double timelinePrintW = paperPrintW - kLeftW - 12;
   const int fitDays = std::max(1, static_cast<int>(std::floor(timelinePrintW / g.ax.px)));
   const int minDaysForLimit = (days + kMaxTimePanels - 1) / kMaxTimePanels;
   g.daysPerPanel = opt.ganttVisibleOnly || zoom == "all" ? days : std::min(days, std::max(fitDays, minDaysForLimit));

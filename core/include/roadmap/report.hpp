@@ -49,6 +49,7 @@ struct ExportOptions {
   bool ganttVisibleOnly = false;       // ガントを画面で見えている時間範囲に限定する
   Day ganttVisibleStart = 0, ganttVisibleEnd = 0;
   float ganttDayWidth = 0;             // 画面での1日幅（0 = zoom から算出）
+  int ganttPageWidthMm = 297;           // ガントの印刷用紙の幅。297=A4、420=A3、594=A2（高さは A4）
   bool showDeps = true;              // ガントに依存の矢印を出す
   bool baseline = true;              // 表示するベースラインがあれば、ガントに計画のバーを、統計に「計画との差」の節を出す
   bool evm = true;                   // EVM に使うベースラインがあれば、統計に「EVM（出来高管理）」の節を出す（Issue #65）
