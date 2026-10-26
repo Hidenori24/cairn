@@ -191,6 +191,7 @@ class Session {
   // 週次レポートの所感とスナップショット（取り消しの対象外で、保存はする。Issue #43）
   const WeeklyMemo& weekly() const { return P_.settings.weekly; }
   void setWeeklyNotes(const std::string& notes);  // 変わったときだけ保存を予約する。長すぎる・壊れた文字は直す
+  void setWeeklyMemberNotes(const std::string& assignee, const std::string& notes);
   void putWeeklySnapshot(WeeklySnapshot s);
   // 状況の件数の履歴（取り消しの対象外で、保存はする。Issue #64）。記録するのはここだけ（呼ぶ側は AppController の 1 か所）
   const History& history() const { return P_.settings.history; }

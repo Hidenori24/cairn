@@ -1064,10 +1064,42 @@ Status AppController::exportReport(const std::string& path, const ExportOptions&
 // ---------------------------------------------------------------- 週次レポート
 std::string AppController::weeklyNotes() const { return session_ ? session_->weekly().notes : std::string(); }
 
+std::string AppController::weeklyMemberNotes(const std::string& assignee) const {
+  if (!session_) return {};
+  const auto it = session_->weekly().memberNotes.find(text::trim(assignee));
+  return it == session_->weekly().memberNotes.end() ? std::string() : it->second;
+}
+
 void AppController::setWeeklyNotes(const std::string& notes) {
   if (!session_ || readOnly()) return;  // 読み取り専用のあいだは覚えない（書き出しは使える）
   session_->setWeeklyNotes(notes);
   afterEdit();
+}
+
+void AppController::setWeeklyMemberNotes(const std::string& assignee, const std::string& notes) {
+  if (!session_ || readOnly()) return;
+  session_->setWeeklyMemberNotes(assignee, notes);
+  afterEdit();
+}
+
+std::vector<std::string> AppController::weeklyAssignees() const {
+  std::vector<std::string> out;
+  const Session* s = session_.get();
+  if (!s || !s->tree()) return out;
+  const Tree& tree = *s->tree();
+  const std::vector<Issue>& issues = s->viewIssues();
+  std::set<std::string> names;
+  bool unassigned = false;
+  for (int id : tree.dfs) {
+    if (id < 0 || static_cast<std::size_t>(id) >= issues.size() || static_cast<std::size_t>(id) >= tree.kids.size()) continue;
+    if (!tree.kids[static_cast<std::size_t>(id)].empty()) continue;
+    const std::string name = text::trim(issues[static_cast<std::size_t>(id)].assignee);
+    if (name.empty()) unassigned = true;
+    else names.insert(name);
+  }
+  out.assign(names.begin(), names.end());
+  if (unassigned) out.emplace_back();
+  return out;
 }
 
 Result<WeeklyReport> AppController::buildWeekly(const WeeklyOptions& opt) const {
@@ -1093,6 +1125,27 @@ Result<WeeklyReport> AppController::buildWeekly(const WeeklyOptions& opt) const 
 }
 
 Result<std::string> AppController::renderWeekly(const WeeklyOptions& opt, bool html) const {
+  if (opt.allAssignees) {
+    std::vector<WeeklyReport> reports;
+    for (const std::string& assignee : weeklyAssignees()) {
+      WeeklyOptions member = opt;
+      member.allAssignees = false;
+      member.filterAssignee = true;
+      member.assignee = assignee;
+      member.notes = weeklyMemberNotes(assignee);
+      auto r = buildWeekly(member);
+      if (!r.ok()) return Error{r.error()};
+      reports.push_back(std::move(r).value());
+    }
+    if (reports.empty()) return Error{"担当者別の課題がありません"};
+    if (html) return weeklyHtmlBatch(reports, &clock_);
+    std::string out;
+    for (std::size_t i = 0; i < reports.size(); ++i) {
+      if (i) out += "\n\n---\n\n";
+      out += weeklyMarkdown(reports[i]);
+    }
+    return out;
+  }
   const auto r = buildWeekly(opt);
   if (!r.ok()) return Error{r.error()};
   return html ? weeklyHtml(r.value(), &clock_) : weeklyMarkdown(r.value());
@@ -1116,7 +1169,8 @@ void AppController::recordWeekly(const WeeklyOptions& opt) {
   WeeklyInput in(T, issues, rows, s->calendar(), stats, load);
   in.base = base;
   WeeklySnapshot snap = makeWeeklySnapshot(in);
-  s->setWeeklyNotes(opt.notes);
+  if (opt.filterAssignee) s->setWeeklyMemberNotes(opt.assignee, opt.notes);
+  else if (!opt.allAssignees) s->setWeeklyNotes(opt.notes);
   s->putWeeklySnapshot(std::move(snap));
   recordHistory(HistoryTrigger::Weekly);  // 週報を出した週の件数も覚える（Issue #64）
   afterEdit();
@@ -1138,6 +1192,40 @@ Status AppController::exportWeekly(const std::string& path, const WeeklyOptions&
   const std::size_t slash = path.find_last_of("/\\");
   const std::string file = slash == std::string::npos ? path : path.substr(slash + 1);
   toast("書き出しました: " + file, folder.empty() ? NoticeAction::None : NoticeAction::OpenFolder, folder);
+  return okStatus();
+}
+
+Status AppController::exportWeeklyMembers(const std::string& folder, const WeeklyOptions& opt, bool html) {
+  if (folder.empty()) return Error{"保存先フォルダが空です"};
+  const std::vector<std::string> names = weeklyAssignees();
+  if (names.empty()) return Error{"担当者別の課題がありません"};
+  const Day base = session_ ? session_->baseDay() : clock_.today();
+  const Day start = weeklyRange(base, opt.period, opt.from, opt.to).from;
+  std::size_t written = 0;
+  const char sep = folder.back() == '/' || folder.back() == '\\' ? '\0' : '/';
+  for (const std::string& assignee : names) {
+    WeeklyOptions member = opt;
+    member.allAssignees = false;
+    member.filterAssignee = true;
+    member.assignee = assignee;
+    member.notes = weeklyMemberNotes(assignee);
+    auto content = renderWeekly(member, html);
+    if (!content.ok()) return Error{"担当者別週報を作れません: " + content.error() + "（" + std::to_string(written) + " 件保存済み）"};
+    std::string path = folder;
+    if (sep != '\0') path += sep;
+    path += weeklyMemberFileName(session_ ? session_->settings().name : std::string(), assignee, start, html);
+    const std::string original = path;
+    const std::string ext = html ? ".html" : ".md";
+    for (int suffix = 2; fs_.stat(path).has_value() && suffix < 10000; ++suffix) {
+      path = original.substr(0, original.size() - ext.size()) + "_" + std::to_string(suffix) + ext;
+    }
+    if (fs_.stat(path).has_value()) return Error{"同じ名前のファイルが多すぎるため保存できません（" + std::to_string(written) + " 件保存済み）"};
+    if (const Status st = writeWeekly(fs_, path, content.value(), html); !st.ok())
+      return Error{"担当者別週報を保存できません: " + st.error() + "（" + std::to_string(written) + " 件保存済み）"};
+    ++written;
+  }
+  recordWeekly(opt);
+  toast("担当者別週報を " + std::to_string(written) + " 件保存しました", NoticeAction::OpenFolder, folder);
   return okStatus();
 }
 

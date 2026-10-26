@@ -239,6 +239,22 @@ void Session::setWeeklyNotes(const std::string& notes) {
   persist();
 }
 
+void Session::setWeeklyMemberNotes(const std::string& assignee, const std::string& notes) {
+  if (readOnly_) return;
+  const std::string name = text::trim(text::sanitizeUtf8(assignee));
+  if (name.size() > kWeeklyMaxAssigneeNameBytes) return;
+  const std::string clean = weeklySanitizeNotes(notes);
+  auto& saved = P_.settings.weekly.memberNotes;
+  const auto it = saved.find(name);
+  if ((it != saved.end() && it->second == clean) || (it == saved.end() && clean.empty())) return;
+  if (clean.empty()) saved.erase(name);
+  else {
+    if (it == saved.end() && saved.size() >= kWeeklyMaxMemberNotes) return;
+    saved[name] = clean;
+  }
+  persist();
+}
+
 void Session::putWeeklySnapshot(WeeklySnapshot s) {
   if (readOnly_) return;
   weeklyPutSnapshot(P_.settings.weekly, std::move(s));

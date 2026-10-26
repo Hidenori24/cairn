@@ -49,6 +49,13 @@ class IPlatform {
   }
   // 関連付けられたアプリでファイルを開く（添付の「開く」。実行ファイルの警告は UI が先に出す）。パスは UTF-8
   virtual void openFile(const std::string& path) { (void)path; }
+  // HTML をローカルのブラウザーエンジンで PDF にする。利用できない場合は理由を返す。
+  virtual bool printHtmlToPdf(const std::string& html, const std::string& path, std::string* error) {
+    (void)html;
+    (void)path;
+    if (error) *error = "PDF 出力に対応していません";
+    return false;
+  }
   // 関連リンク（URL・ファイル・フォルダの場所）を既定のブラウザ／アプリ／エクスプローラーで開く（Issue #60）。target は UI が
   // classifyLink で検査し、実行ファイルの警告も済ませた場所。プラットフォームも許可リストを確かめる。存在確認はしない。
   // 開けなければ false と理由（日本語）を error に入れる。場所は個人情報を含みうるので、ログには出さない
@@ -257,6 +264,9 @@ struct UiState {
   // 「週次レポート」ダイアログ（開くたびに初期化する。Issue #43）
   WeeklyOptions wk;
   int wkPeriod = 0;               // 0 = 今週 1 = 先週 2 = 任意の範囲
+  int wkAudience = 0;              // 0 = 全体 1 = 1 人 2 = 担当者ごと
+  std::string wkAssignee;
+  bool wkBatchHtml = true;
   std::string wkFrom, wkTo;       // 任意の範囲（YYYY-MM-DD の入力欄）
   std::string wkPreview;          // Markdown のプレビュー（wkPreviewKey が変わったときだけ作り直す）
   std::string wkPreviewKey, wkError;

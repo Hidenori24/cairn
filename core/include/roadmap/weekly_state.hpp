@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstddef>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,8 @@ inline constexpr std::size_t kWeeklyMaxIdBytes = 64;
 inline constexpr std::size_t kWeeklyMaxSnapshots = 2;
 // 所感の長さの上限（バイト）
 inline constexpr std::size_t kWeeklyMaxNoteBytes = 20000;
+inline constexpr std::size_t kWeeklyMaxMemberNotes = 500;
+inline constexpr std::size_t kWeeklyMaxAssigneeNameBytes = 256;
 // 自動のスナップショット（週の頭）を覚えておく週の数（1 週に 1 つ。超えたら古いものから落とす。Issue #70）
 inline constexpr std::size_t kWeeklyAutoMaxSnapshots = 8;
 
@@ -53,9 +56,10 @@ struct WeeklySnapshot {
 
 struct WeeklyMemo {
   std::string notes;                  // 所感・課題・お願い
+  std::map<std::string, std::string> memberNotes; // 担当者ごとの週報メモ（プロジェクト設定内）
   std::vector<WeeklySnapshot> snaps;  // 基準日の古い順。同じ週のものは 1 つ
   nlohmann::ordered_json extra = nlohmann::ordered_json::object();  // weekly 直下の未知のキー
-  bool empty() const { return notes.empty() && snaps.empty() && extra.empty(); }
+  bool empty() const { return notes.empty() && memberNotes.empty() && snaps.empty() && extra.empty(); }
   bool operator==(const WeeklyMemo&) const = default;
 };
 
