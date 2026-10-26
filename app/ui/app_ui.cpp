@@ -582,9 +582,20 @@ void drawTopBar(Frame& f) {
     remember("project");
     ImGui::SetNextWindowSize(ImVec2(u.m.s(300), 0));
     if (ImGui::BeginPopup("##projmenu")) {
-      for (const auto& pi : c.projects()) {
+      const auto menuItem = [&](const AppController::ProjectItem& pi) {
         const std::string l = pi.name + (pi.key.empty() ? "" : "  [" + pi.key + "]") + "##" + pi.id;
         if (ImGui::MenuItem(l.c_str(), nullptr, pi.id == c.currentId())) c.openProject(pi.id);
+      };
+      const auto recent = c.recentProjects();
+      const auto all = c.projects();
+      if (!recent.empty()) {
+        ImGui::SeparatorText("最近使ったプロジェクト");
+        for (const auto& pi : recent) menuItem(pi);
+        ImGui::Separator();
+      }
+      if (!all.empty()) {
+        ImGui::SeparatorText("すべてのプロジェクト");
+        for (const auto& pi : all) menuItem(pi);
       }
       ImGui::Separator();
       if (ImGui::MenuItem("新しいプロジェクト")) openDialog(f, Dlg::NewProject);

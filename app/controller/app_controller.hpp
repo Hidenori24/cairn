@@ -108,6 +108,7 @@ class AppController {
     std::string id, name, key;
   };
   std::vector<ProjectItem> projects() const;
+  std::vector<ProjectItem> recentProjects() const;
   bool openProject(const std::string& id);
   std::string createProject(SampleKind kind, const std::string& name, const std::string& key);
   void editProject(const std::string& name, const std::string& key);
