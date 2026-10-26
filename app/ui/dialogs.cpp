@@ -308,6 +308,7 @@ void dlgExportHtml(Frame& f) {
   Session* s = c.session();
   if (!s || !s->tree()) return close(f);
   ExportOptions& r = u.rep;
+  const bool haveVisibleGanttRange = u.hasVisibleGanttRange && u.visibleGanttProject == c.currentId();
   if (ImGui::IsWindowAppearing()) {
     // 画面の今の状態から始める（拡大率・色分け）。テーマは印刷向けのライトが既定
     r = ExportOptions{};
@@ -315,10 +316,16 @@ void dlgExportHtml(Frame& f) {
     r.zoom = (z == "day" || z == "month" || z == "all") ? z : "week";
     const std::string cb = c.uiStr("colorBy", "root");
     r.colorBy = (cb == "float" || cb == "asg") ? cb : "root";
+    if (haveVisibleGanttRange) {
+      r.ganttVisibleOnly = c.view() == app::View::Gantt;
+      r.ganttVisibleStart = u.visibleGanttStart;
+      r.ganttVisibleEnd = u.visibleGanttEnd;
+      r.ganttDayWidth = u.customPx > 0 ? u.ganttPx / std::max(0.01f, u.m.scale) : 0;
+    }
     u.repScope = 0;
   }
   ImGui::PushTextWrapPos(0);
-  ImGui::TextUnformatted("ガント・統計・リストを、ブラウザで開ける1つのHTMLファイルに書き出します。外部のファイルは読まず、印刷（PDFとして保存）にも使えます。");
+  ImGui::TextUnformatted("ガント・統計・リストを、ブラウザで開ける1つのHTMLファイルに書き出します。印刷時はガントを横向き、統計とリストを縦向きで出力します。");
   ImGui::PopTextWrapPos();
 
   ImGui::SeparatorText("書き出す内容");
@@ -348,10 +355,21 @@ void dlgExportHtml(Frame& f) {
     ImGui::TextUnformatted("拡大率");
     ImGui::SameLine();
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"day", "日"}, {"week", "週"}, {"month", "月"}, {"all", "全体"}}) {
-      if (ImGui::RadioButton(l, r.zoom == k)) r.zoom = k;
+      if (ImGui::RadioButton(l, r.zoom == k)) { r.zoom = k; r.ganttDayWidth = 0; }
       ImGui::SameLine();
     }
     ImGui::NewLine();
+    ImGui::BeginDisabled(!haveVisibleGanttRange);
+    ImGui::Checkbox("画面に見えている日付範囲だけ出力", &r.ganttVisibleOnly);
+    ImGui::EndDisabled();
+    if (!haveVisibleGanttRange) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("ガント画面を開くと選べます");
+    } else {
+      ImGui::TextDisabled(r.ganttVisibleOnly
+                              ? "今の横スクロール位置に見えている日付範囲を、A4横の幅に合わせて出します。"
+                              : "チェックを外すと、プロジェクトの日程全体をA4横の幅に合わせて出します。");
+    }
     ImGui::TextUnformatted("色分け");
     ImGui::SameLine();
     for (const auto& [k, l] : {std::pair<const char*, const char*>{"root", "Epic"}, {"float", "余裕"}, {"asg", "担当者"}}) {

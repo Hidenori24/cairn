@@ -295,6 +295,18 @@ void drawGanttView(Frame& f, ImVec2 size) {
   u.ganttLeft = wp.x + leftW;
   u.ganttPx = ax.px;
   const float viewW = ImGui::GetWindowWidth(), viewH = ImGui::GetWindowHeight();
+  const int axisDays = hi - ax.rs + 1;
+  if (axisDays > 0 && ax.px > 0) {
+    const int firstVisible = std::clamp(static_cast<int>(std::floor(std::max(0.f, sx - leftW) / ax.px)), 0, axisDays - 1);
+    const float visibleEnd = std::max(0.f, sx + viewW - leftW);
+    const int lastVisible = std::clamp(static_cast<int>(std::ceil(visibleEnd / ax.px)) - 1, firstVisible, axisDays - 1);
+    u.visibleGanttStart = ax.rs + firstVisible;
+    u.visibleGanttEnd = ax.rs + lastVisible;
+    u.visibleGanttProject = c.currentId();
+    u.hasVisibleGanttRange = true;
+  } else {
+    u.hasVisibleGanttRange = false;
+  }
   ImGui::Dummy(ImVec2(contentW, contentH));
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ax.left = wp.x + leftW - sx;

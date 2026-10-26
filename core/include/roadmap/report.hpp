@@ -46,6 +46,9 @@ struct ExportOptions {
   std::string zoom = "week";         // day / week / month / all
   std::string colorBy = "root";      // root / float / asg
   ReportScope scope = ReportScope::All;
+  bool ganttVisibleOnly = false;       // ガントを画面で見えている時間範囲に限定する
+  Day ganttVisibleStart = 0, ganttVisibleEnd = 0;
+  float ganttDayWidth = 0;             // 画面での1日幅（0 = zoom から算出）
   bool showDeps = true;              // ガントに依存の矢印を出す
   bool baseline = true;              // 表示するベースラインがあれば、ガントに計画のバーを、統計に「計画との差」の節を出す
   bool evm = true;                   // EVM に使うベースラインがあれば、統計に「EVM（出来高管理）」の節を出す（Issue #65）
