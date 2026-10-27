@@ -254,6 +254,15 @@ struct UiState {
   std::string recentLinkProject;
   std::vector<std::string> recentLinks;
 
+  struct PersonalEditor {
+    std::string project, member, date, from, to, loadedKey, baseline, newName, error, savedId;
+    Json draft = Json::object();
+    bool previous = true, history = false;
+    std::string historyId;
+    std::set<std::string> comments;
+    std::map<std::string, std::string> inputs;
+  } personal;
+
   // ダイアログの入力
   std::string dName, dKey, dText, dText2, dSearch;
   int dChoice = 0, dChoice2 = 0;

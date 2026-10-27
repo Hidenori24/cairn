@@ -23,7 +23,7 @@
 
 namespace roadmap::app {
 
-enum class View { Gantt, Board, List, Goals, Stats, Today };
+enum class View { Gantt, Board, List, Goals, Stats, Today, Personal };
 const char* viewKey(View v);  // "gantt" / "board" / "list" / "goals" / "stats" / "today"
 View viewFromKey(const std::string& k);
 

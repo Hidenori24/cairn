@@ -488,6 +488,12 @@ void dlgWeekly(Frame& f) {
   ImGui::SameLine(0, u.m.s(16));
   ImGui::RadioButton("担当者ごと", &u.wkAudience, 2);
   ImGui::EndDisabled();
+  if (u.wkAudience != 0) {
+    c.setWeeklyNotes(o.notes);
+    c.setView(app::View::Personal);
+    close(f);
+    return;
+  }
   if (u.wkAudience == 1) {
     const std::vector<std::string> assignees = c.weeklyAssignees();
     const std::string shownAssignee = u.wkAssignee.empty() ? "担当なし" : u.wkAssignee;
