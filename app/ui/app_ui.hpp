@@ -257,6 +257,10 @@ struct UiState {
   std::vector<std::string> recentLinks;
 
   struct PersonalEditor {
+    struct Card {
+      std::string loadedKey, error, savedId;
+      Json draft = Json::object();
+    };
     std::string project, member, date, from, to, loadedKey, baseline, newName, error, savedId;
     Json draft = Json::object(), cache = Json::object();
     std::uint64_t cacheVersion = 0, sourceVersion = 0;
@@ -266,6 +270,9 @@ struct UiState {
     float historyFade = 1;
     std::set<std::string> comments, exportIds;
     std::map<std::string, std::string> inputs;
+    // 個人カードごとに選択中の履歴 ID を保持する。
+    std::map<std::string, std::string> memberHistory;
+    std::map<std::string, Card> cards;
   } personal;
 
   // ダイアログの入力

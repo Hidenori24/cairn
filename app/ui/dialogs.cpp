@@ -137,13 +137,16 @@ void dlgNewProject(Frame& f) {
   ImGui::RadioButton("空", &u.dChoice, 0);
   ImGui::RadioButton("階層デモ（5階層の例）", &u.dChoice, 1);
   ImGui::RadioButton("組込みソフトウェア開発の雛形（要求〜量産移管）", &u.dChoice, 2);
+  ImGui::RadioButton("個人報告デモ（3人・過去3週の履歴つき）", &u.dChoice, 3);
   const int b = buttons(f, {"作成", "キャンセル"});
   if (b == 0 || enter) {
     const auto kind = u.dChoice == 1   ? app::SampleKind::Hierarchy
                       : u.dChoice == 2 ? app::SampleKind::EmbeddedSw
+                      : u.dChoice == 3 ? app::SampleKind::PersonalReport
                                        : app::SampleKind::Empty;
     if (u.dChoice == 2 && text::trim(u.dName) == "新しいプロジェクト") u.dName = "組込みソフトウェア開発";
-    if (u.dChoice == 2 && u.dKey.empty()) u.dKey = "DEV";
+    if (u.dChoice == 3 && text::trim(u.dName) == "新しいプロジェクト") u.dName = "個人報告デモ";
+    if (u.dChoice >= 2 && u.dKey.empty()) u.dKey = "DEV";
     f.c.createProject(kind, text::trim(u.dName), u.dKey);
     close(f);
   } else if (b == 1) {

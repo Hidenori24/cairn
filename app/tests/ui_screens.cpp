@@ -172,7 +172,7 @@ int main(int argc, char** argv) {
     MemFileStore tmpFs;
     app::AppController tmp{tmpFs, clk, "d", "p.json"};
     tmp.start();
-    for (auto k : {app::SampleKind::Hierarchy}) {
+    for (auto k : {app::SampleKind::Hierarchy, app::SampleKind::PersonalReport}) {
       tmp.createProject(k, "x", "");
       std::set<ImWchar> g;
       ui::collectGlyphs(tmp, g);
@@ -232,6 +232,9 @@ int main(int argc, char** argv) {
     render(ImGui::GetDrawData(), tex, out + "/" + name + ".ppm", ui::v4(u.t->bg));
   };
   shot("00_welcome");
+  c.createProject(app::SampleKind::PersonalReport, "個人報告デモ", "DEV");
+  c.setView(app::View::Personal);
+  shot("personal_report_cards");
   {
     // 機能の確認用の汎用データ（golden/samples。画面には出さないテスト専用のサンプル）
     std::ifstream in(std::string(ROADMAP_SOURCE_DIR) + "/golden/samples/scenario_demo.csv", std::ios::binary);

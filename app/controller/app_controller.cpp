@@ -793,7 +793,7 @@ bool AppController::openProject(const std::string& id) {
 std::string AppController::createProject(SampleKind kind, const std::string& nameIn, const std::string& key) {
   afterEdit();
   std::string csvText = csv::emptyCsv(), base = clock_.todayIso();
-  if (kind == SampleKind::Hierarchy) {
+  if (kind == SampleKind::Hierarchy || kind == SampleKind::PersonalReport) {
     csvText = std::string(samples::hierarchyCsv());
     base = samples::kSampleBase;
   } else if (kind == SampleKind::EmbeddedSw) {
@@ -802,6 +802,41 @@ std::string AppController::createProject(SampleKind kind, const std::string& nam
   const std::string name = nameIn.empty() ? "新しいプロジェクト" : nameIn;
   const std::string id = ws_->add(newRecord(name, text::toUpper(key), csvText, base, clock_), true);
   openSession(id, false);
+  if (kind == SampleKind::PersonalReport && session_) {
+    // 各人の現在の報告にも進行中タスクが並ぶよう、デモ用プロジェクトだけに作業状態を用意する。
+    for (const auto& [issue, percent] : std::vector<std::pair<std::string, double>>{
+             {"8", 35}, {"6", 60}, {"7", 20}, {"12", 75}, {"14", 45}}) {
+      (void)session_->setStatus(issue, "In Progress");
+      (void)session_->setProgress(issue, percent);
+    }
+    afterEdit();
+    auto personal = personalFromJson(session_->personal());
+    syncPersonalMembers(personal, session_->issues());
+    for (auto member = personal["members"].begin(); member != personal["members"].end(); ++member) {
+      if (member->contains("enabled") && (*member)["enabled"] == false) continue;
+      for (int weeksAgo = 3; weeksAgo >= 1; --weeksAgo) {
+        const Day date = clock_.today() - weeksAgo * 7;
+        auto draft = makePersonalDraft(personal, session_->issues(), member.key(), date, date - 6, date,
+                                       nullptr, session_->calendar());
+        if (!draft) continue;
+        auto& tasks = (*draft)["tasks"];
+        for (std::size_t i = 0; i < tasks.size(); ++i) {
+          const std::string status = tasks[i].value("status", std::string{});
+          const double actual = status == "Done" ? 100.0 : std::min(95.0, 15.0 + (3 - weeksAgo) * 25.0 + (i % 3) * 5.0);
+          tasks[i]["actual"] = actual;
+          if (i == 0) tasks[i]["comment"] = weeksAgo == 1 ? "設計レビューの指摘を反映中" : "進捗を確認し、次の作業を整理";
+        }
+        (*draft)["extra"].push_back(Json{{"name", weeksAgo == 1 ? "関連資料の更新" : "調査・関係者との確認"},
+                                           {"status", "In Progress"}, {"comment", "タスク一覧外の作業サンプル"}});
+        if (member.key() == "m2" && weeksAgo == 1) (*draft)["blockers"] = "評価環境の準備待ち。来週前半に確認予定。";
+        if (member.key() == "m3" && weeksAgo == 2) (*draft)["blockers"] = "再現条件を調査中。代替環境で検証しています。";
+        (*draft)["next"] = weeksAgo == 1 ? "レビュー結果を反映して結合確認へ進む" : "設計を固め、実装と検証の準備を進める";
+        (void)savePersonalReport(personal, std::move(*draft), clock_);
+      }
+    }
+    session_->setPersonal(std::move(personal));
+    afterEdit();
+  }
   scheduleSave();
   toast("「" + name + "」を作りました");
   return id;

@@ -1487,7 +1487,7 @@ void drawWelcome(Frame& f, ImVec2 size) {
   UiState& u = f.u;
   const float w = std::min(size.x - u.m.s(40), u.m.s(560));
   ImGui::SetCursorPos(ImVec2((size.x - w) / 2, std::max(u.m.s(40), size.y * 0.18f)));
-  ImGui::BeginChild("##welcome", ImVec2(w, u.m.s(390)), ImGuiChildFlags_Border);
+  ImGui::BeginChild("##welcome", ImVec2(w, u.m.s(430)), ImGuiChildFlags_Border);
   ImGui::PushFont(u.fontLarge);
   ImGui::TextUnformatted(S::kWelcome);
   ImGui::PopFont();
@@ -1503,6 +1503,7 @@ void drawWelcome(Frame& f, ImVec2 size) {
   if (ImGui::Button("空のプロジェクトを作る", bs)) c.createProject(app::SampleKind::Empty, "新しいプロジェクト", "");
   if (ImGui::Button("サンプル（階層デモ）", bs)) c.createProject(app::SampleKind::Hierarchy, "階層デモ（セキュアブート）", "DEV");
   if (ImGui::Button("組込みソフトウェア開発の雛形", bs)) c.createProject(app::SampleKind::EmbeddedSw, "組込みソフトウェア開発", "DEV");
+  if (ImGui::Button("個人報告デモ（3人・過去3週の履歴つき）", bs)) c.createProject(app::SampleKind::PersonalReport, "個人報告デモ", "DEV");
   if (ImGui::Button(S::kImportCsv, bs)) openDialog(f, Dlg::Import);
   ImGui::EndChild();
 }
