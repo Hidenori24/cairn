@@ -231,7 +231,10 @@ bool Session::isCollapsed(const std::string& id) const {
 }
 
 void Session::persist() {
-  if (!readOnly_) recordPersonal(P_.settings.personal, P_.issues, *clock_);
+  if (!readOnly_) {
+    syncPersonalMembers(P_.settings.personal, P_.issues);
+    recordPersonal(P_.settings.personal, P_.issues, *clock_);
+  }
   ++version_;
 }
 void Session::setPersonal(Json data) {
