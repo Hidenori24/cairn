@@ -10,6 +10,7 @@
 #include "roadmap/text.hpp"
 #include "ui/icons.hpp"
 #include "ui/internal.hpp"
+#include "roadmap/personal.hpp"
 
 namespace roadmap::ui {
 
@@ -162,6 +163,19 @@ std::vector<std::string> tipLines(const Session& s, int id) {
   if (r.waited) L.push_back("担当者の別作業待ち");
   if (const BaselineCompare* bc = s.baselineCompare(); bc && static_cast<std::size_t>(id) < bc->entries.size())
     for (const std::string& l : planTipLines(*bc, bc->entries[static_cast<std::size_t>(id)])) L.push_back(l);
+  if (r.leaf && r.prog) {
+    const auto actual = personalPercent(s.personal(), o.id);
+    L.push_back("実績 " + (actual ? csv::fmtNum(*actual) + "%" : "未入力"));
+    if (s.personal().contains("current") && s.personal()["current"].contains(o.id)) {
+      const auto& current = s.personal()["current"][o.id];
+      if (current.contains("at") && current["at"].is_string()) L.push_back("記録 " + current["at"].get<std::string>());
+    }
+    std::optional<double> planned;
+    if (const Baseline* baseline = s.shownBaseline()) for (const auto& item : baseline->items)
+      if (item.id == o.id) { planned = plannedPercent(item, s.baseDay(), s.calendar()); break; }
+    L.push_back("予定 " + (planned ? csv::fmtNum(*planned) + "%（基準日まで）" : "比較なし"));
+    L.push_back("バー内の塗り＝実績、細い印＝予定。±10ポイント以内は通常色");
+  }
   return L;
 }
 
@@ -516,6 +530,10 @@ void drawGanttView(Frame& f, ImVec2 size) {
       default: return u.t->c[bc.index];
     }
   };
+  const bool progressFill = c.uiBool("progress", "fill", false);
+  const bool progressLine = c.uiBool("progress", "line", false);
+  std::map<std::string, const BaselineItem*> progressPlans;
+  if (const Baseline* baseline = s->shownBaseline()) for (const auto& item : baseline->items) progressPlans[item.id] = &item;
   std::string hoverTipId;
   u.planGeom.clear();
   // バーのドラッグ中のプレビュー
@@ -609,6 +627,23 @@ void drawGanttView(Frame& f, ImVec2 size) {
       const ImVec2 a(x0, by0), b(x0 + bw, by1);
       dl->AddRectFilled(a, b, r.done ? withAlpha(bc, 0.45f) : bc, u.m.s(4));
       if (r.prog) hatch(dl, a, b, IM_COL32(255, 255, 255, 90), u.m.s(6));
+      if (r.prog && progressFill) {
+        const auto actual = personalPercent(s->personal(), T.ids[id]);
+        std::optional<double> planned;
+        const auto plan = progressPlans.find(T.ids[id]);
+        if (plan != progressPlans.end()) planned = plannedPercent(*plan->second, base, s->calendar());
+        const int tone = progressTone(actual, planned);
+        const ImU32 col = tone < 0 ? u.t->late : tone > 0 ? u.t->accent : u.t->ink;
+        // 期限の外枠・元の色分けを残し、バー内の帯だけを進捗に使う。
+        const float bandTop = by0 + (by1 - by0) * 0.55f;
+        dl->AddRectFilled(ImVec2(x0 + 1, bandTop), ImVec2(x0 + bw - 1, by1 - 1), withAlpha(u.t->surface, 0.85f));
+        if (actual && *actual > 0) dl->AddRectFilled(ImVec2(x0 + 1, bandTop), ImVec2(x0 + std::max(1.f, bw * static_cast<float>(*actual / 100)), by1 - 1), col);
+        if (planned) {
+          const float px = x0 + bw * static_cast<float>(*planned / 100);
+          dl->AddLine(ImVec2(px, by0 + 1), ImVec2(px, by1 - 1), u.t->surface, u.m.s(3));
+          dl->AddLine(ImVec2(px, by0 + 1), ImVec2(px, by1 - 1), u.t->ink, u.m.s(1));
+        }
+      }
       if (!r.done && r.floatDays < 0) dl->AddRect(a, b, u.t->late, u.m.s(4), 0, 2.0f);
       else if (!r.done && r.floatDays == 0) dl->AddRect(a, b, u.t->tightEdge, u.m.s(4), 0, 2.0f);
       if (r.waited) dashedRect(dl, a, b, u.t->dark ? IM_COL32(230, 233, 238, 255) : IM_COL32(0, 0, 0, 255), u.m.s(3));
@@ -679,6 +714,34 @@ void drawGanttView(Frame& f, ImVec2 size) {
     }
     ImGui::PopID();
     ImGui::PopClipRect();
+  }
+
+  // イナズマ線は固定した計画上の実績位置を結ぶ。比較なしの行では線を切る。
+  if (progressLine) {
+    dl->PushClipRect(tlMin, tlMax, true);
+    std::optional<ImVec2> previous;
+    for (int i = std::max(0, first - 1); i < std::min(static_cast<int>(rows.size()), last + 1); ++i) {
+      const int id = rows[i].id;
+      const auto actual = personalPercent(s->personal(), T.ids[id]);
+      const auto entry = progressPlans.find(T.ids[id]);
+      if (rows[i].isPar || !R[id].prog || T.kind[id] == Kind::Ms || !actual || entry == progressPlans.end() ||
+          !plannedPercent(*entry->second, base, s->calendar())) { previous.reset(); continue; }
+      const auto& plan = *entry->second;
+      const int total = s->calendar().nd(*plan.start, *plan.finish);
+      if (total <= 0) { previous.reset(); continue; }
+      const double elapsed = static_cast<double>(total) * *actual / 100;
+      const int fullDays = static_cast<int>(std::floor(elapsed));
+      const Day day = fullDays >= total ? *plan.finish + 1 : s->calendar().workday(*plan.start - 1, fullDays + 1);
+      const float x = ax.x(day) + ax.px * static_cast<float>(elapsed - fullDays);
+      const ImVec2 point(x, rowY(i) + RH / 2);
+      const int tone = progressTone(actual, plannedPercent(plan, base, s->calendar()));
+      const ImU32 color = tone < 0 ? u.t->late : tone > 0 ? u.t->accent : u.t->ink;
+      if (previous) dl->AddLine(*previous, point, color, u.m.s(1.8f));
+      dl->AddCircleFilled(point, u.m.s(3.5f), u.t->surface);
+      dl->AddCircle(point, u.m.s(3.5f), color, 0, u.m.s(1.8f));
+      previous = point;
+    }
+    dl->PopClipRect();
   }
 
   // ---- 依存の矢印（見える範囲に関係するもの）----

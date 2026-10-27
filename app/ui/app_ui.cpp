@@ -1041,6 +1041,17 @@ void drawToolBar(Frame& f) {
     if (v == View::Gantt) {
       ImGui::SameLine();
       if (iconTextButton(u, "tobase", "calendar", "基準日へ")) u.scrollToBase = true;
+      ImGui::SameLine();
+      const bool progressFill = c.uiBool("progress", "fill", false), progressLine = c.uiBool("progress", "line", false);
+      if (iconTextButton(u, "progress", nullptr, "進捗 ▼", false, progressFill || progressLine)) ImGui::OpenPopup("##progress");
+      if (ImGui::BeginPopup("##progress")) {
+        if (ImGui::MenuItem("バー内の進捗", nullptr, progressFill)) c.setUiSub("progress", "fill", !progressFill);
+        if (ImGui::MenuItem("イナズマ線", nullptr, progressLine)) c.setUiSub("progress", "line", !progressLine);
+        ImGui::TextDisabled("予定は選択した計画と基準日で比較します");
+        ImGui::TextDisabled("実績未入力・計画なしの行では線を切ります");
+        ImGui::TextDisabled("バー内: 実績の塗り / 予定の印。外枠: 期限の余裕");
+        ImGui::EndPopup();
+      }
       // 依存の見せ方（選んだ課題の連鎖をたどる・余裕 0 の連鎖を強調）。どちらかがオンなら押した見た目にする
       ImGui::SameLine();
       const bool depTrace = c.uiBool("dep", "trace", false), depCrit = c.uiBool("dep", "crit", false);
