@@ -23,6 +23,7 @@ add_library(roadmap_core STATIC
   src/commands.cpp
   src/outline.cpp
   src/issue_name.cpp
+  src/personal.cpp
   src/project_io.cpp
   src/filestore.cpp
   src/store.cpp

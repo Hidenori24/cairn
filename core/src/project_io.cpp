@@ -1,4 +1,5 @@
 #include "roadmap/project_io.hpp"
+#include "roadmap/personal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -76,7 +77,7 @@ std::string newProjectId(const IClock& clock) {
 }
 
 namespace {
-const char* const kKnownSettingsKeys[] = {"app", "version", "id", "name", "key", "base", "hol", "scn", "scenarios", "res", "ui", "attachments", "weekly", "weeklyAuto", "baselines", "history", "links", "evm", "v", "csv"};
+const char* const kKnownSettingsKeys[] = {"personal", "personalFile", "app", "version", "id", "name", "key", "base", "hol", "scn", "scenarios", "res", "ui", "attachments", "weekly", "weeklyAuto", "baselines", "history", "links", "evm", "v", "csv"};
 bool isKnownKey(const std::string& k) {
   for (const char* x : kKnownSettingsKeys)
     if (k == x) return true;
@@ -126,6 +127,7 @@ Json settingsToJson(const ProjectRecord& rec) {
   if (!s.baselines.empty()) j["baselines"] = baselinesToJson(s.baselines);
   if (!s.history.empty()) j["history"] = historyToJson(s.history);
   if (!s.evm.isDefault()) j["evm"] = evmSettingsToJson(s.evm);
+  if (!s.personal.empty()) j["personal"] = s.personal;
   if (!s.links.empty()) j["links"] = linksToJson(s.links);
   if (s.unknown.is_object())
     for (auto it = s.unknown.begin(); it != s.unknown.end(); ++it)
@@ -152,6 +154,7 @@ ProjectRecord recordFromSettingsJson(const Json& s, const std::string& csvText, 
     for (const auto& x : s["scenarios"])
       if (x.is_string()) r.scenarios.push_back(x.get<std::string>());
   p.resource = resFrom(s.is_object() && s.contains("res") ? s["res"] : Json());
+  if (s.is_object() && s.contains("personal")) p.personal = personalFromJson(s["personal"]);
   p.ui = withDefaultUi(s.is_object() && s.contains("ui") ? s["ui"] : Json());
   if (s.is_object() && s.contains("attachments")) p.attachments = attachmentsFromJson(s["attachments"]);
   if (s.is_object() && s.contains("weekly")) p.weekly = weeklyFromJson(s["weekly"]);
@@ -229,6 +232,7 @@ Json recordToShareJson(const ProjectRecord& rec) {
   j["scenarios"] = rec.scenarios;
   j["ui"] = s.ui;
   j["res"] = resJson(s.resource);
+  if (!s.personal.empty()) j["personal"] = s.personal;
   j["csv"] = rec.csv;
   return j;
 }
