@@ -28,6 +28,7 @@ void persistDraft(Frame& f) {
   data["drafts"][state.loadedKey] = state.draft;
   f.c.session()->setPersonal(std::move(data));
   f.c.afterEdit();
+  state.sourceVersion = f.c.session()->version();
 }
 void refreshDraft(Frame& f, bool restore) {
   auto& state = f.u.personal;
@@ -35,7 +36,8 @@ void refreshDraft(Frame& f, bool restore) {
   const auto date = parseIso(state.date), from = parseIso(state.from), to = parseIso(state.to);
   if (!date || !from || !to) { state.error = "日付を YYYY-MM-DD で入力してください"; return; }
   const std::string key = personalDraftKey(state.member, *date);
-  const auto data = personalFromJson(s.personal());
+  auto data = personalFromJson(s.personal());
+  syncPersonalMembers(data, s.issues());
   if (restore && data["drafts"].contains(key) && data["drafts"][key].is_object()) {
     state.draft = data["drafts"][key];
     state.from = js(state.draft, "from"); state.to = js(state.draft, "to");
@@ -55,6 +57,7 @@ void refreshDraft(Frame& f, bool restore) {
     state.draft = std::move(*draft);
   }
   state.loadedKey = key; state.error.clear(); state.savedId.clear();
+  state.sourceVersion = s.version();
 }
 bool textField(const char* label, Json& object, const char* key, float height = 0) {
   std::string text = js(object, key);
@@ -338,9 +341,13 @@ void drawPersonalView(Frame& f, ImVec2 size) {
     state.date = state.to = c.clock().todayIso(); state.from = fmtIso(c.clock().today() - 6);
     state.baseline = s->baselines().shown;
   }
-  auto data = personalFromJson(s->personal());
-  syncPersonalMembers(data, s->issues());
-  if (!c.readOnly() && data != s->personal()) { s->setPersonal(data); c.afterEdit(); }
+  auto& data = state.cache;
+  if (state.cacheVersion != s->version() || data.empty()) {
+    data = personalFromJson(s->personal());
+    syncPersonalMembers(data, s->issues());
+    if (!c.readOnly() && data != s->personal()) { s->setPersonal(data); c.afterEdit(); }
+    state.cacheVersion = s->version();
+  }
   if (state.member.empty()) for (auto it = data["members"].begin(); it != data["members"].end(); ++it)
     if (enabled(*it)) { state.member = it.key(); break; }
   ImGui::BeginChild("personal-page", size);
@@ -375,8 +382,13 @@ void drawPersonalView(Frame& f, ImVec2 size) {
       }
     ImGui::EndCombo();
   }
+  if (data["members"].contains(state.member) && !enabled(data["members"][state.member])) {
+    persistDraft(f); state.member.clear(); state.loadedKey.clear(); state.draft = Json::object();
+  }
   if (state.member.empty()) { ImGui::TextWrapped("報告対象者がいません。「報告対象者を管理」で追加または選択してください。"); ImGui::EndChild(); return; }
   if (state.loadedKey.empty()) refreshDraft(f, true);
+  else if (state.sourceVersion != s->version() && state.date == js(state.draft, "date") &&
+           state.from == js(state.draft, "from") && state.to == js(state.draft, "to")) refreshDraft(f, false);
   for (auto pair : {std::pair<const char*, std::string*>{"報告日", &state.date}, {"開始日", &state.from}, {"終了日", &state.to}}) {
     ImGui::SetNextItemWidth(u.m.s(145)); ImGui::InputText(pair.first, pair.second);
   }
@@ -400,12 +412,17 @@ void drawPersonalView(Frame& f, ImVec2 size) {
   ImGui::SameLine(); ImGui::BeginDisabled(c.readOnly());
   if (ImGui::Button("タスクを更新")) refreshDraft(f, false);
   ImGui::SameLine(); if (ImGui::Button("下書きを保存")) { persistDraft(f); c.toast("下書きを保存しました"); }
-  ImGui::SameLine(); if (ImGui::Button("報告を確定・履歴に保存")) {
-    persistDraft(f); auto save = personalFromJson(s->personal());
+  ImGui::SameLine();
+  const bool pendingPeriod = state.date != js(state.draft, "date") || state.from != js(state.draft, "from") || state.to != js(state.draft, "to");
+  ImGui::BeginDisabled(pendingPeriod || !state.error.empty());
+  if (ImGui::Button("報告を確定・履歴に保存")) {
+    refreshDraft(f, false); persistDraft(f); auto save = personalFromJson(s->personal());
     auto id = savePersonalReport(save, state.draft, c.clock());
     if (id) { s->setPersonal(std::move(save)); c.afterEdit(); state.savedId = *id; state.exportIds.insert(*id); c.toast("保存時点の報告を履歴に残しました"); } else state.error = id.error();
   }
   ImGui::EndDisabled();
+  ImGui::EndDisabled();
+  if (pendingPeriod) ImGui::TextDisabled("変更した期間を適用すると報告を確定できます");
   if (c.readOnly()) ImGui::TextDisabled("読み取り専用：閲覧・出力できます。下書きと実績は変更しません。");
   const bool side = state.previous && ImGui::GetContentRegionAvail().x > u.m.s(1050);
   const float right = side ? u.m.s(300) : 0;

@@ -361,7 +361,8 @@ Status Workspace::writeSettingsData(ProjectEntry& e) {
     const std::string folder = joinPath(projectDir(e), "personal-reports");
     if (auto status = fs_.makeDirs(folder); !status) return status;
     const std::string path = joinPath(folder, hash + ".json");
-    if (!fs_.stat(path)) {
+    auto existing = fs_.read(path);
+    if (!existing || sha256Hex(*existing) != hash) {
       if (writeGuard_ && !writeGuard_(e)) return Error{"読み取り専用です"};
       if (auto status = fs_.writeAtomic(path, payload); !status) return status;
     }

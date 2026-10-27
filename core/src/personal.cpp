@@ -43,7 +43,7 @@ void recordPersonal(Json& data, const std::vector<Issue>& issues, const IClock& 
     auto& current = data["current"][issue.id];
     // recorded は進捗入力直後にも変更前と比較できる写し。
     if (!current.is_object()) current = Json::object();
-    if (current.value("deleted", false) || !current.contains("recorded") || current["recorded"] != state) {
+    if ((current.contains("deleted") && current["deleted"] == true) || !current.contains("recorded") || current["recorded"] != state) {
       Json event = state;
       event["at"] = clock.nowDT();
       event["utc"] = clock.isoUtc();

@@ -809,7 +809,7 @@ void drawTopBar(Frame& f) {
     const char* label;
   } tabs[] = {{View::Gantt, "gantt", S::kViewGantt}, {View::Board, "board", S::kViewBoard},
               {View::List, "list", S::kViewList}, {View::Goals, "target", S::kViewGoals}, {View::Stats, "chart", S::kViewStats},
-              {View::Today, "sun", S::kViewToday}, {View::Personal, "users", "個人報告"}};
+              {View::Today, "sun", S::kViewToday}, {View::Personal, "user", "個人報告"}};
   const float searchW = std::clamp(W * 0.25f, u.m.s(180), u.m.s(360));
   float labelledW = searchW + u.m.s(24);
   for (const auto& tab : tabs) labelledW += ImGui::CalcTextSize(tab.label).x + u.m.s(42);

@@ -256,7 +256,8 @@ struct UiState {
 
   struct PersonalEditor {
     std::string project, member, date, from, to, loadedKey, baseline, newName, error, savedId;
-    Json draft = Json::object();
+    Json draft = Json::object(), cache = Json::object();
+    std::uint64_t cacheVersion = 0, sourceVersion = 0;
     bool previous = true, history = false;
     std::string historyId, historyDay;
     int historyOffset = 0;
