@@ -8,6 +8,7 @@
 
 namespace roadmap::ui {
 namespace {
+using PersonalCard = UiState::PersonalEditor::Card;
 std::string js(const Json& j, const char* key) {
   return j.is_object() && j.contains(key) && j[key].is_string() ? j[key].get<std::string>() : "";
 }
@@ -21,44 +22,46 @@ std::string percent(const Json& j, const char* key) {
   return value ? csv::fmtNum(*value) + "%" : "—";
 }
 bool enabled(const Json& member) { return !member.contains("enabled") || member["enabled"] != false; }
-void persistDraft(Frame& f) {
-  auto& state = f.u.personal;
-  if (f.c.readOnly() || state.loadedKey.empty() || state.draft.empty()) return;
+void persistDraft(Frame& f, PersonalCard& card) {
+  if (f.c.readOnly() || card.loadedKey.empty() || card.draft.empty()) return;
   auto data = personalFromJson(f.c.session()->personal());
-  data["drafts"][state.loadedKey] = state.draft;
+  data["drafts"][card.loadedKey] = card.draft;
   f.c.session()->setPersonal(std::move(data));
   f.c.afterEdit();
-  state.sourceVersion = f.c.session()->version();
 }
-void refreshDraft(Frame& f, bool restore) {
+void refreshDraft(Frame& f, const std::string& member, PersonalCard& card, bool restore) {
   auto& state = f.u.personal;
   Session& s = *f.c.session();
   const auto date = parseIso(state.date), from = parseIso(state.from), to = parseIso(state.to);
-  if (!date || !from || !to) { state.error = "日付を YYYY-MM-DD で入力してください"; return; }
-  const std::string key = personalDraftKey(state.member, *date);
+  if (!date || !from || !to) { card.error = "日付を YYYY-MM-DD で入力してください"; return; }
+  const std::string key = personalDraftKey(member, *date);
   auto data = personalFromJson(s.personal());
   syncPersonalMembers(data, s.issues());
   if (restore && data["drafts"].contains(key) && data["drafts"][key].is_object()) {
-    state.draft = data["drafts"][key];
-    state.from = js(state.draft, "from"); state.to = js(state.draft, "to");
-    state.baseline = js(state.draft, "baselineId");
+    card.draft = data["drafts"][key];
   } else {
     const Baseline* baseline = nullptr;
     for (const auto& b : s.baselines().list) if (b.id == state.baseline) baseline = &b;
-    const auto name = data["members"].contains(state.member) ? js(data["members"][state.member], "name") : "";
-    auto draft = makePersonalDraft(data, s.issues(), state.member, *date, *from, *to, baseline, s.calendar(), f.c.weeklyMemberNotes(name));
-    if (!draft) { state.error = draft.error(); return; }
-    if (key == state.loadedKey && state.draft.is_object()) {
-      for (const char* field : {"extra", "blockers", "next"}) if (state.draft.contains(field)) (*draft)[field] = state.draft[field];
-      if (state.draft.contains("tasks") && state.draft["tasks"].is_array())
-        for (auto& task : (*draft)["tasks"]) for (const auto& old : state.draft["tasks"])
+    const auto name = data["members"].contains(member) ? js(data["members"][member], "name") : "";
+    auto draft = makePersonalDraft(data, s.issues(), member, *date, *from, *to, baseline, s.calendar(), f.c.weeklyMemberNotes(name));
+    if (!draft) { card.error = draft.error(); return; }
+    if (key == card.loadedKey && card.draft.is_object()) {
+      for (const char* field : {"extra", "blockers", "next"}) if (card.draft.contains(field)) (*draft)[field] = card.draft[field];
+      if (card.draft.contains("tasks") && card.draft["tasks"].is_array())
+        for (auto& task : (*draft)["tasks"]) for (const auto& old : card.draft["tasks"])
           if (js(old, "id") == js(task, "id")) task["comment"] = js(old, "comment");
     }
-    state.draft = std::move(*draft);
+    card.draft = std::move(*draft);
   }
-  state.loadedKey = key; state.error.clear(); state.savedId.clear();
-  state.sourceVersion = s.version();
-  persistDraft(f);
+  card.loadedKey = key; card.error.clear(); card.savedId.clear();
+  if (!f.c.readOnly()) {
+    auto latest = personalFromJson(s.personal());
+    if (!latest["drafts"].contains(key) || latest["drafts"][key] != card.draft) {
+      latest["drafts"][key] = card.draft;
+      s.setPersonal(std::move(latest));
+      f.c.afterEdit();
+    }
+  }
 }
 bool textField(const char* label, Json& object, const char* key, float height = 0) {
   std::string text = js(object, key);
@@ -161,7 +164,7 @@ bool taskRows(Frame& f, Json& report, bool extra) {
   const auto& m = f.u.m;
   std::size_t lines = tasks.size() + 1;
   for (std::size_t i = 0; i < tasks.size(); ++i)
-    if (!js(tasks[i], "comment").empty() || f.u.personal.comments.count(std::string(key) + std::to_string(i))) ++lines;
+    if (!js(tasks[i], "comment").empty() || f.u.personal.comments.count(f.u.personal.member + ":" + key + std::to_string(i))) ++lines;
   const float rowHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().CellPadding.y * 2;
   const float tableHeight = std::min(m.s(extra ? 240.f : 380.f), rowHeight * static_cast<float>(lines) + ImGui::GetStyle().ScrollbarSize + m.s(6));
   if (ImGui::BeginTable(key, 6, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY,
@@ -215,7 +218,7 @@ bool taskRows(Frame& f, Json& report, bool extra) {
       } else ImGui::TextUnformatted(percent(task, "actual").c_str());
       ImGui::TableNextColumn(); ImGui::TextUnformatted(percent(task, "previous").c_str());
       ImGui::TableNextColumn();
-      const std::string commentKey = std::string(key) + std::to_string(i);
+      const std::string commentKey = f.u.personal.member + ":" + key + std::to_string(i);
       if (ImGui::SmallButton("コメント")) {
         if (f.u.personal.comments.count(commentKey)) f.u.personal.comments.erase(commentKey);
         else f.u.personal.comments.insert(commentKey);
@@ -242,6 +245,36 @@ std::vector<const Json*> memberReports(const Json& data, const std::string& id) 
     return js(*a, "savedUtc") > js(*b, "savedUtc");
   });
   return out;
+}
+void memberHistoryPane(Frame& f, const Json& data, const std::string& member, Day before) {
+  auto& state = f.u.personal;
+  const auto all = memberReports(data, member);
+  std::vector<const Json*> reports;
+  for (const Json* report : all) {
+    const auto day = parseIso(js(*report, "date"));
+    if (day && *day < before) reports.push_back(report);
+  }
+  ImGui::SeparatorText("過去の報告");
+  if (reports.empty()) {
+    state.memberHistory.erase(member);
+    ImGui::TextDisabled("この報告日より前の履歴はありません");
+    return;
+  }
+  auto& selectedId = state.memberHistory[member];
+  std::size_t index = 0;
+  for (; index < reports.size(); ++index) if (js(*reports[index], "id") == selectedId) break;
+  if (index == reports.size()) { index = 0; selectedId = js(*reports.front(), "id"); }
+  ImGui::BeginDisabled(index == 0);
+  if (ImGui::SmallButton("← 新しい")) { --index; selectedId = js(*reports[index], "id"); }
+  ImGui::EndDisabled();
+  ImGui::SameLine();
+  ImGui::TextDisabled("%zu / %zu", index + 1, reports.size());
+  ImGui::SameLine();
+  ImGui::BeginDisabled(index + 1 >= reports.size());
+  if (ImGui::SmallButton("→ 過去へ")) { ++index; selectedId = js(*reports[index], "id"); }
+  ImGui::EndDisabled();
+  ImGui::Separator();
+  snapshotBody(f, *reports[index]);
 }
 void personalHistory(Frame& f, const Json& data) {
   auto& u = f.u; auto& state = u.personal;
@@ -272,7 +305,7 @@ void personalHistory(Frame& f, const Json& data) {
       ImGui::PushID(it.key().c_str()); ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
       avatar(u, js(*it, "name")); ImGui::SameLine(); ImGui::TextWrapped("%s", js(*it, "name").c_str());
       if (!enabled(*it)) ImGui::TextDisabled("対象外・履歴を保持");
-      if (enabled(*it) && ImGui::SmallButton("この人の報告を書く")) { state.member = it.key(); state.loadedKey.clear(); state.history = false; }
+      if (enabled(*it) && ImGui::SmallButton("報告カードへ戻る")) state.history = false;
       for (int col = 0; col < slots; ++col) {
         ImGui::TableSetColumnIndex(col + 1);
         const std::size_t index = static_cast<std::size_t>(state.historyOffset + col);
@@ -361,7 +394,7 @@ void drawPersonalView(Frame& f, ImVec2 size) {
     if (enabled(*it)) { state.member = it.key(); break; }
   ImGui::BeginChild("personal-page", size, ImGuiChildFlags_AlwaysUseWindowPadding);
   ImGui::SeparatorText("個人報告");
-  if (ImGui::Button(state.history ? "報告を書く" : "保存した報告・履歴を見る")) { persistDraft(f); state.history = !state.history; }
+  if (ImGui::Button(state.history ? "報告カードへ戻る" : "保存した報告・履歴を見る")) state.history = !state.history;
   exportPanel(f, data);
   if (state.history) { personalHistory(f, data); ImGui::EndChild(); return; }
   if (ImGui::CollapsingHeader("報告対象者を管理")) {
@@ -387,22 +420,9 @@ void drawPersonalView(Frame& f, ImVec2 size) {
     }
     ImGui::EndDisabled();
   }
-  const std::string name = data["members"].contains(state.member) ? js(data["members"][state.member], "name") : "対象者を選択";
-  ImGui::SetNextItemWidth(u.m.s(200));
-  if (ImGui::BeginCombo("対象者", name.c_str())) {
-    for (auto it = data["members"].begin(); it != data["members"].end(); ++it) if (enabled(*it))
-      if (ImGui::Selectable(js(*it, "name").c_str(), state.member == it.key())) {
-        persistDraft(f); state.member = it.key(); state.loadedKey.clear();
-      }
-    ImGui::EndCombo();
-  }
-  if (data["members"].contains(state.member) && !enabled(data["members"][state.member])) {
-    persistDraft(f); state.member.clear(); state.loadedKey.clear(); state.draft = Json::object();
-  }
-  if (state.member.empty()) { ImGui::TextWrapped("報告対象者がいません。「報告対象者を管理」で追加または選択してください。"); ImGui::EndChild(); return; }
-  if (state.loadedKey.empty()) refreshDraft(f, true);
-  else if (state.sourceVersion != s->version() && state.date == js(state.draft, "date") &&
-           state.from == js(state.draft, "from") && state.to == js(state.draft, "to")) refreshDraft(f, false);
+  bool anyMember = false;
+  for (auto it = data["members"].begin(); it != data["members"].end(); ++it) anyMember |= enabled(*it);
+  if (!anyMember) { ImGui::TextWrapped("報告対象者がいません。「報告対象者を管理」で追加または選択してください。"); ImGui::EndChild(); return; }
   const bool wideDates = ImGui::GetContentRegionAvail().x >= u.m.s(650);
   int dateIndex = 0;
   for (auto pair : {std::pair<const char*, std::string*>{"報告日", &state.date}, {"開始日", &state.from}, {"終了日", &state.to}}) {
@@ -416,65 +436,90 @@ void drawPersonalView(Frame& f, ImVec2 size) {
   if (ImGui::Button("14日間")) {
     if (auto day = parseIso(state.date)) { state.from = fmtIso(*day - 13); state.to = state.date; }
   }
-  ImGui::SameLine(); if (ImGui::Button("期間を適用 / 下書きを開く")) { persistDraft(f); refreshDraft(f, state.loadedKey != state.member + ":" + state.date); }
+  ImGui::SameLine(); bool applyPeriod = ImGui::Button("期間を全員に適用");
   ImGui::SetNextItemWidth(u.m.s(280));
   std::string baselineName = "ベースラインなし（予定率は比較しません）";
   for (const auto& b : s->baselines().list) if (b.id == state.baseline) baselineName = b.name;
   if (ImGui::BeginCombo("予定の基準", baselineName.c_str())) {
-    if (ImGui::Selectable("比較しない", state.baseline.empty())) { state.baseline.clear(); refreshDraft(f, false); }
-    for (const auto& b : s->baselines().list) if (ImGui::Selectable(b.name.c_str(), state.baseline == b.id)) { state.baseline = b.id; refreshDraft(f, false); }
+    if (ImGui::Selectable("比較しない", state.baseline.empty())) { state.baseline.clear(); applyPeriod = true; }
+    for (const auto& b : s->baselines().list) if (ImGui::Selectable(b.name.c_str(), state.baseline == b.id)) { state.baseline = b.id; applyPeriod = true; }
     ImGui::EndCombo();
   }
-  ImGui::TextWrapped("実績は任意入力。予定との差が±10ポイント以内は通常色、遅れは赤、先行は青。");
-  if (!state.error.empty()) ImGui::TextWrapped("%s", state.error.c_str());
-  if (state.draft.empty()) { ImGui::EndChild(); return; }
-  ImGui::TextDisabled("表示中の期間: %s 〜 %s / 報告日 %s", js(state.draft, "from").c_str(), js(state.draft, "to").c_str(), js(state.draft, "date").c_str());
-  ImGui::Checkbox("前回を表示", &state.previous);
-  ImGui::SameLine(); ImGui::BeginDisabled(c.readOnly());
-  if (ImGui::Button("タスクを更新")) refreshDraft(f, false);
-  ImGui::SameLine(); if (ImGui::Button("下書きを保存")) { persistDraft(f); c.toast("下書きを保存しました"); }
-  ImGui::SameLine();
-  const bool pendingPeriod = state.date != js(state.draft, "date") || state.from != js(state.draft, "from") || state.to != js(state.draft, "to");
-  ImGui::BeginDisabled(pendingPeriod || !state.error.empty());
-  const bool saveSnapshot = ImGui::Button("報告を確定・履歴に保存");
-  ImGui::EndDisabled();
-  ImGui::EndDisabled();
-  if (pendingPeriod) ImGui::TextDisabled("変更した期間を適用すると報告を確定できます");
+  ImGui::TextWrapped("実績は任意入力。予定との差が±10ポイント以内は通常色、遅れは赤、先行は青。カードを上から見て、右の「→」で過去の報告へ進めます。");
   if (c.readOnly()) ImGui::TextDisabled("読み取り専用：閲覧・出力できます。下書きと実績は変更しません。");
-  const bool side = state.previous && ImGui::GetContentRegionAvail().x > u.m.s(1050);
-  const float right = side ? u.m.s(300) : 0;
-  ImGui::BeginChild("personal-editor", ImVec2(ImGui::GetContentRegionAvail().x - right, 0));
-  ImGui::BeginDisabled(c.readOnly());
-  bool changed = taskRows(f, state.draft, false);
-  if (state.draft["tasks"].empty()) ImGui::TextDisabled("この期間の完了タスク・進行中タスクはありません");
-  ImGui::SeparatorText("タスク外の仕事");
-  changed |= taskRows(f, state.draft, true);
-  if (ImGui::Button("仕事を追加")) { state.draft["extra"].push_back(Json{{"name", ""}, {"status", "In Progress"}, {"comment", ""}}); changed = true; }
-  ImGui::SeparatorText("困りごと（任意）"); changed |= textField("##blockers", state.draft, "blockers", u.m.s(70));
-  ImGui::SeparatorText("次の期間の予定（任意）"); changed |= textField("##next", state.draft, "next", u.m.s(70));
-  ImGui::EndDisabled();
-  if (changed) persistDraft(f);
-  if (saveSnapshot && !c.readOnly()) {
-    refreshDraft(f, false);
-    persistDraft(f);
-    auto save = personalFromJson(s->personal());
-    auto id = savePersonalReport(save, state.draft, c.clock());
-    if (id) {
-      s->setPersonal(std::move(save)); c.afterEdit(); state.sourceVersion = s->version();
-      state.savedId = *id; state.exportIds.insert(*id); c.toast("保存時点の報告を履歴に残しました");
-    } else state.error = id.error();
-  }
-  if (!side && state.previous && ImGui::CollapsingHeader("前回の報告")) {
-    const auto* previous = previousPersonalReport(s->personal(), state.member, parseIso(js(state.draft, "date")).value_or(c.clock().today()));
-    if (previous) snapshotBody(f, *previous); else ImGui::TextDisabled("前回の報告はありません");
-  }
-  ImGui::EndChild();
-  if (side) {
-    ImGui::SameLine(); ImGui::BeginChild("personal-previous", ImVec2(0, 0), ImGuiChildFlags_Border);
-    ImGui::SeparatorText("前回の報告");
-    const auto* previous = previousPersonalReport(s->personal(), state.member, parseIso(js(state.draft, "date")).value_or(c.clock().today()));
-    if (previous) snapshotBody(f, *previous); else ImGui::TextDisabled("前回の報告はありません");
-    ImGui::EndChild();
+  if (ImGui::BeginTable("personal-member-cards", 1, ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX,
+                        ImVec2(0, 0))) {
+    ImGui::TableSetupColumn("担当者", ImGuiTableColumnFlags_WidthStretch);
+    for (auto it = data["members"].begin(); it != data["members"].end(); ++it) {
+      if (!enabled(*it)) continue;
+      const std::string member = it.key();
+      state.member = member;
+      auto& card = state.cards[member];
+      ImGui::PushID(member.c_str());
+      const auto date = parseIso(state.date);
+      const std::string key = date ? personalDraftKey(member, *date) : std::string{};
+      if (!key.empty() && applyPeriod) {
+        if (card.loadedKey != key) {
+          auto latest = personalFromJson(s->personal());
+          card.draft = latest["drafts"].contains(key) && latest["drafts"][key].is_object()
+                           ? latest["drafts"][key] : Json::object();
+          card.loadedKey = key;
+        }
+        refreshDraft(f, member, card, false);
+      } else if (!key.empty() && card.loadedKey != key) refreshDraft(f, member, card, true);
+      ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
+      avatar(u, js(*it, "name")); ImGui::SameLine();
+      ImGui::TextUnformatted(js(*it, "name").c_str());
+      if (!card.draft.empty()) {
+        const int taskCount = card.draft.contains("tasks") && card.draft["tasks"].is_array() ? static_cast<int>(card.draft["tasks"].size()) : 0;
+        ImGui::SameLine(); ImGui::TextDisabled("課題 %d 件", taskCount);
+      }
+      if (!card.error.empty()) ImGui::TextWrapped("%s", card.error.c_str());
+      else if (card.draft.empty()) ImGui::TextDisabled("報告の下書きを読み込めませんでした");
+      else {
+        const bool pendingPeriod = state.date != js(card.draft, "date") || state.from != js(card.draft, "from") || state.to != js(card.draft, "to");
+        ImGui::TextDisabled("%s 〜 %s / 報告日 %s", js(card.draft, "from").c_str(), js(card.draft, "to").c_str(), js(card.draft, "date").c_str());
+        if (pendingPeriod) ImGui::TextDisabled("期間を全員に適用すると、このカードの対象期間も更新されます");
+        if (ImGui::BeginTable("member-card-columns", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)) {
+          ImGui::TableSetupColumn("入力", ImGuiTableColumnFlags_WidthStretch, 2.15f);
+          ImGui::TableSetupColumn("履歴", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+          ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
+          ImGui::BeginDisabled(c.readOnly());
+          if (ImGui::SmallButton("タスクを更新")) refreshDraft(f, member, card, false);
+          ImGui::SameLine();
+          const bool saveDraft = ImGui::SmallButton("下書きを保存");
+          ImGui::SameLine();
+          ImGui::BeginDisabled(pendingPeriod || !card.error.empty());
+          const bool saveSnapshot = ImGui::SmallButton("報告を確定・履歴に保存");
+          ImGui::EndDisabled();
+          bool changed = taskRows(f, card.draft, false);
+          if (card.draft["tasks"].empty()) ImGui::TextDisabled("この期間の完了タスク・進行中タスクはありません");
+          ImGui::SeparatorText("タスク外の仕事");
+          changed |= taskRows(f, card.draft, true);
+          if (ImGui::Button("仕事を追加")) { card.draft["extra"].push_back(Json{{"name", ""}, {"status", "In Progress"}, {"comment", ""}}); changed = true; }
+          ImGui::SeparatorText("困りごと（任意）"); changed |= textField("##blockers", card.draft, "blockers", u.m.s(60));
+          ImGui::SeparatorText("次の期間の予定（任意）"); changed |= textField("##next", card.draft, "next", u.m.s(60));
+          ImGui::EndDisabled();
+          if (changed) persistDraft(f, card);
+          if (saveDraft && !c.readOnly()) { persistDraft(f, card); c.toast("下書きを保存しました"); }
+          if (saveSnapshot && !c.readOnly()) {
+            refreshDraft(f, member, card, false);
+            persistDraft(f, card);
+            auto save = personalFromJson(s->personal());
+            auto id = savePersonalReport(save, card.draft, c.clock());
+            if (id) {
+              s->setPersonal(std::move(save)); c.afterEdit();
+              card.savedId = *id; state.exportIds.insert(*id); c.toast("保存時点の報告を履歴に残しました");
+            } else card.error = id.error();
+          }
+          ImGui::TableSetColumnIndex(1);
+          memberHistoryPane(f, s->personal(), member, date.value_or(c.clock().today()));
+          ImGui::EndTable();
+        }
+      }
+      ImGui::PopID();
+    }
+    ImGui::EndTable();
   }
   ImGui::EndChild();
 }

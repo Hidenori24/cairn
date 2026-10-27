@@ -38,7 +38,7 @@ struct Toast {
   std::int64_t expiresAt = 0;
 };
 
-enum class SampleKind { Empty, Hierarchy, EmbeddedSw };
+enum class SampleKind { Empty, Hierarchy, EmbeddedSw, PersonalReport };
 enum class ImportMode { New, Replace };
 
 struct ImportOutcome {
