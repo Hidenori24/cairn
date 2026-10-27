@@ -13,6 +13,12 @@ static void normalize(Json& out) {
 Json personalFromJson(const Json& source) {
   Json out = source;
   normalize(out);
+  for (const char* group : {"members", "reports", "drafts"}) {
+    auto& entries = out[group];
+    for (auto it = entries.begin(); it != entries.end();) {
+      if (!it->is_object()) it = entries.erase(it); else ++it;
+    }
+  }
   return out;
 }
 std::optional<double> personalPercent(const Json& data, const std::string& id) {
@@ -48,7 +54,11 @@ void recordPersonal(Json& data, const std::vector<Issue>& issues, const IClock& 
       event["at"] = clock.nowDT();
       event["utc"] = clock.isoUtc();
       data["history"].push_back(event);
+      const bool percentChanged = !current.contains("recorded") || !current["recorded"].is_object() ||
+          !current["recorded"].contains("percent") || current["recorded"]["percent"] != state["percent"];
+      const Json progressAt = percentChanged ? Json(clock.nowDT()) : current.value("progressAt", Json(nullptr));
       current = state;
+      current["progressAt"] = progressAt;
       current["at"] = clock.nowDT();
       current["recorded"] = state;
     }
@@ -145,7 +155,10 @@ Result<Json> makePersonalDraft(const Json& data, const std::vector<Issue>& issue
     {"from", fmtIso(from)}, {"to", fmtIso(to)}, {"baselineId", baseline ? baseline->id : ""},
     {"baselineName", baseline ? baseline->name : ""}, {"tasks", Json::array()}, {"extra", Json::array()},
     {"blockers", ""}, {"next", ""}};
-  if (!previous && !legacyNotes.empty()) report["extra"].push_back(Json{{"name", "以前の担当者別所感"}, {"status", "In Progress"}, {"comment", legacyNotes}});
+  bool hasReportOrDraft = false;
+  for (const char* group : {"reports", "drafts"}) if (data.contains(group) && data[group].is_object())
+    for (const auto& existing : data[group]) if (str(existing, "memberId") == member) hasReportOrDraft = true;
+  if (!hasReportOrDraft && !legacyNotes.empty()) report["extra"].push_back(Json{{"name", "以前の担当者別所感"}, {"status", "In Progress"}, {"comment", legacyNotes}});
   std::set<std::string> parents;
   for (const auto& task : issues) if (!task.parent.empty()) parents.insert(task.parent);
   for (const auto& task : issues) {

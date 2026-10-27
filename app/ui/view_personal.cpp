@@ -58,6 +58,7 @@ void refreshDraft(Frame& f, bool restore) {
   }
   state.loadedKey = key; state.error.clear(); state.savedId.clear();
   state.sourceVersion = s.version();
+  persistDraft(f);
 }
 bool textField(const char* label, Json& object, const char* key, float height = 0) {
   std::string text = js(object, key);
@@ -158,8 +159,14 @@ bool taskRows(Frame& f, Json& report, bool extra) {
   if (!report.contains(key) || !report[key].is_array()) report[key] = Json::array();
   auto& tasks = report[key];
   const auto& m = f.u.m;
-  if (ImGui::BeginTable(key, 6, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollX,
-                        ImVec2(0, 0), m.s(700))) {
+  std::size_t lines = tasks.size() + 1;
+  for (std::size_t i = 0; i < tasks.size(); ++i)
+    if (!js(tasks[i], "comment").empty() || f.u.personal.comments.count(std::string(key) + std::to_string(i))) ++lines;
+  const float rowHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().CellPadding.y * 2;
+  const float tableHeight = std::min(m.s(extra ? 240.f : 380.f), rowHeight * static_cast<float>(lines) + ImGui::GetStyle().ScrollbarSize + m.s(6));
+  if (ImGui::BeginTable(key, 6, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY,
+                        ImVec2(0, tableHeight), std::max(m.s(700), ImGui::GetContentRegionAvail().x))) {
+    ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableSetupColumn("課題", ImGuiTableColumnFlags_WidthStretch, 3);
     for (const char* name : {"状態", "予定", "実績", "前回", "コメント"}) ImGui::TableSetupColumn(name, ImGuiTableColumnFlags_WidthStretch, 1);
     ImGui::TableHeadersRow();
@@ -229,6 +236,7 @@ bool taskRows(Frame& f, Json& report, bool extra) {
 std::vector<const Json*> memberReports(const Json& data, const std::string& id) {
   std::vector<const Json*> out;
   for (const auto& report : data["reports"]) if (js(report, "memberId") == id) out.push_back(&report);
+  std::reverse(out.begin(), out.end());
   std::stable_sort(out.begin(), out.end(), [](const Json* a, const Json* b) {
     if (js(*a, "date") != js(*b, "date")) return js(*a, "date") > js(*b, "date");
     return js(*a, "savedUtc") > js(*b, "savedUtc");
@@ -240,7 +248,7 @@ void personalHistory(Frame& f, const Json& data) {
   std::size_t count = 0;
   for (auto it = data["members"].begin(); it != data["members"].end(); ++it) count = std::max(count, memberReports(data, it.key()).size());
   if (!count) { ImGui::TextDisabled("まだ保存された報告はありません。編集ページで報告を確定すると、ここに残ります。"); return; }
-  ImGui::TextDisabled("左端は担当者、右はその人の報告を新しい順に表示します。横にスクロールして参照できます。");
+  ImGui::TextWrapped("左端は担当者、右はその人の報告を新しい順に表示します。横にスクロールして参照できます。");
   ImGui::BeginDisabled(state.historyOffset == 0);
   if (ImGui::Button("新しい報告へ")) state.historyOffset = std::max(0, state.historyOffset - 8);
   ImGui::EndDisabled(); ImGui::SameLine();
@@ -249,7 +257,7 @@ void personalHistory(Frame& f, const Json& data) {
   ImGui::EndDisabled();
   const int slots = std::min(8, static_cast<int>(count) - state.historyOffset);
   if (ImGui::BeginTable("personal-history", slots + 1, ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
-       ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg, ImGui::GetContentRegionAvail(), u.m.s(180 + slots * 270.f))) {
+       ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg, ImGui::GetContentRegionAvail(), u.m.s(180.f + static_cast<float>(slots) * 270.f))) {
     ImGui::TableSetupScrollFreeze(1, 1);
     ImGui::TableSetupColumn("担当者", ImGuiTableColumnFlags_WidthFixed, u.m.s(180));
     for (int col = 0; col < slots; ++col) {
@@ -290,6 +298,7 @@ void personalHistory(Frame& f, const Json& data) {
         ImGui::Text("完了 %d / 進行中 %d", done, progress);
         ImGui::TextDisabled("%s", ellipsize(excerpt, box.x - u.m.s(16)).c_str());
         ImGui::SetCursorScreenPos(after);
+        ImGui::Dummy(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImVec2(u.m.s(850), u.m.s(650)), ImGuiCond_Appearing);
         if (ImGui::BeginPopupModal("報告の履歴", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
           if (ImGui::Button("閉じる")) ImGui::CloseCurrentPopup();
@@ -350,7 +359,7 @@ void drawPersonalView(Frame& f, ImVec2 size) {
   }
   if (state.member.empty()) for (auto it = data["members"].begin(); it != data["members"].end(); ++it)
     if (enabled(*it)) { state.member = it.key(); break; }
-  ImGui::BeginChild("personal-page", size);
+  ImGui::BeginChild("personal-page", size, ImGuiChildFlags_AlwaysUseWindowPadding);
   ImGui::SeparatorText("個人報告");
   if (ImGui::Button(state.history ? "報告を書く" : "保存した報告・履歴を見る")) { persistDraft(f); state.history = !state.history; }
   exportPanel(f, data);
@@ -360,11 +369,16 @@ void drawPersonalView(Frame& f, ImVec2 size) {
     for (auto it = data["members"].begin(); it != data["members"].end(); ++it) {
       ImGui::PushID(it.key().c_str()); bool on = enabled(*it);
       if (ImGui::Checkbox("##enabled", &on)) { (*it)["enabled"] = on; s->setPersonal(data); c.afterEdit(); }
-      ImGui::SameLine(); std::string name = js(*it, "name"); ImGui::SetNextItemWidth(u.m.s(230));
-      ImGui::InputText("##name", &name);
+      ImGui::SameLine();
+      const std::string currentName = js(*it, "name");
+      auto [nameIt, inserted] = state.inputs.try_emplace("member:" + it.key(), currentName);
+      (void)inserted;
+      std::string& name = nameIt->second;
+      ImGui::SetNextItemWidth(u.m.s(230)); ImGui::InputText("##name", &name);
       if (ImGui::IsItemDeactivatedAfterEdit()) {
         if (renamePersonalMember(data, it.key(), name)) { s->setPersonal(data); c.afterEdit(); } else c.toast("空欄や既存の担当者名には変更できません");
       }
+      if (!ImGui::IsItemActive() && !ImGui::IsItemDeactivatedAfterEdit()) name = currentName;
       ImGui::PopID();
     }
     ImGui::SetNextItemWidth(u.m.s(230)); ImGui::InputTextWithHint("##new-member", "タスクを持たない人も追加できます", &state.newName);
@@ -389,11 +403,18 @@ void drawPersonalView(Frame& f, ImVec2 size) {
   if (state.loadedKey.empty()) refreshDraft(f, true);
   else if (state.sourceVersion != s->version() && state.date == js(state.draft, "date") &&
            state.from == js(state.draft, "from") && state.to == js(state.draft, "to")) refreshDraft(f, false);
+  const bool wideDates = ImGui::GetContentRegionAvail().x >= u.m.s(650);
+  int dateIndex = 0;
   for (auto pair : {std::pair<const char*, std::string*>{"報告日", &state.date}, {"開始日", &state.from}, {"終了日", &state.to}}) {
+    if (dateIndex++ > 0 && wideDates) ImGui::SameLine(0, u.m.s(20));
     ImGui::SetNextItemWidth(u.m.s(145)); ImGui::InputText(pair.first, pair.second);
   }
   if (ImGui::Button("報告日までの7日間")) {
     if (auto day = parseIso(state.date)) { state.from = fmtIso(*day - 6); state.to = state.date; }
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("14日間")) {
+    if (auto day = parseIso(state.date)) { state.from = fmtIso(*day - 13); state.to = state.date; }
   }
   ImGui::SameLine(); if (ImGui::Button("期間を適用 / 下書きを開く")) { persistDraft(f); refreshDraft(f, state.loadedKey != state.member + ":" + state.date); }
   ImGui::SetNextItemWidth(u.m.s(280));
@@ -404,7 +425,7 @@ void drawPersonalView(Frame& f, ImVec2 size) {
     for (const auto& b : s->baselines().list) if (ImGui::Selectable(b.name.c_str(), state.baseline == b.id)) { state.baseline = b.id; refreshDraft(f, false); }
     ImGui::EndCombo();
   }
-  ImGui::TextDisabled("実績は任意入力。予定との差が±10ポイント以内は通常色、遅れは赤、先行は青。");
+  ImGui::TextWrapped("実績は任意入力。予定との差が±10ポイント以内は通常色、遅れは赤、先行は青。");
   if (!state.error.empty()) ImGui::TextWrapped("%s", state.error.c_str());
   if (state.draft.empty()) { ImGui::EndChild(); return; }
   ImGui::TextDisabled("表示中の期間: %s 〜 %s / 報告日 %s", js(state.draft, "from").c_str(), js(state.draft, "to").c_str(), js(state.draft, "date").c_str());
@@ -415,11 +436,7 @@ void drawPersonalView(Frame& f, ImVec2 size) {
   ImGui::SameLine();
   const bool pendingPeriod = state.date != js(state.draft, "date") || state.from != js(state.draft, "from") || state.to != js(state.draft, "to");
   ImGui::BeginDisabled(pendingPeriod || !state.error.empty());
-  if (ImGui::Button("報告を確定・履歴に保存")) {
-    refreshDraft(f, false); persistDraft(f); auto save = personalFromJson(s->personal());
-    auto id = savePersonalReport(save, state.draft, c.clock());
-    if (id) { s->setPersonal(std::move(save)); c.afterEdit(); state.savedId = *id; state.exportIds.insert(*id); c.toast("保存時点の報告を履歴に残しました"); } else state.error = id.error();
-  }
+  const bool saveSnapshot = ImGui::Button("報告を確定・履歴に保存");
   ImGui::EndDisabled();
   ImGui::EndDisabled();
   if (pendingPeriod) ImGui::TextDisabled("変更した期間を適用すると報告を確定できます");
@@ -437,6 +454,16 @@ void drawPersonalView(Frame& f, ImVec2 size) {
   ImGui::SeparatorText("次の期間の予定（任意）"); changed |= textField("##next", state.draft, "next", u.m.s(70));
   ImGui::EndDisabled();
   if (changed) persistDraft(f);
+  if (saveSnapshot && !c.readOnly()) {
+    refreshDraft(f, false);
+    persistDraft(f);
+    auto save = personalFromJson(s->personal());
+    auto id = savePersonalReport(save, state.draft, c.clock());
+    if (id) {
+      s->setPersonal(std::move(save)); c.afterEdit(); state.sourceVersion = s->version();
+      state.savedId = *id; state.exportIds.insert(*id); c.toast("保存時点の報告を履歴に残しました");
+    } else state.error = id.error();
+  }
   if (!side && state.previous && ImGui::CollapsingHeader("前回の報告")) {
     const auto* previous = previousPersonalReport(s->personal(), state.member, parseIso(js(state.draft, "date")).value_or(c.clock().today()));
     if (previous) snapshotBody(f, *previous); else ImGui::TextDisabled("前回の報告はありません");

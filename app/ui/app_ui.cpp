@@ -577,6 +577,7 @@ void drawTopBar(Frame& f) {
       {"view-gantt", S::kViewGantt, "gantt", s != nullptr}, {"view-board", S::kViewBoard, "board", s != nullptr},
       {"view-list", S::kViewList, "list", s != nullptr}, {"view-goals", S::kViewGoals, "target", s != nullptr},
       {"view-stats", S::kViewStats, "chart", s != nullptr}, {"view-today", S::kViewToday, "sun", s != nullptr},
+      {"view-personal", "個人報告", "user", s != nullptr},
       {"add-issue", S::kAddIssue, "plus", s != nullptr && !c.readOnly()},
       {"html", "HTML レポート", "download", s && s->tree()}, {"weekly", "週次レポート", "calendar", s && s->tree()},
       {"csv", "CSV・共有用 JSON", "download", s != nullptr}, {"workload", "担当者の負荷", "chart", s != nullptr}};
@@ -642,6 +643,7 @@ void drawTopBar(Frame& f) {
       else if (id == "view-goals") c.setView(View::Goals);
       else if (id == "view-stats") c.setView(View::Stats);
       else if (id == "view-today") c.setView(View::Today);
+      else if (id == "view-personal") c.setView(View::Personal);
       else if (id == "add-issue") {
         const std::string issue = c.createIssue("", "");
         if (!issue.empty()) beginEdit(f, issue, EditField::Name, true);
@@ -830,8 +832,8 @@ void drawTopBar(Frame& f) {
     ImGui::SameLine(0, u.m.s(2));
   }
   ImGui::SameLine(0, u.m.s(12));
-  // 絞り込み欄
-  {
+  // タスク用の検索は個人報告では使わない。
+  if (cur != View::Personal) {
     ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, by));
     const float w = searchW;
     const ImVec2 q = ImGui::GetCursorScreenPos();
@@ -1622,6 +1624,7 @@ void handleKeys(Frame& f) {
     if (ImGui::IsKeyPressed(ImGuiKey_4, false)) c.setView(View::Goals);
     if (ImGui::IsKeyPressed(ImGuiKey_5, false)) c.setView(View::Stats);
     if (ImGui::IsKeyPressed(ImGuiKey_6, false)) c.setView(View::Today);
+    if (ImGui::IsKeyPressed(ImGuiKey_7, false)) c.setView(View::Personal);
   }
   for (ImWchar ch : io.InputQueueCharacters) {
     if (ch == '/') u.focusSearch = true;
@@ -1719,6 +1722,12 @@ void collectGlyphs(const AppController& c, std::set<ImWchar>& out) {
       add(cm.text);
     }
   }
+  // タスク外の仕事や過去の報告だけに含まれる文字もフォントへ追加する。
+  const auto personalText = [&](const auto& self, const Json& node) -> void {
+    if (node.is_string()) add(node.get<std::string>());
+    else if (node.is_object() || node.is_array()) for (const auto& child : node) self(self, child);
+  };
+  personalText(personalText, s->personal());
   for (const auto& w : s->allWarns()) add(w);
   for (const auto& [id, list] : s->links())  // 関連リンクの表示名・場所（日本語のパスなど。Issue #60）
     for (const auto& l : list) {
@@ -1779,16 +1788,22 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
   ImGui::PushFont(u.fontBody);
 
   drawTopBar(f);
-  drawToolBar(f);
-  drawActiveFilters(f);
+  if (c.view() != View::Personal) {
+    drawToolBar(f);
+    drawActiveFilters(f);
+  }
   drawBanners(f);
 
   const ImVec2 area = ImGui::GetContentRegionAvail();
   const ImVec2 origin = ImGui::GetCursorScreenPos();
   Session* s = c.session();
-  const float detailW = (u.detailOpen && s) ? std::min(u.m.s(400), area.x * 0.45f) : 0;
+  u.detailVisibility = motionStep(u.detailVisibility, u.detailOpen && s, ImGui::GetIO().DeltaTime, u.m.animate);
+  const float detailW = (s && u.detailVisibility > 0.01f) ? std::min(u.m.s(400), area.x * 0.45f) : 0;
+  if (u.paintedView != c.view()) { u.paintedView = c.view(); u.viewFade = 0; }
+  u.viewFade = motionStep(u.viewFade, true, ImGui::GetIO().DeltaTime, u.m.animate);
   const ImVec2 mainSize(area.x - detailW, area.y);
   ImGui::BeginChild("##main", mainSize, ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+  ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * (0.85f + 0.15f * u.viewFade));
   if (!s) {
     drawWelcome(f, mainSize);
   } else {
@@ -1802,6 +1817,7 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
       default: drawGanttView(f, mainSize); break;
     }
   }
+  ImGui::PopStyleVar();
   if (u.linkDrag.active && (!s || c.view() != u.linkDrag.view)) u.linkDrag = {};  // 始めたビューが描かれない間にドラッグを残さない
   if ((u.arrowDrag.pending || u.arrowDrag.active) && (!s || c.view() != View::Gantt)) u.arrowDrag = {};
   ImGui::EndChild();
@@ -1809,7 +1825,11 @@ void drawApp(AppController& c, UiState& u, IPlatform& p) {
     ImGui::SameLine(0, 0);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, v4(u.t->surface));
     ImGui::BeginChild("##detail", ImVec2(detailW, area.y), ImGuiChildFlags_Border);
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * u.detailVisibility);
+    ImGui::BeginDisabled(!u.detailOpen);
     drawDetailPanel(f, ImVec2(detailW, area.y));
+    ImGui::EndDisabled();
+    ImGui::PopStyleVar();
     ImGui::EndChild();
     ImGui::PopStyleColor();
   }

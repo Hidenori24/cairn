@@ -168,7 +168,7 @@ std::vector<std::string> tipLines(const Session& s, int id) {
     L.push_back("実績 " + (actual ? csv::fmtNum(*actual) + "%" : "未入力"));
     if (s.personal().contains("current") && s.personal()["current"].contains(o.id)) {
       const auto& current = s.personal()["current"][o.id];
-      if (current.contains("at") && current["at"].is_string()) L.push_back("記録 " + current["at"].get<std::string>());
+      if (current.contains("progressAt") && current["progressAt"].is_string()) L.push_back("進捗の記録 " + current["progressAt"].get<std::string>());
     }
     std::optional<double> planned;
     if (const Baseline* baseline = s.shownBaseline()) for (const auto& item : baseline->items)

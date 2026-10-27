@@ -298,7 +298,7 @@ Prefs prefsFromJson(const Json& j) {
   }
   if (j.contains("quickAccess") && j["quickAccess"].is_array()) {
     static const std::vector<std::string> valid = {"view-gantt", "view-board", "view-list", "view-goals", "view-stats",
-                                                    "view-today", "add-issue", "html", "weekly", "csv", "workload"};
+                                                    "view-today", "view-personal", "add-issue", "html", "weekly", "csv", "workload"};
     for (const auto& item : j["quickAccess"]) {
       if (!item.is_string()) continue;
       const auto id = item.get<std::string>();

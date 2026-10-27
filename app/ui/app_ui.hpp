@@ -103,6 +103,8 @@ struct UiState {
   ImFont* fontMono = nullptr;
   ImFont* fontBold = nullptr;
   ImFont* fontLarge = nullptr;
+  float detailVisibility = 0, viewFade = 1;
+  app::View paintedView = app::View::Gantt;
   bool imeComposing = false;       // IME の変換中（プラットフォームが設定）
   int imeCooldown = 0;             // 変換を確定した直後のフレーム数（Enter を無視）
 
