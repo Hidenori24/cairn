@@ -283,7 +283,13 @@ void drawTableRow(Frame& f, const VisibleRow& r, ImVec2 pos, float width, const 
   const bool hov = ImGui::IsMouseHoveringRect(pos, end) && ImGui::IsWindowHovered();
   registerDropTarget(f, id, pos, end);  // ここへファイルをドロップすると添付
   if (sel) dl->AddRectFilled(pos, end, u.t->selbg);
-  else if (hov) dl->AddRectFilled(pos, end, u.t->hover);
+  else if (u.m.modern) {
+    ImGui::PushID(id.c_str());
+    const float fade = hoverAmount(u, "##row-hover", hov);
+    ImGui::PopID();
+    if (fade > 0.001f) dl->AddRectFilled(pos, end, withAlpha(u.t->hover, fade), u.m.s(4));
+  } else if (hov) dl->AddRectFilled(pos, end, u.t->hover);
+  if (u.m.modern && sel) dl->AddRectFilled(pos, ImVec2(pos.x + u.m.s(3), end.y), u.t->accent);
   if (highlight) dl->AddRectFilled(pos, ImVec2(pos.x + u.m.s(3), end.y), u.t->accent);
   if (r.depth == 0 && !flat) dl->AddLine(pos, ImVec2(end.x, pos.y), u.t->line);
   dl->AddLine(ImVec2(pos.x, end.y - 1), ImVec2(end.x, end.y - 1), u.t->rowline);

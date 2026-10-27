@@ -62,7 +62,10 @@ void drawCard(Frame& f, int id, float w, const std::vector<int>& rootIdx, const 
       gCardDrag = {sid, true};
   }
   const bool dragSource = gCardDrag.active && gCardDrag.id == sid;
-  dl->AddRectFilled(p, q, dragSource ? withAlpha(u.t->accentBg, 0.9f) : (sel ? u.t->accentBg : u.t->surface), u.m.s(6));
+  const float hover = hoverAmount(u, "##card-hover", hov);
+  const float radius = u.m.s(u.m.modern ? 10.f : 6.f);
+  if (u.m.modern) dl->AddRectFilled(ImVec2(p.x, p.y + u.m.s(2)), ImVec2(q.x, q.y + u.m.s(2)), withAlpha(u.t->ink, 0.05f + hover * 0.04f), radius);
+  dl->AddRectFilled(p, q, dragSource ? withAlpha(u.t->accentBg, 0.9f) : (sel ? u.t->accentBg : (u.m.modern ? blendColor(u.t->surface, u.t->accentBg, hover * 0.45f) : u.t->surface)), radius);
   dl->AddRect(p, q, dragSource || sel ? u.t->accent : (hov ? u.t->line2 : u.t->line), u.m.s(6), 0, dragSource ? u.m.s(2.5f) : u.m.s(1.f));
   dl->AddRectFilled(p, ImVec2(p.x + u.m.s(3), q.y), u.t->c[rootIdx[id]], u.m.s(6), ImDrawFlags_RoundCornersLeft);
   // 1行目: 種別・表示ID・余裕

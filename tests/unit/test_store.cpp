@@ -787,3 +787,17 @@ TEST_CASE("store: 実際のファイルシステム（StdFileStore）でフォ�
   }
   fs::remove_all(dir);
 }
+
+TEST_CASE("prefs: appearance modes validate and roundtrip independently") {
+  const Prefs defaults = prefsFromJson(Json::object());
+  CHECK(defaults.appearance == "classic");
+  CHECK(defaults.motion == "none");
+  Prefs p = prefsFromJson(Json{{"appearance", "modern"}, {"motion", "subtle"}, {"theme", "dark"}, {"density", "compact"}});
+  const Prefs q = prefsFromJson(prefsToJson(p));
+  CHECK(q.appearance == "modern");
+  CHECK(q.motion == "subtle");
+  CHECK(q.theme == "dark");
+  CHECK(q.density == "compact");
+  CHECK(prefsFromJson(Json{{"appearance", 7}, {"motion", "bad"}}).motion == "none");
+  CHECK(prefsFromJson(Json{{"appearance", "bad"}}).appearance == "classic");
+}

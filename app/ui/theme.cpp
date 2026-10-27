@@ -1,4 +1,6 @@
 #include "ui/theme.hpp"
+#include <algorithm>
+#include <cmath>
 
 #include "roadmap/theme_colors.hpp"
 
@@ -59,6 +61,13 @@ ImU32 withAlpha(ImU32 c, float a) {
   ImVec4 v = v4(c);
   v.w *= a;
   return ImGui::ColorConvertFloat4ToU32(v);
+}
+
+float motionStep(float current, bool target, float seconds, bool enabled) {
+  const float goal = target ? 1.f : 0.f;
+  if (!enabled) return goal;
+  const float weight = 1.f - std::exp(-std::max(0.f, seconds) / 0.045f);
+  return current + (goal - current) * weight;
 }
 
 void applyStyle(const Tokens& t, const Metrics& m) {
@@ -123,6 +132,21 @@ void applyStyle(const Tokens& t, const Metrics& m) {
   c[ImGuiCol_DragDropTarget] = v4(t.accent);
   c[ImGuiCol_NavHighlight] = v4(t.accent);
   c[ImGuiCol_ModalWindowDimBg] = ImVec4(0, 0, 0, t.dark ? 0.55f : 0.35f);
+  if (m.modern) {
+    s.WindowRounding = 12;
+    s.ChildRounding = 10;
+    s.FrameRounding = 8;
+    s.PopupRounding = 10;
+    s.WindowPadding = ImVec2(16, 14);
+    s.FramePadding = ImVec2(10, m.compact ? 3.f : 5.f);
+    s.ItemSpacing = ImVec2(10, m.compact ? 4.f : 7.f);
+    s.FrameBorderSize = 0;
+    c[ImGuiCol_FrameBg] = v4(t.surface2);
+    c[ImGuiCol_Button] = v4(t.surface2);
+    c[ImGuiCol_ButtonHovered] = v4(t.accentBg);
+    c[ImGuiCol_ButtonActive] = v4(t.selbg);
+    c[ImGuiCol_HeaderHovered] = v4(t.accentBg);
+  }
   s.ScaleAllSizes(m.scale);
   ImGui::GetStyle() = s;
 }

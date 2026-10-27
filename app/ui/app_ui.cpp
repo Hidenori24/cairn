@@ -1717,6 +1717,9 @@ void collectGlyphs(const AppController& c, std::set<ImWchar>& out) {
 }
 
 void drawApp(AppController& c, UiState& u, IPlatform& p) {
+  u.m.modern = c.prefs().appearance == "modern";
+  u.m.animate = u.m.modern && c.prefs().motion == "subtle" && !p.reducedMotion();
+  applyStyle(*u.t, u.m);
   Frame f{c, u, p};
   if (u.imeCooldown > 0) --u.imeCooldown;
   // その場編集を始めたが入力欄がまだアクティブでない間に打った文字は、取っておいてアクティブになったら入れる（B13）。

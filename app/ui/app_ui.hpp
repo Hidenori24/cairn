@@ -37,6 +37,7 @@ class IPlatform {
   // フォルダを選ぶ（start = 最初に開く場所）。やめたら nullopt
   virtual std::optional<std::string> pickFolder(const std::string& start) = 0;
   virtual bool systemDark() = 0;
+  virtual bool reducedMotion() { return false; }
   virtual void requestQuit() = 0;
   // クリップボードのテキスト（UTF-8）。テキストがない・読めないときは nullopt。
   // 貼り付けた内容は個人情報を含みうるので、ログには出さない

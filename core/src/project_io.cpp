@@ -277,6 +277,8 @@ Result<ParsedBackup> parseBackup(const std::string& textIn, const IClock& clock)
 Prefs prefsFromJson(const Json& j) {
   Prefs p;
   if (!j.is_object()) return p;
+  if (hasStr(j, "appearance") && j["appearance"] == "modern") p.appearance = "modern";
+  if (hasStr(j, "motion") && j["motion"] == "subtle") p.motion = "subtle";
   if (hasStr(j, "theme")) p.theme = j["theme"].get<std::string>();
   if (hasStr(j, "density")) p.density = j["density"].get<std::string>();
   if (hasStr(j, "me")) p.me = j["me"].get<std::string>();
@@ -347,7 +349,7 @@ Prefs prefsFromJson(const Json& j) {
           it.key() != "type" && it.key() != "duration")
         p.inherit.extra[it.key()] = it.value();
   }
-  static const char* const known[] = {"theme",   "density", "me",         "currentProject", "templates",    "window",
+  static const char* const known[] = {"appearance", "motion", "theme",   "density", "me",         "currentProject", "templates",    "window",
                                       "hintDismissed", "dataDir", "uiScale", "dimPercent", "mtaLateDays", "confirmDelete",
                                       "autoBaseToday", "autoCompleteGitHub", "useLock", "newNameFormat", "newNameCustom", "inherit",
                                       "recentProjects", "quickAccess"};
@@ -360,6 +362,8 @@ Prefs prefsFromJson(const Json& j) {
 
 Json prefsToJson(const Prefs& p) {
   Json j = Json::object();
+  j["appearance"] = p.appearance;
+  j["motion"] = p.motion;
   j["theme"] = p.theme;
   j["density"] = p.density;
   j["me"] = p.me;

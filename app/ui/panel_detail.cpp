@@ -48,6 +48,10 @@ void field(Frame& f, const std::string& issueId, const char* key, const std::str
   else if (hint) ImGui::InputTextWithHint("##f", hint, &buf);
   else ImGui::InputText("##f", &buf);
   const bool active = ImGui::IsItemActive();
+  if (u.m.modern && active) {
+    const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x + u.m.s(6), b.y - 1), ImVec2(b.x - u.m.s(6), b.y - 1), u.t->accent, u.m.s(2));
+  }
   bool commit = false;
   if (active) gPending = {issueId, buf, current, apply, true};
   if (active && ImGui::IsKeyPressed(ImGuiKey_Escape)) {

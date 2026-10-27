@@ -88,7 +88,12 @@ void tile(Frame& f, const char* label, const std::string& value, ImU32 col, floa
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 p = ImGui::GetCursorScreenPos();
   const float h = u.m.s(64);
-  dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), u.t->surface, u.m.s(6));
+  const float radius = u.m.s(u.m.modern ? 10.f : 6.f);
+  if (u.m.modern) {
+    dl->AddRectFilled(ImVec2(p.x, p.y + u.m.s(2)), ImVec2(p.x + w, p.y + h + u.m.s(2)), withAlpha(u.t->ink, 0.05f), radius);
+  }
+  dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), u.t->surface, radius);
+  if (u.m.modern) dl->AddRectFilled(ImVec2(p.x + u.m.s(10), p.y + h - u.m.s(5)), ImVec2(p.x + w - u.m.s(10), p.y + h - u.m.s(3)), withAlpha(col, 0.4f), u.m.s(1));
   dl->AddRect(p, ImVec2(p.x + w, p.y + h), u.t->line, u.m.s(6));
   clippedText(u, ImVec2(p.x + u.m.s(10), p.y + u.m.s(8)), w - u.m.s(20), u.t->muted, label);
   ImGui::PushFont(u.fontLarge);

@@ -59,6 +59,10 @@ void stepRow(Frame& f, int id, const std::string& n) {
   if (r.floatDays < 0 && !r.done) dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), u.t->lateBg, u.m.s(4));
   ImGui::SetNextItemAllowOverlap();
   if (ImGui::InvisibleButton("##step", ImVec2(w, h))) openDetail(f, T.ids[id], 0);
+  if (u.m.modern) {
+    const float fade = hoverAmount(u, "##goal-hover", ImGui::IsItemHovered());
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), withAlpha(u.t->accentBg, fade * 0.5f), u.m.s(8));
+  }
   if (ImGui::IsItemHovered()) dl->AddRect(p, ImVec2(p.x + w, p.y + h), u.t->line2, u.m.s(4));
   tip("詳細を開く");
   const float cy = p.y + (h - ImGui::GetTextLineHeight()) / 2;
