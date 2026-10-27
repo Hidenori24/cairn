@@ -118,6 +118,7 @@ class Workspace {
 
   // 未保存のものを書く。内容が前回と同じなら書かない
   Status flush();
+  bool wroteInLastFlush(const std::string& id) const { return wroteInLastFlush_.count(id) != 0; }
   // 起動時・アクティブに戻ったとき（8.5）
   Result<SyncReport> sync();
   // 削除（_削除済み へ移す。フォルダ構成ならフォルダごと、平置きなら CSV と設定のファイル）
@@ -172,6 +173,7 @@ class Workspace {
   std::set<std::string> backedUp_;   // このプロセスでバックアップ済みの CSV のパス
   std::set<std::string> frozen_;     // 読み取り専用のプロジェクトの id
   WriteGuard writeGuard_;
+  std::set<std::string> wroteInLastFlush_;
 };
 
 // データフォルダの決定（8.1）: --data > ROADMAP_DATA > アプリの設定で選んだ場所 > <exe>/data/projects

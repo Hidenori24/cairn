@@ -2112,7 +2112,7 @@ Status AppController::flushGuarded() {
   const bool wroteCurrent = cur && (cur->dirty || cur->settingsDirty) && lock_.status.kind == LockKind::Mine;
   const Status s = ws_->flush();
   if (!s) {
-    if (handleGuardLoss()) return okStatus();  // 書く直前の検査で引き継ぎが分かった: 書かず、読み取り専用に切り替えた
+    if (handleGuardLoss(ws_->wroteInLastFlush(currentId_))) return okStatus();  // 途中で書いたファイルがあれば保存中の引き継ぎとして知らせる
     return s;
   }
   if (wroteCurrent) {
@@ -2136,11 +2136,11 @@ bool AppController::writeAllowed(const ProjectEntry& e) {
   return false;
 }
 
-bool AppController::handleGuardLoss() {
+bool AppController::handleGuardLoss(bool afterWrite) {
   if (!guardLost_) return false;
   const OwnershipResult o = *guardLost_;
   guardLost_.reset();
-  loseLock(o);
+  loseLock(o, afterWrite);
   return true;
 }
 
