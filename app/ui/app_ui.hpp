@@ -258,7 +258,9 @@ struct UiState {
     std::string project, member, date, from, to, loadedKey, baseline, newName, error, savedId;
     Json draft = Json::object();
     bool previous = true, history = false;
-    std::string historyId;
+    std::string historyId, historyDay;
+    int historyOffset = 0;
+    float historyFade = 1;
     std::set<std::string> comments;
     std::map<std::string, std::string> inputs;
   } personal;

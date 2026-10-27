@@ -155,6 +155,111 @@ bool taskRows(Frame& f, Json& report, bool extra) {
   }
   return changed;
 }
+std::vector<const Json*> memberReports(const Json& data, const std::string& id) {
+  std::vector<const Json*> out;
+  for (const auto& report : data["reports"]) if (js(report, "memberId") == id) out.push_back(&report);
+  std::stable_sort(out.begin(), out.end(), [](const Json* a, const Json* b) {
+    if (js(*a, "date") != js(*b, "date")) return js(*a, "date") > js(*b, "date");
+    return js(*a, "savedUtc") > js(*b, "savedUtc");
+  });
+  return out;
+}
+void personalHistory(Frame& f, const Json& data) {
+  auto& u = f.u; auto& state = u.personal;
+  std::size_t count = 0;
+  for (auto it = data["members"].begin(); it != data["members"].end(); ++it) count = std::max(count, memberReports(data, it.key()).size());
+  if (!count) { ImGui::TextDisabled("まだ保存された報告はありません。編集ページで報告を確定すると、ここに残ります。"); return; }
+  ImGui::TextDisabled("左端は担当者、右はその人の報告を新しい順に表示します。横にスクロールして参照できます。");
+  ImGui::BeginDisabled(state.historyOffset == 0);
+  if (ImGui::Button("新しい報告へ")) state.historyOffset = std::max(0, state.historyOffset - 8);
+  ImGui::EndDisabled(); ImGui::SameLine();
+  ImGui::BeginDisabled(static_cast<std::size_t>(state.historyOffset + 8) >= count);
+  if (ImGui::Button("さらに古い報告へ")) state.historyOffset += 8;
+  ImGui::EndDisabled();
+  const int slots = std::min(8, static_cast<int>(count) - state.historyOffset);
+  if (ImGui::BeginTable("personal-history", slots + 1, ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
+       ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg, ImGui::GetContentRegionAvail(), u.m.s(180 + slots * 270.f))) {
+    ImGui::TableSetupScrollFreeze(1, 1);
+    ImGui::TableSetupColumn("担当者", ImGuiTableColumnFlags_WidthFixed, u.m.s(180));
+    for (int col = 0; col < slots; ++col) {
+      const int index = state.historyOffset + col;
+      const std::string label = index == 0 ? "最新" : std::to_string(index) + "つ前";
+      ImGui::TableSetupColumn(label.c_str(), ImGuiTableColumnFlags_WidthFixed, u.m.s(260));
+    }
+    ImGui::TableHeadersRow();
+    for (auto it = data["members"].begin(); it != data["members"].end(); ++it) {
+      const auto reports = memberReports(data, it.key());
+      if (!enabled(*it) && reports.empty()) continue;
+      ImGui::PushID(it.key().c_str()); ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
+      avatar(u, js(*it, "name")); ImGui::SameLine(); ImGui::TextWrapped("%s", js(*it, "name").c_str());
+      if (!enabled(*it)) ImGui::TextDisabled("対象外・履歴を保持");
+      if (enabled(*it) && ImGui::SmallButton("この人の報告を書く")) { state.member = it.key(); state.loadedKey.clear(); state.history = false; }
+      for (int col = 0; col < slots; ++col) {
+        ImGui::TableSetColumnIndex(col + 1);
+        const std::size_t index = static_cast<std::size_t>(state.historyOffset + col);
+        if (index >= reports.size()) { ImGui::TextDisabled("報告なし"); continue; }
+        const Json& report = *reports[index];
+        int done = 0, progress = 0; std::string excerpt;
+        if (report.contains("tasks") && report["tasks"].is_array()) for (const auto& task : report["tasks"]) {
+          if (statusCat(js(task, "status")) == Cat::Done) ++done; else ++progress;
+          if (excerpt.empty()) excerpt = js(task, "comment");
+        }
+        const std::string id = js(report, "id"); ImGui::PushID(id.c_str());
+        const ImVec2 p = ImGui::GetCursorScreenPos(), box(ImGui::GetContentRegionAvail().x, u.m.s(105));
+        const float amount = hoverAmount(u, "hover", ImGui::IsMouseHoveringRect(p, ImVec2(p.x + box.x, p.y + box.y)));
+        if (u.m.modern) ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + box.x, p.y + box.y), blendColor(u.t->surface, u.t->hover, amount), u.m.s(8));
+        if (ImGui::Selectable("##open", state.historyId == id, 0, box)) {
+          state.historyId = id; state.historyDay = js(report, "date"); state.historyFade = 0;
+          ImGui::OpenPopup("報告の履歴");
+        }
+        const ImVec2 after = ImGui::GetCursorScreenPos();
+        ImGui::SetCursorScreenPos(ImVec2(p.x + u.m.s(8), p.y + u.m.s(6)));
+        ImGui::TextUnformatted(js(report, "date").c_str());
+        ImGui::TextDisabled("%s 〜 %s", js(report, "from").c_str(), js(report, "to").c_str());
+        ImGui::Text("完了 %d / 進行中 %d", done, progress);
+        ImGui::TextDisabled("%s", ellipsize(excerpt, box.x - u.m.s(16)).c_str());
+        ImGui::SetCursorScreenPos(after);
+        ImGui::SetNextWindowSize(ImVec2(u.m.s(850), u.m.s(650)), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("報告の履歴", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+          if (ImGui::Button("閉じる")) ImGui::CloseCurrentPopup();
+          ImGui::TextDisabled("保存時点の報告です。現在のタスクを変更しても、この内容は変わりません。");
+          state.historyFade = motionStep(state.historyFade, true, ImGui::GetIO().DeltaTime, u.m.animate);
+          ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * (0.5f + 0.5f * state.historyFade));
+          snapshotBody(f, report);
+          ImGui::PopStyleVar();
+          if (ImGui::CollapsingHeader("日々の進捗記録")) {
+            ImGui::SetNextItemWidth(u.m.s(160)); ImGui::InputText("参照日", &state.historyDay);
+            const auto day = parseIso(state.historyDay);
+            if (!day) ImGui::TextDisabled("日付を YYYY-MM-DD で入力してください");
+            else {
+              ImGui::TextWrapped("その日までの最後の記録を表示します。記録のない日や未入力の値は補完しません。");
+              if (report.contains("tasks") && report["tasks"].is_array()) for (const auto& task : report["tasks"]) {
+                const Json* latest = nullptr;
+                for (const auto& event : data["history"]) if (js(event, "id") == js(task, "id")) {
+                  const auto when = parseIso(js(event, "at").substr(0, 10));
+                  if (when && *when <= *day) latest = &event;
+                }
+                ImGui::TextWrapped("%s: %s  最終記録 %s", js(task, "name").c_str(), latest ? percent(*latest, "percent").c_str() : "未記録", latest ? js(*latest, "at").c_str() : "—");
+                ImGui::PushID(js(task, "id").c_str());
+                if (ImGui::TreeNode("変更履歴")) {
+                  for (const auto& event : data["history"]) if (js(event, "id") == js(task, "id"))
+                    ImGui::TextWrapped("%s  %s  %s  %s", js(event, "at").c_str(), percent(event, "percent").c_str(), js(event, "status").c_str(), js(event, "assignee").c_str());
+                  ImGui::TreePop();
+                }
+                ImGui::PopID();
+              }
+            }
+          }
+          ImGui::EndPopup();
+        }
+        ImGui::PopID();
+      }
+      ImGui::PopID();
+    }
+    ImGui::EndTable();
+  }
+}
+
 }
 void drawPersonalView(Frame& f, ImVec2 size) {
   auto& c = f.c; auto& u = f.u; auto& state = u.personal;
@@ -171,6 +276,8 @@ void drawPersonalView(Frame& f, ImVec2 size) {
     if (enabled(*it)) { state.member = it.key(); break; }
   ImGui::BeginChild("personal-page", size);
   ImGui::SeparatorText("個人報告");
+  if (ImGui::Button(state.history ? "報告を書く" : "保存した報告・履歴を見る")) { persistDraft(f); state.history = !state.history; }
+  if (state.history) { personalHistory(f, data); ImGui::EndChild(); return; }
   if (ImGui::CollapsingHeader("報告対象者を管理")) {
     ImGui::BeginDisabled(c.readOnly());
     for (auto it = data["members"].begin(); it != data["members"].end(); ++it) {
