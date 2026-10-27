@@ -165,7 +165,7 @@ CHANGELOG と、各版のタグ（`v0.5.0`・`v0.7.0`・`v0.9.0` など）のコ
 
 ### 共有・バックアップの JSON
 
-`{"app": "regroadmap", "version": 3, "exported", "projects": [{"v": 3, "id", "name", "key", "base", "hol", "scn", "scenarios", "ui", "res", "csv"}], "templates"}`。**0.1.0 から形は変わっていません**。`attachments`・`weekly`・`weeklyAuto`・`baselines`・`links`・`history` は入れません。
+`{"app": "regroadmap", "version": 3, "exported", "projects": [{"v": 3, "id", "name", "key", "base", "hol", "scn", "scenarios", "ui", "res", "csv"}], "templates"}`。**1.3.2までの形式です**。未リリースの個人報告対応では `projects` の各要素に `personal` が追加されます。`attachments`・`weekly`・`weeklyAuto`・`baselines`・`links`・`history` は入れません。
 
 ## 8. 版ごとの見本とテスト
 
@@ -234,3 +234,13 @@ CSV・フォルダ構成・`project.settings.json`・`roadmap_prefs.json`・共�
 ## 開発中: 表示モード
 
 端末設定に `appearance`（classic / modern）と `motion`（none / subtle）を追加。未指定・不正値は classic / none。旧版は未知のキーとして保持します。プロジェクトのCSV・共有JSONには影響しません。
+
+## 個人報告・実績進捗（未リリース）
+
+- Jira用CSVの列は追加しません。端末の見た目設定と、プロジェクトの進捗・個人報告データは別です。
+- フォルダ形式では `personal-reports/<SHA-256>.json` にアプリ専用データを保存し、`project.settings.json` の `personalFile` がそのハッシュを参照します。内容は `current`（任意の実績率と直近の状態）、`history`（変更履歴）、`members`（固定IDと名前の対応）、`drafts`（人・報告日ごとの下書き）、`reports`（確定済みの写し）です。
+- データファイルを原子的に確定してから設定の参照を切り替えます。成功後に直前の全量ファイルを片付けますが、変更履歴と確定済み報告は新しいデータにも全件含まれ、保持週数による削除はしません。参照先が欠損・破損したときは読み込みを失敗させ、空の報告として上書きしません。
+- 平置き形式では設定内の `personal` に保存します。共有・バックアップJSONも `personal` を含み、そこから復元すると専用フォルダへ書き出します。プロジェクトフォルダの移動・複製・削除は専用フォルダも一緒に扱います。
+- **新しい共有JSONには個人報告と進捗履歴が含まれます。** 旧形式の共有JSONにはこれらはありません。旧版で編集すると新機能のデータを正しく扱えないため、個人報告を利用するプロジェクトを旧版で編集する運用は避けてください。
+- 旧 `weekly.memberNotes` は削除せず、その担当者の最初の報告下書きの「以前の担当者別所感」に読み込みます。以後の編集は個人報告ページに集約します。
+- 確定済み報告は名前・担当・状態・実績・予定率・ベースラインIDと計画日・コメントを値として持ちます。後日のタスク変更やベースライン削除で再計算しません。

@@ -395,7 +395,7 @@ std::string exportHtml(const ExportInput& in, const ExportOptions& opt) {
   if (!consistent) {
     h += "<p class=\"empty\">課題がありません。課題を追加してから書き出してください。</p>\n";
     if (noIssues && cx.bl && opt.stats) h += "<section class=\"part first\">\n" + report::renderStats(cx) + "</section>\n";  // 消えた課題の比較
-  } else if (!opt.gantt && !opt.stats && !opt.list) {
+  } else if (!opt.gantt && !opt.stats && !opt.list && opt.personalReports.empty()) {
     h += "<p class=\"empty\">書き出す内容が選ばれていません。</p>\n";
   } else {
     bool first = true;
@@ -407,7 +407,7 @@ std::string exportHtml(const ExportInput& in, const ExportOptions& opt) {
     if (opt.stats) part(report::renderStats(cx));
     if (opt.list) part(report::renderList(cx));
   }
-  const bool ganttOnly = consistent && opt.gantt && !opt.stats && !opt.list;
+  const bool ganttOnly = consistent && opt.gantt && !opt.stats && !opt.list && opt.personalReports.empty();
   h += "</main>\n<footer" + std::string(ganttOnly ? " class=\"gantt-first\"" : "") + ">このアプリで出力（Cairn）</footer>\n</div>\n</body>\n</html>\n";
   return h;
 }

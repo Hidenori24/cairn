@@ -41,6 +41,7 @@ enum class ReportScope {
 };
 
 struct ExportOptions {
+  std::vector<std::string> personalReports;  // 明示的に選んだ保存済み報告のID
   bool gantt = true, stats = true, list = true;
   bool dark = false;                 // false = 印刷向けのライト
   std::string zoom = "week";         // day / week / month / all

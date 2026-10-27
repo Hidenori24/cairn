@@ -54,6 +54,7 @@ std::vector<Cmd> buildCommands(Frame& f) {
     add("表示", "ギャップを表示", "4", [&c] { c.setView(app::View::Goals); });
     add("表示", "統計を表示", "5", [&c] { c.setView(app::View::Stats); });
     add("表示", "今日・今週やることを表示", "6", [&c] { c.setView(app::View::Today); });
+    add("表示", "個人報告を表示", "7", [&c] { c.setView(app::View::Personal); });
     add("表示", "今日・今週: 今日", nullptr, [&c] {
       c.setUi("todayTab", "today");
       c.setView(app::View::Today);

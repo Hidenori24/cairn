@@ -150,7 +150,8 @@ class Workspace {
 
  private:
   Status writeEntry(ProjectEntry& e);
-  Status writeSettingsOnly(ProjectEntry& e);  // 設定の JSON だけを書く（CSV と控えには触れない）。まだ書いていないものは writeEntry
+  Status writeSettingsOnly(ProjectEntry& e);
+  Status writeSettingsData(ProjectEntry& e);  // 設定の JSON だけを書く（CSV と控えには触れない）。まだ書いていないものは writeEntry
   Status backupOnce(const ProjectEntry& e);
   std::string backupDirOf(const ProjectEntry& e) const;
   void pruneBackups(const std::string& bdir);

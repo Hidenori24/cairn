@@ -15,6 +15,7 @@ ImU32 blendColor(ImU32 a, ImU32 b, float amount) {
 }
 
 float hoverAmount(UiState& u, const char* id, bool hovered) {
+  if (!u.m.animate) return hovered ? 1.f : 0.f;
   ImGuiStorage* state = ImGui::GetStateStorage();
   const ImGuiID key = ImGui::GetID(id);
   const float next = motionStep(state->GetFloat(key, 0.f), hovered, ImGui::GetIO().DeltaTime, u.m.animate);

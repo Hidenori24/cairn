@@ -1,4 +1,5 @@
 #include "roadmap/store.hpp"
+#include "roadmap/sha256.hpp"
 
 #include <algorithm>
 #include <map>
@@ -334,7 +335,7 @@ Status Workspace::writeEntry(ProjectEntry& e) {
   if (writeGuard_ && !writeGuard_(e)) return Error{"ロックを確かめられないため、書き込みを見合わせました"};
   if (auto s = fs_.writeAtomic(csvPathOf(e), e.rec.csv); !s) return s;
   if (writeGuard_ && !writeGuard_(e)) return Error{"ロックを確かめられないため、書き込みを見合わせました"};  // CSV を書いたあとにも確かめる
-  if (auto s = fs_.writeAtomic(settingsPathOf(e), dumpJs(settingsToJson(e.rec))); !s) return s;
+  if (auto s = writeSettingsData(e); !s) return s;
   std::int64_t m = 0;
   if (auto a = fs_.stat(csvPathOf(e))) m = std::max(m, a->mtime);
   if (auto b = fs_.stat(settingsPathOf(e))) m = std::max(m, b->mtime);
@@ -346,12 +347,43 @@ Status Workspace::writeEntry(ProjectEntry& e) {
   return okStatus();
 }
 
+Status Workspace::writeSettingsData(ProjectEntry& e) {
+  Json settings = settingsToJson(e.rec);
+  std::string previous;
+  if (auto old = fs_.read(settingsPathOf(e))) {
+    auto manifest = Json::parse(*old, nullptr, false);
+    if (manifest.is_object() && manifest.contains("personalFile") && manifest["personalFile"].is_string())
+      previous = manifest["personalFile"].get<std::string>();
+  }
+  if (e.layout == Layout::Folder && !e.rec.settings.personal.empty()) {
+    const std::string payload = dumpJs(e.rec.settings.personal);
+    const std::string hash = sha256Hex(payload);
+    const std::string folder = joinPath(projectDir(e), "personal-reports");
+    if (auto status = fs_.makeDirs(folder); !status) return status;
+    const std::string path = joinPath(folder, hash + ".json");
+    auto existing = fs_.read(path);
+    if (!existing || sha256Hex(*existing) != hash) {
+      if (writeGuard_ && !writeGuard_(e)) return Error{"読み取り専用です"};
+      if (auto status = fs_.writeAtomic(path, payload); !status) return status;
+    }
+    settings.erase("personal");
+    settings["personalFile"] = hash;
+  }
+  if (writeGuard_ && !writeGuard_(e)) return Error{"読み取り専用です"};
+  if (auto status = fs_.writeAtomic(settingsPathOf(e), dumpJs(settings)); !status) return status;
+  // 新しいマニフェストの確定後にのみ、直前の全量データを片付ける。履歴は新しいデータにも全件含まれる。
+  if (e.layout == Layout::Folder && isSha256Hex(previous) && settings.value("personalFile", "") != previous &&
+      (!writeGuard_ || writeGuard_(e)))
+    (void)fs_.remove(joinPath(joinPath(projectDir(e), "personal-reports"), previous + ".json"));
+  return okStatus();
+}
+
 Status Workspace::writeSettingsOnly(ProjectEntry& e) {
   if (frozen_.count(e.id())) return Error{"読み取り専用で開いているため、書き込みません"};
   if (e.stem.empty()) return writeEntry(e);  // まだ書いていない（CSV もない）ものは全部書く
   const std::string sig = signature(e.rec);
   if (writeGuard_ && !writeGuard_(e)) return Error{"ロックを確かめられないため、書き込みを見合わせました"};
-  if (auto s = fs_.writeAtomic(settingsPathOf(e), dumpJs(settingsToJson(e.rec))); !s) return s;
+  if (auto s = writeSettingsData(e); !s) return s;
   std::int64_t m = 0;
   if (auto a = fs_.stat(csvPathOf(e))) m = std::max(m, a->mtime);
   if (auto b = fs_.stat(settingsPathOf(e))) m = std::max(m, b->mtime);
@@ -391,6 +423,19 @@ Result<Workspace::FileRead> Workspace::readFiles(const FoundProject& f) {
     } catch (const std::exception&) {
       r.settings = Json(nullptr);
     }
+  }
+  if (r.settings.is_object() && r.settings.contains("personalFile")) {
+    const Json& ref = r.settings["personalFile"];
+    if (f.layout != Layout::Folder || !ref.is_string() || !isSha256Hex(ref.get<std::string>()))
+      return Error{"個人報告の参照が不正です"};
+    const std::string hash = ref.get<std::string>();
+    const std::string folder = f.settingsPath.substr(0, f.settingsPath.find_last_of('/'));
+    auto payload = fs_.read(joinPath(joinPath(folder, "personal-reports"), hash + ".json"));
+    if (!payload || sha256Hex(*payload) != hash) return Error{"個人報告ファイルを読めません。元のファイルを保持します"};
+    Json data = Json::parse(*payload, nullptr, false);
+    if (!data.is_object()) return Error{"個人報告データが不正です"};
+    r.settings["personal"] = std::move(data);
+    r.settings.erase("personalFile");
   }
   return r;
 }

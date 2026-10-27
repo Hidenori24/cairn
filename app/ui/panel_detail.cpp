@@ -1,5 +1,8 @@
 // 詳細パネル（SPEC 10.9）: 詳細 / 依存関係 / コメント
 #include <algorithm>
+#include <charconv>
+#include <cmath>
+#include "roadmap/personal.hpp"
 #include <functional>
 #include <string_view>
 #include <unordered_map>
@@ -400,6 +403,18 @@ void detailTab(Frame& f, int i) {
   ImGui::SameLine(0, u.m.s(12));
   ImGui::BeginGroup();
   if (leaf && T.cat[i] == Cat::Prog) {
+    label("実績進捗率（任意）");
+    const auto progress = personalPercent(s->personal(), id);
+    field(f, id, "progress", progress ? csv::fmtNum(*progress) : "", half,
+      applier(f, id, [](AC& controller, Session& ss, const std::string& k, const std::string& raw) {
+        const std::string value = text::trim(raw);
+        if (value.empty()) { ss.setProgress(k, std::nullopt); return; }
+        double number = 0;
+        const auto parsed = std::from_chars(value.data(), value.data() + value.size(), number);
+        if (parsed.ec != std::errc() || parsed.ptr != value.data() + value.size() || !std::isfinite(number) || number < 0 || number > 100)
+          controller.toast("進捗率は 0〜100 で入力してください");
+        else ss.setProgress(k, number);
+      }), false, "未入力");
     label("残り（週）");
     field(f, id, "rem", o.remW ? csv::fmtNum(*o.remW) : "", half,
           applier(f, id, [](AC&, Session& ss, const std::string& k, const std::string& v) {
