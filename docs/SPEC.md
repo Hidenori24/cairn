@@ -2,7 +2,7 @@
 
 - 名前: **Cairn**（ケルン。登山道で道しるべに石を積んだもの）。1.0.0-rc.1 で、それまでの「プロジェクト管理ツール」「Project Roadmap」から改名した（Issue #82）。実行ファイルは `Cairn.exe`。**内部のターゲット名（`roadmap_*`）・名前空間（`roadmap::`）・CLI（`rmcli`）・設定ファイル（`roadmap_prefs.json`）・データの場所と名前（`data/projects/`・`project.settings.json`）・`%LOCALAPPDATA%\ProjectRoadmap`（保存先を書き込めないときの退避先）・インストーラの AppId は、互換のため変えていない**。この文書の過去の経緯の記述に出る旧称はそのまま
 
-- 対応版: **v1.3.2**（初版は2026-10-19）。
+- 対応版: **v1.4.0**（初版は2026-10-19）。
 - 対象読者: 実装・保守する開発者。操作手順は [GUIDE.md](GUIDE.md)、CLI は [CLI.md](CLI.md)。
 - 位置づけ: ブラウザ版（HTML/JavaScript、以下「JS版」）から移植した日程計算・CSV の互換性と、C++版で拡張した画面・保存・報告機能の仕様。第13章は初期実装の工程表として残す。採用済みの判断と未確定の点は [spec-questions.md](spec-questions.md)。
 
