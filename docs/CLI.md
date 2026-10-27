@@ -1,6 +1,6 @@
 # CLI（rmcli）
 
-対象: v1.3.2。Windows 配布物には `rmcli.exe` が同梱されています。Linux ではソースから `rmcli` をビルドできます（[開発](DEVELOPMENT.md)）。以下は `rmcli` のあるフォルダを PATH に加えた場合の例です。PowerShell で同じフォルダから実行する場合は `./rmcli.exe` と指定します。
+対象: v1.4.0。Windows 配布物には `rmcli.exe` が同梱されています。Linux ではソースから `rmcli` をビルドできます（[開発](DEVELOPMENT.md)）。以下は `rmcli` のあるフォルダを PATH に加えた場合の例です。PowerShell で同じフォルダから実行する場合は `./rmcli.exe` と指定します。
 
 ## コマンド一覧
 
