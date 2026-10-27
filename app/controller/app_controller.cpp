@@ -7,6 +7,7 @@
 #include <unordered_set>
 
 #include "roadmap/issue_name.hpp"
+#include "roadmap/personal.hpp"
 #include "roadmap/samples.hpp"
 #include "roadmap/text.hpp"
 
@@ -19,6 +20,7 @@ const char* viewKey(View v) {
     case View::Goals: return "goals";
     case View::Stats: return "stats";
     case View::Today: return "today";
+    case View::Personal: return "personal";
     default: return "gantt";
   }
 }
@@ -28,6 +30,7 @@ View viewFromKey(const std::string& k) {
   if (k == "goals") return View::Goals;
   if (k == "stats") return View::Stats;
   if (k == "today") return View::Today;
+  if (k == "personal") return View::Personal;
   return View::Gantt;
 }
 
@@ -1040,7 +1043,20 @@ Result<std::string> AppController::buildReport(const ExportOptions& opt) const {
     in.subtreeRoot = s->tree()->find(sel_[0]);
     if (in.subtreeRoot < 0) return Error{"選んだ課題が見つかりません"};
   }
-  return exportHtml(in, opt);
+  Result<std::string> output = exportHtml(in, opt);
+  if (!output || opt.personalReports.empty()) return output;
+  auto personal = renderPersonalReports(s->personal(), opt.personalReports, true, true);
+  if (!personal) return Error{personal.error()};
+  const auto end = output->find("</main>");
+  if (end == std::string::npos) return Error{"レポートを組み立てられません"};
+  output->insert(end, *personal);
+  return output;
+}
+
+Status AppController::exportPersonal(const std::string& path, const std::string& content) {
+  auto result = fs_.writeAtomic(path, content);
+  toast(result ? "個人報告を保存しました" : "保存できません: " + result.error());
+  return result;
 }
 
 Status AppController::exportReport(const std::string& path, const ExportOptions& opt) {
@@ -2096,7 +2112,7 @@ Status AppController::flushGuarded() {
   const bool wroteCurrent = cur && (cur->dirty || cur->settingsDirty) && lock_.status.kind == LockKind::Mine;
   const Status s = ws_->flush();
   if (!s) {
-    if (handleGuardLoss()) return okStatus();  // 書く直前の検査で引き継ぎが分かった: 書かず、読み取り専用に切り替えた
+    if (handleGuardLoss(ws_->wroteInLastFlush(currentId_))) return okStatus();  // 途中で書いたファイルがあれば保存中の引き継ぎとして知らせる
     return s;
   }
   if (wroteCurrent) {
@@ -2120,11 +2136,11 @@ bool AppController::writeAllowed(const ProjectEntry& e) {
   return false;
 }
 
-bool AppController::handleGuardLoss() {
+bool AppController::handleGuardLoss(bool afterWrite) {
   if (!guardLost_) return false;
   const OwnershipResult o = *guardLost_;
   guardLost_.reset();
-  loseLock(o);
+  loseLock(o, afterWrite);
   return true;
 }
 

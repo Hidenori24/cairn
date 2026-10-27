@@ -177,7 +177,10 @@ class Session {
   void addScenario(const std::string& name);
   void setNameKey(const std::string& name, const std::string& key);
   Json& ui() { return P_.settings.ui; }
-  void touchUi();  // ui を書き換えたら呼ぶ（保存の予約）
+  void touchUi();
+  const Json& personal() const { return P_.settings.personal; }
+  void setPersonal(Json data);
+  bool setProgress(const std::string& id, std::optional<double> value);  // ui を書き換えたら呼ぶ（保存の予約）
   void setCollapsed(std::string id, bool collapsed);
   bool isCollapsed(const std::string& id) const;
   // 添付のメタ情報（本体のファイルは attachments.hpp。取り消しの対象外で、保存はする）
@@ -245,7 +248,7 @@ class Session {
   // 編集の前後を比べて、新しい課題に Created、中身が変わった課題に Updated を入れる（mutate が 1 か所で呼ぶ。Issue #66）
   void stampEdits(const Snapshot& before, const std::unordered_set<std::string>* only);
   void restore(Snapshot s);
-  void persist() { ++version_; }
+  void persist();
   // 読み取り専用なら通知を出して true（呼び出し側は何も変えずに戻る）
   bool refuseReadOnly();
   Issue newIssue(const std::string& parentId, const std::string& name) const;

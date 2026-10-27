@@ -23,7 +23,7 @@
 
 namespace roadmap::app {
 
-enum class View { Gantt, Board, List, Goals, Stats, Today };
+enum class View { Gantt, Board, List, Goals, Stats, Today, Personal };
 const char* viewKey(View v);  // "gantt" / "board" / "list" / "goals" / "stats" / "today"
 View viewFromKey(const std::string& k);
 
@@ -128,6 +128,8 @@ class AppController {
   Result<std::string> buildReport(const ExportOptions& opt) const;
   // 組み立てて path に書く。成功したら「フォルダを開く」つきの通知、失敗したら理由を通知する（例外は出さない）
   Status exportReport(const std::string& path, const ExportOptions& opt);
+
+  Status exportPersonal(const std::string& path, const std::string& content);
 
   // ---- 週次レポート（Issue #43）----
   // プロジェクトに覚えている所感（次の週の下書きに前回の所感を残す）。開いていなければ空
@@ -388,7 +390,7 @@ class AppController {
   Status lockGate();                                   // 書く前の検査。失ったら読み取り専用に切り替える。確かめられなければエラー
   bool verifyLockBeforeWrite();                        // 添付の本体・フォルダの移動など、dirty に依存しない書き込みの前に所有権を確かめる
   bool writeAllowed(const ProjectEntry& e);            // Workspace が各ファイルを書く直前に呼ぶ検査
-  bool handleGuardLoss();                              // 書き込みの直前の検査で失ったと分かったとき、読み取り専用に切り替える
+  bool handleGuardLoss(bool afterWrite = false);                              // 書き込みの直前の検査で失ったと分かったとき、読み取り専用に切り替える
   std::string preserveUnsaved(const std::string& id);  // 未保存の編集を「（未保存の編集）」として残し、元のプロジェクトの未保存を捨てる
   void installWriteGuard();
   Status flushGuarded();                               // ロックの検査と、フォルダ側の変更の検査を通してから書く

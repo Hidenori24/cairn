@@ -103,6 +103,8 @@ struct UiState {
   ImFont* fontMono = nullptr;
   ImFont* fontBold = nullptr;
   ImFont* fontLarge = nullptr;
+  float detailVisibility = 0, viewFade = 1;
+  app::View paintedView = app::View::Gantt;
   bool imeComposing = false;       // IME の変換中（プラットフォームが設定）
   int imeCooldown = 0;             // 変換を確定した直後のフレーム数（Enter を無視）
 
@@ -253,6 +255,18 @@ struct UiState {
   // 最近つないだ課題（新しい順。プロジェクトごとに覚え、アプリを閉じると忘れる）
   std::string recentLinkProject;
   std::vector<std::string> recentLinks;
+
+  struct PersonalEditor {
+    std::string project, member, date, from, to, loadedKey, baseline, newName, error, savedId;
+    Json draft = Json::object(), cache = Json::object();
+    std::uint64_t cacheVersion = 0, sourceVersion = 0;
+    bool previous = true, history = false;
+    std::string historyId, historyDay;
+    int historyOffset = 0;
+    float historyFade = 1;
+    std::set<std::string> comments, exportIds;
+    std::map<std::string, std::string> inputs;
+  } personal;
 
   // ダイアログの入力
   std::string dName, dKey, dText, dText2, dSearch;

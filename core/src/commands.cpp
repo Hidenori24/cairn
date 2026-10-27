@@ -1,4 +1,5 @@
 #include "roadmap/commands.hpp"
+#include "roadmap/personal.hpp"
 #include "roadmap/other_links.hpp"
 
 #include <algorithm>
@@ -229,6 +230,26 @@ bool Session::isCollapsed(const std::string& id) const {
   return it != c.end() && it->is_boolean() && it->get<bool>();
 }
 
+void Session::persist() {
+  if (!readOnly_) {
+    syncPersonalMembers(P_.settings.personal, P_.issues);
+    recordPersonal(P_.settings.personal, P_.issues, *clock_);
+  }
+  ++version_;
+}
+void Session::setPersonal(Json data) {
+  if (refuseReadOnly()) return;
+  P_.settings.personal = personalFromJson(data);
+  persist();
+}
+bool Session::setProgress(const std::string& id, std::optional<double> value) {
+  const Issue* task = issue(id);
+  if (refuseReadOnly() || !task || statusCat(task->status) != Cat::Prog ||
+      std::any_of(P_.issues.begin(), P_.issues.end(), [&](const Issue& child) { return child.parent == id; })) return false;
+  if (!setPersonalPercent(P_.settings.personal, id, value)) return false;
+  persist();
+  return true;
+}
 void Session::touchUi() { persist(); }
 
 void Session::setWeeklyNotes(const std::string& notes) {

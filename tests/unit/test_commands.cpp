@@ -2,6 +2,7 @@
 
 #include "../test_util.hpp"
 #include "roadmap/commands.hpp"
+#include "roadmap/personal.hpp"
 #include "roadmap/project_io.hpp"
 #include "roadmap/samples.hpp"
 
@@ -568,4 +569,22 @@ TEST_CASE("commands: サンプルを開ける") {
     CHECK(s.error().empty());
     CHECK(s.summary().total > 0);
   }
+}
+
+TEST_CASE("personal: progress records changes and preserves missing versus zero") {
+  auto clk = clockAt(2026, 10, 26);
+  Session s(dataFrom(kTree), &clk);
+  s.setStatus("2", "In Progress");
+  CHECK_FALSE(personalPercent(s.personal(), "2"));
+  REQUIRE(s.setProgress("2", 0));
+  CHECK(personalPercent(s.personal(), "2") == 0);
+  const auto count = s.personal()["history"].size();
+  s.touchUi();
+  CHECK(s.personal()["history"].size() == count);
+  REQUIRE(s.setProgress("2", 75));
+  CHECK(s.personal()["history"].size() == count + 1);
+  CHECK_FALSE(s.setProgress("2", 101));
+  s.setReadOnly(true);
+  CHECK_FALSE(s.setProgress("2", 25));
+  CHECK(personalPercent(s.personal(), "2") == 75);
 }
