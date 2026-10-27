@@ -390,7 +390,7 @@ class AppController {
   Status lockGate();                                   // 書く前の検査。失ったら読み取り専用に切り替える。確かめられなければエラー
   bool verifyLockBeforeWrite();                        // 添付の本体・フォルダの移動など、dirty に依存しない書き込みの前に所有権を確かめる
   bool writeAllowed(const ProjectEntry& e);            // Workspace が各ファイルを書く直前に呼ぶ検査
-  bool handleGuardLoss();                              // 書き込みの直前の検査で失ったと分かったとき、読み取り専用に切り替える
+  bool handleGuardLoss(bool afterWrite = false);                              // 書き込みの直前の検査で失ったと分かったとき、読み取り専用に切り替える
   std::string preserveUnsaved(const std::string& id);  // 未保存の編集を「（未保存の編集）」として残し、元のプロジェクトの未保存を捨てる
   void installWriteGuard();
   Status flushGuarded();                               // ロックの検査と、フォルダ側の変更の検査を通してから書く
