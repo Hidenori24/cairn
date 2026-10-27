@@ -334,6 +334,7 @@ Status Workspace::writeEntry(ProjectEntry& e) {
   const std::string sig = signature(e.rec);
   if (writeGuard_ && !writeGuard_(e)) return Error{"ロックを確かめられないため、書き込みを見合わせました"};
   if (auto s = fs_.writeAtomic(csvPathOf(e), e.rec.csv); !s) return s;
+  wroteInLastFlush_.insert(e.id());
   if (writeGuard_ && !writeGuard_(e)) return Error{"ロックを確かめられないため、書き込みを見合わせました"};  // CSV を書いたあとにも確かめる
   if (auto s = writeSettingsData(e); !s) return s;
   std::int64_t m = 0;
@@ -365,12 +366,14 @@ Status Workspace::writeSettingsData(ProjectEntry& e) {
     if (!existing || sha256Hex(*existing) != hash) {
       if (writeGuard_ && !writeGuard_(e)) return Error{"読み取り専用です"};
       if (auto status = fs_.writeAtomic(path, payload); !status) return status;
+      wroteInLastFlush_.insert(e.id());
     }
     settings.erase("personal");
     settings["personalFile"] = hash;
   }
   if (writeGuard_ && !writeGuard_(e)) return Error{"読み取り専用です"};
   if (auto status = fs_.writeAtomic(settingsPathOf(e), dumpJs(settings)); !status) return status;
+  wroteInLastFlush_.insert(e.id());
   // 新しいマニフェストの確定後にのみ、直前の全量データを片付ける。履歴は新しいデータにも全件含まれる。
   if (e.layout == Layout::Folder && isSha256Hex(previous) && settings.value("personalFile", "") != previous &&
       (!writeGuard_ || writeGuard_(e)))
@@ -394,6 +397,7 @@ Status Workspace::writeSettingsOnly(ProjectEntry& e) {
 }
 
 Status Workspace::flush() {
+  wroteInLastFlush_.clear();
   for (auto& e : entries_) {
     if (!e.dirty && !e.settingsDirty) continue;
     if (frozen_.count(e.id())) continue;
