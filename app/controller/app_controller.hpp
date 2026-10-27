@@ -129,6 +129,8 @@ class AppController {
   // 組み立てて path に書く。成功したら「フォルダを開く」つきの通知、失敗したら理由を通知する（例外は出さない）
   Status exportReport(const std::string& path, const ExportOptions& opt);
 
+  Status exportPersonal(const std::string& path, const std::string& content);
+
   // ---- 週次レポート（Issue #43）----
   // プロジェクトに覚えている所感（次の週の下書きに前回の所感を残す）。開いていなければ空
   std::string weeklyNotes() const;

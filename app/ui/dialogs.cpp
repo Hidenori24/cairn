@@ -337,6 +337,21 @@ void dlgExportHtml(Frame& f) {
   ImGui::SameLine(0, u.m.s(20));
   ImGui::Checkbox("リスト", &r.list);
 
+  if (ImGui::CollapsingHeader("個人報告を含める（保存済みから選択）")) {
+    const auto& data = s->personal();
+    if (!data.contains("reports") || data["reports"].empty()) ImGui::TextDisabled("個人報告ページで報告を確定すると選べます");
+    else for (auto it = data["reports"].begin(); it != data["reports"].end(); ++it) {
+      if (!it->is_object()) continue;
+      const auto textValue = [&](const char* k) { return it->contains(k) && (*it)[k].is_string() ? (*it)[k].get<std::string>() : ""; };
+      bool chosen = std::find(r.personalReports.begin(), r.personalReports.end(), it.key()) != r.personalReports.end();
+      const std::string label = textValue("memberName") + " / " + textValue("date") + " / 保存 " + textValue("savedAt") + "##" + it.key();
+      if (ImGui::Checkbox(label.c_str(), &chosen)) {
+        if (chosen) r.personalReports.push_back(it.key());
+        else r.personalReports.erase(std::remove(r.personalReports.begin(), r.personalReports.end(), it.key()), r.personalReports.end());
+      }
+    }
+  }
+
   const bool sel1 = c.selection().size() == 1 && s->issue(c.selection()[0]) != nullptr;
   if (r.gantt || r.list) {
     ImGui::SeparatorText("ガントとリストの範囲");
@@ -413,7 +428,7 @@ void dlgExportHtml(Frame& f) {
   const std::size_t n = s->tree() ? static_cast<std::size_t>(s->tree()->n) : 0;
   if (r.gantt && n > kReportMaxGanttRows)
     ImGui::TextDisabled("課題が %zu 件あります。ガントは先頭の %zu 行までです（リストには全部出ます）。", n, kReportMaxGanttRows);
-  const bool any = r.gantt || r.stats || r.list;
+  const bool any = r.gantt || r.stats || r.list || !r.personalReports.empty();
   if (!any) {
     ImGui::PushStyleColor(ImGuiCol_Text, v4(u.t->late));
     ImGui::TextUnformatted("書き出す内容を1つ以上選んでください。");

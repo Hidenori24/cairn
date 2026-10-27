@@ -25,3 +25,8 @@ Result<Json> makePersonalDraft(const Json& data, const std::vector<Issue>& issue
 Result<std::string> savePersonalReport(Json& data, Json draft, const IClock& clock);
 std::string personalDraftKey(const std::string& member, Day date);
 }
+
+namespace roadmap {
+// 保存済みのIDだけを出力する。存在しないID・空の選択はエラー。
+Result<std::string> renderPersonalReports(const Json& data, const std::vector<std::string>& ids, bool html, bool fragment = false);
+}

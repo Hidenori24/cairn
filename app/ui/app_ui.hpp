@@ -261,7 +261,7 @@ struct UiState {
     std::string historyId, historyDay;
     int historyOffset = 0;
     float historyFade = 1;
-    std::set<std::string> comments;
+    std::set<std::string> comments, exportIds;
     std::map<std::string, std::string> inputs;
   } personal;
 

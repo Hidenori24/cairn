@@ -7,6 +7,7 @@
 #include <unordered_set>
 
 #include "roadmap/issue_name.hpp"
+#include "roadmap/personal.hpp"
 #include "roadmap/samples.hpp"
 #include "roadmap/text.hpp"
 
@@ -1042,7 +1043,20 @@ Result<std::string> AppController::buildReport(const ExportOptions& opt) const {
     in.subtreeRoot = s->tree()->find(sel_[0]);
     if (in.subtreeRoot < 0) return Error{"選んだ課題が見つかりません"};
   }
-  return exportHtml(in, opt);
+  Result<std::string> output = exportHtml(in, opt);
+  if (!output || opt.personalReports.empty()) return output;
+  auto personal = renderPersonalReports(s->personal(), opt.personalReports, true, true);
+  if (!personal) return Error{personal.error()};
+  const auto end = output->find("</main>");
+  if (end == std::string::npos) return Error{"レポートを組み立てられません"};
+  output->insert(end, *personal);
+  return output;
+}
+
+Status AppController::exportPersonal(const std::string& path, const std::string& content) {
+  auto result = fs_.writeAtomic(path, content);
+  toast(result ? "個人報告を保存しました" : "保存できません: " + result.error());
+  return result;
 }
 
 Status AppController::exportReport(const std::string& path, const ExportOptions& opt) {

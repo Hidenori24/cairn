@@ -63,6 +63,74 @@ bool textField(const char* label, Json& object, const char* key, float height = 
   if (changed) object[key] = text;
   return changed;
 }
+
+void exportButtons(Frame& f, const std::vector<std::string>& ids) {
+  ImGui::BeginDisabled(ids.empty());
+  for (const char* kind : {"HTML", "Markdown", "PDF"}) {
+    const std::string type(kind);
+    const std::string label = type + " を保存…";
+    if (ImGui::Button(label.c_str())) {
+      // 保存ダイアログを開く前に、選択した写しから出力内容を固定する。
+      auto rendered = renderPersonalReports(f.c.session()->personal(), ids, type != "Markdown");
+      if (!rendered) f.c.toast(rendered.error());
+      else {
+        const std::string ext = type == "PDF" ? "pdf" : type == "HTML" ? "html" : "md";
+        const std::string name = "個人報告_" + f.c.clock().todayIso() + "." + ext;
+        deferAfterFrame(f, [&f, type, ext, name, content = *rendered] {
+          if (type == "PDF") {
+            auto path = f.p.pickSaveFile(name, ext, "PDF ファイル"); if (!path) return;
+            std::string error;
+            if (f.p.printHtmlToPdf(content, *path, &error)) f.c.toast("PDF を保存しました");
+            else f.c.toast("PDF を作成できません: " + error);
+          } else {
+            auto path = f.p.pickSaveFile(name, ext, type + " ファイル");
+            if (path) (void)f.c.exportPersonal(*path, content);
+          }
+        });
+      }
+    }
+    ImGui::SameLine();
+  }
+  if (ImGui::Button("印刷内容をプレビュー")) ImGui::OpenPopup("印刷プレビュー");
+  ImGui::EndDisabled();
+  ImGui::SetNextWindowSize(ImVec2(f.u.m.s(850), f.u.m.s(650)), ImGuiCond_Appearing);
+  if (ImGui::BeginPopupModal("印刷プレビュー", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+    if (ImGui::Button("閉じる")) ImGui::CloseCurrentPopup();
+    auto markdown = renderPersonalReports(f.c.session()->personal(), ids, false);
+    ImGui::TextDisabled("保存済みの内容を表示しています。印刷の改ページは HTML / PDF に適用されます。");
+    if (markdown) ImGui::TextWrapped("%s", markdown->c_str());
+    ImGui::EndPopup();
+  }
+}
+void exportPanel(Frame& f, const Json& data) {
+  auto& state = f.u.personal;
+  if (!ImGui::CollapsingHeader("保存済みの報告を出力（複数人を一括選択可）")) return;
+  if (ImGui::Button("この報告日の全員分を選択")) {
+    state.exportIds.clear();
+    for (auto member = data["members"].begin(); member != data["members"].end(); ++member) if (enabled(*member)) {
+      std::string latest;
+      for (auto report = data["reports"].begin(); report != data["reports"].end(); ++report)
+        if (js(*report, "memberId") == member.key() && js(*report, "date") == state.date) latest = report.key();
+      if (!latest.empty()) state.exportIds.insert(latest);
+    }
+  }
+  ImGui::SameLine(); if (ImGui::Button("選択を解除")) state.exportIds.clear();
+  for (auto member = data["members"].begin(); member != data["members"].end(); ++member) if (enabled(*member)) {
+    bool found = false;
+    for (const auto& report : data["reports"]) if (js(report, "memberId") == member.key() && js(report, "date") == state.date) found = true;
+    if (!found) ImGui::TextDisabled("%s: %s の保存済み報告なし（出力には含めません）", js(*member, "name").c_str(), state.date.c_str());
+  }
+  ImGui::BeginChild("saved-report-choices", ImVec2(0, f.u.m.s(120)), ImGuiChildFlags_Border);
+  for (auto it = data["reports"].begin(); it != data["reports"].end(); ++it) {
+    bool chosen = state.exportIds.count(it.key()) != 0;
+    const std::string label = js(*it, "memberName") + " / " + js(*it, "date") + " / 保存 " + js(*it, "savedAt") + "##" + it.key();
+    if (ImGui::Checkbox(label.c_str(), &chosen)) {
+      if (chosen) state.exportIds.insert(it.key()); else state.exportIds.erase(it.key());
+    }
+  }
+  ImGui::EndChild();
+  exportButtons(f, std::vector<std::string>(state.exportIds.begin(), state.exportIds.end()));
+}
 void snapshotBody(Frame& f, const Json& report) {
   ImGui::TextWrapped("%s  %s", js(report, "memberName").c_str(), js(report, "date").c_str());
   ImGui::TextDisabled("%s 〜 %s", js(report, "from").c_str(), js(report, "to").c_str());
@@ -225,6 +293,7 @@ void personalHistory(Frame& f, const Json& data) {
           ImGui::TextDisabled("保存時点の報告です。現在のタスクを変更しても、この内容は変わりません。");
           state.historyFade = motionStep(state.historyFade, true, ImGui::GetIO().DeltaTime, u.m.animate);
           ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * (0.5f + 0.5f * state.historyFade));
+          exportButtons(f, {id});
           snapshotBody(f, report);
           ImGui::PopStyleVar();
           if (ImGui::CollapsingHeader("日々の進捗記録")) {
@@ -277,6 +346,7 @@ void drawPersonalView(Frame& f, ImVec2 size) {
   ImGui::BeginChild("personal-page", size);
   ImGui::SeparatorText("個人報告");
   if (ImGui::Button(state.history ? "報告を書く" : "保存した報告・履歴を見る")) { persistDraft(f); state.history = !state.history; }
+  exportPanel(f, data);
   if (state.history) { personalHistory(f, data); ImGui::EndChild(); return; }
   if (ImGui::CollapsingHeader("報告対象者を管理")) {
     ImGui::BeginDisabled(c.readOnly());
@@ -333,7 +403,7 @@ void drawPersonalView(Frame& f, ImVec2 size) {
   ImGui::SameLine(); if (ImGui::Button("報告を確定・履歴に保存")) {
     persistDraft(f); auto save = personalFromJson(s->personal());
     auto id = savePersonalReport(save, state.draft, c.clock());
-    if (id) { s->setPersonal(std::move(save)); c.afterEdit(); state.savedId = *id; c.toast("保存時点の報告を履歴に残しました"); } else state.error = id.error();
+    if (id) { s->setPersonal(std::move(save)); c.afterEdit(); state.savedId = *id; state.exportIds.insert(*id); c.toast("保存時点の報告を履歴に残しました"); } else state.error = id.error();
   }
   ImGui::EndDisabled();
   if (c.readOnly()) ImGui::TextDisabled("読み取り専用：閲覧・出力できます。下書きと実績は変更しません。");
