@@ -334,6 +334,7 @@ void detailTab(Frame& f, int i) {
       ImGui::GetStateStorage()->SetInt(ImGui::GetID("##calendar-month"), ym.y * 12 + ym.m - 1);
       ImGui::OpenPopup("##calendar-popup");
     }
+    ImGui::SetNextWindowSize(ImVec2(u.m.s(312), 0), ImGuiCond_Appearing);
     if (ImGui::BeginPopup("##calendar-popup")) {
       const ImGuiID monthId = ImGui::GetID("##calendar-month");
       const Day today = c.clock().today();
@@ -341,55 +342,108 @@ void detailTab(Frame& f, int i) {
       int monthIndex = ImGui::GetStateStorage()->GetInt(monthId, todayYmd.y * 12 + todayYmd.m - 1);
       int year = monthIndex / 12;
       int month = monthIndex % 12 + 1;
-      if (ImGui::SmallButton("<")) {
-        if (--month <= 0) month = 12, --year;
-        ImGui::GetStateStorage()->SetInt(monthId, year * 12 + month - 1);
+      const auto shiftMonth = [&](int amount) {
+        monthIndex += amount;
+        year = monthIndex / 12;
+        month = monthIndex % 12 + 1;
+        ImGui::GetStateStorage()->SetInt(monthId, monthIndex);
+      };
+      if (ImGui::BeginTable("##calendar-header", 3,
+                            ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_NoBordersInBody)) {
+        ImGui::TableSetupColumn("##calendar-prev", ImGuiTableColumnFlags_WidthFixed, u.m.s(40));
+        ImGui::TableSetupColumn("##calendar-month-label", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("##calendar-next", ImGuiTableColumnFlags_WidthFixed, u.m.s(40));
+        ImGui::TableNextColumn();
+        if (ImGui::Button("<", ImVec2(-1, u.m.s(30)))) {
+          shiftMonth(-1);
+        }
+        ImGui::TableNextColumn();
+        const std::string monthLabel = std::to_string(year) + "年" + std::to_string(month) + "月";
+        const float labelWidth = ImGui::CalcTextSize(monthLabel.c_str()).x;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, (ImGui::GetContentRegionAvail().x - labelWidth) * 0.5f));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(monthLabel.c_str());
+        ImGui::TableNextColumn();
+        if (ImGui::Button(">", ImVec2(-1, u.m.s(30)))) {
+          shiftMonth(1);
+        }
+        ImGui::EndTable();
       }
-      ImGui::SameLine();
-      ImGui::Text("%d年%d月", year, month);
-      ImGui::SameLine();
-      if (ImGui::SmallButton(">")) {
-        if (++month > 12) month = 1, ++year;
-        ImGui::GetStateStorage()->SetInt(monthId, year * 12 + month - 1);
-      }
-      if (ImGui::BeginTable("##calendar-days", 7, ImGuiTableFlags_SizingStretchSame)) {
-        for (const char* wd : {"日", "月", "火", "水", "木", "金", "土"}) {
+
+      ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(u.m.s(2), u.m.s(3)));
+      ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.5f, 0.5f));
+      if (ImGui::BeginTable("##calendar-days", 7,
+                            ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_NoBordersInBody)) {
+        const char* weekdays[] = {"日", "月", "火", "水", "木", "金", "土"};
+        for (int weekday = 0; weekday < 7; ++weekday) {
           ImGui::TableNextColumn();
-          ImGui::TextDisabled("%s", wd);
+          if (weekday == 0 || weekday == 6) ImGui::PushStyleColor(ImGuiCol_Text, u.t->muted);
+          ImGui::TextDisabled("%s", weekdays[weekday]);
+          if (weekday == 0 || weekday == 6) ImGui::PopStyleColor();
         }
         const Day first = *makeDay(year, month, 1);
         const int offset = dow(first);
-        for (int cell = 0; cell < 42; ++cell) {
+        int nextYear = year;
+        int nextMonth = month + 1;
+        if (nextMonth == 13) nextMonth = 1, ++nextYear;
+        const int daysInMonth = static_cast<int>(*makeDay(nextYear, nextMonth, 1) - first);
+        const int cellCount = ((offset + daysInMonth + 6) / 7) * 7;
+        for (int cell = 0; cell < cellCount; ++cell) {
           ImGui::TableNextColumn();
           const Day d = first + cell - offset;
           const Ymd dayYmd = civilFromDays(d);
           const std::string dayText = std::to_string(dayYmd.d);
           const bool selected = cur && *cur == d;
+          const bool inMonth = dayYmd.m == month;
           ImGui::PushID(cell);
-          if (dayYmd.m != month) ImGui::PushStyleColor(ImGuiCol_Text, u.t->muted);
-          if (ImGui::Selectable(dayText.c_str(), selected || d == today, ImGuiSelectableFlags_DontClosePopups,
-                                ImVec2(-1, u.m.s(24)))) {
+          if (!inMonth) ImGui::PushStyleColor(ImGuiCol_Text, u.t->muted);
+          if (selected) {
+            ImGui::PushStyleColor(ImGuiCol_Header, u.t->accent);
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, u.t->accent);
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, u.t->accent);
+            ImGui::PushStyleColor(ImGuiCol_Text, u.t->accentInk);
+          } else if (d == today) {
+            ImGui::PushStyleColor(ImGuiCol_Text, u.t->accent);
+          }
+          if (ImGui::Selectable(dayText.c_str(), selected, ImGuiSelectableFlags_DontClosePopups,
+                                ImVec2(0, u.m.s(32)))) {
             fn(*s, id, d);
             c.afterEdit();
             ImGui::CloseCurrentPopup();
           }
-          if (dayYmd.m != month) ImGui::PopStyleColor();
+          if (d == today && !selected) {
+            ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), u.t->accent,
+                                                u.m.s(5), 0, u.m.s(1));
+          }
+          if (selected) ImGui::PopStyleColor(4);
+          else if (d == today) ImGui::PopStyleColor();
+          if (!inMonth) ImGui::PopStyleColor();
           ImGui::PopID();
         }
         ImGui::EndTable();
       }
-      if (ImGui::SmallButton("今日")) {
+      ImGui::PopStyleVar(2);
+
+      ImGui::Spacing();
+      const float actionWidth = ImGui::GetContentRegionAvail().x;
+      const float gap = ImGui::GetStyle().ItemSpacing.x;
+      const float halfActionWidth = (actionWidth - gap) * 0.5f;
+      if (ImGui::Button("今日", ImVec2(halfActionWidth, u.m.s(30)))) {
         fn(*s, id, today);
         c.afterEdit();
         ImGui::CloseCurrentPopup();
       }
+      ImGui::SameLine();
       if (cur) {
-        ImGui::SameLine();
-        if (ImGui::SmallButton("日付を消す")) {
+        if (ImGui::Button("日付を消す", ImVec2(-1, u.m.s(30)))) {
           fn(*s, id, std::nullopt);
           c.afterEdit();
           ImGui::CloseCurrentPopup();
         }
+      } else {
+        ImGui::BeginDisabled();
+        ImGui::Button("日付を消す", ImVec2(-1, u.m.s(30)));
+        ImGui::EndDisabled();
       }
       ImGui::EndPopup();
     }
