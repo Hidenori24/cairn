@@ -269,47 +269,61 @@ void detailTab(Frame& f, int i) {
   ImGui::SeparatorText("日程");
   if (leaf) {
     bool durationDays = c.uiStr("detailDurationUnit", "weeks") == "days";
-    std::string h = "期間";
-    if (!std0) h += " @" + s->settings().scenario;
-    label(h.c_str());
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(std::max(u.m.s(78), std::min(u.m.s(100), half - u.m.s(35))));
-    if (ImGui::BeginCombo("##duration-unit", durationDays ? "営業日" : "週")) {
-      if (ImGui::Selectable("週", !durationDays)) c.setUi("detailDurationUnit", "weeks");
-      if (ImGui::Selectable("営業日", durationDays)) c.setUi("detailDurationUnit", "days");
-      ImGui::EndCombo();
-    }
     const double durationValue = durationDays ? r.weeks * 5.0 : r.weeks;
-    if (T.kind[i] == Kind::Ms && r.weeks == 0) {
-      ImGui::TextUnformatted("◆ マイルストーン（期間0）");
-    } else if (!r.done) {
-      const double step = durationDays ? 0.2 : 1.0;
-      const char* unit = durationDays ? "営業日" : "週";
-      if (iconButton(u, "dmin", "minus", (std::string("1") + unit + "減らす").c_str())) {
-        s->setDuration(id, std::max(0.0, r.weeks - step));
-        c.afterEdit();
-      }
-      ImGui::SameLine();
-      field(f, id, "dur", csv::fmtNum(durationValue), std::max(u.m.s(40), half - u.m.s(72)),
-            applier(f, id, [durationDays](AC&, Session& ss, const std::string& k, const std::string& v) {
-              if (auto d = csv::parseDur(v, true); d && *d >= 0) {
-                ss.setDuration(k, durationDays ? *d / 5.0 : text::jsRound(*d * 2) / 2);
-              }
-            }));
-      ImGui::SameLine();
-      if (iconButton(u, "dplus", "plus", (std::string("1") + unit + "増やす").c_str())) {
-        s->setDuration(id, r.weeks + step);
-        c.afterEdit();
-      }
-      if (!std0 && o.alt.find(s->settings().scenario)) {
-        ImGui::SameLine();
-        if (ImGui::SmallButton("標準に戻す")) {
-          s->removeScenarioValue(id);
+    if (T.kind[i] == Kind::Ms) {
+      if (r.weeks == 0) {
+        ImGui::TextUnformatted("◆ マイルストーン（1点）");
+      } else {
+        const char* unit = durationDays ? "営業日" : "週";
+        ImGui::TextDisabled("現在の期間: %s %s", csv::fmtNum(durationValue).c_str(), unit);
+        if (ImGui::SmallButton("期間を0日にする")) {
+          s->setField(id, [](Issue& issue) {
+            issue.durW = 0.0;
+            for (const auto& [scenario, _] : issue.alt.items()) issue.alt.set(scenario, 0.0);
+          });
           c.afterEdit();
         }
       }
     } else {
-      ImGui::TextUnformatted((csv::fmtNum(durationValue) + (durationDays ? "営業日" : "週")).c_str());
+      std::string h = "期間";
+      if (!std0) h += " @" + s->settings().scenario;
+      label(h.c_str());
+      ImGui::SameLine();
+      ImGui::SetNextItemWidth(std::max(u.m.s(78), std::min(u.m.s(100), half - u.m.s(35))));
+      if (ImGui::BeginCombo("##duration-unit", durationDays ? "営業日" : "週")) {
+        if (ImGui::Selectable("週", !durationDays)) c.setUi("detailDurationUnit", "weeks");
+        if (ImGui::Selectable("営業日", durationDays)) c.setUi("detailDurationUnit", "days");
+        ImGui::EndCombo();
+      }
+      if (!r.done) {
+        const double step = durationDays ? 0.2 : 1.0;
+        const char* unit = durationDays ? "営業日" : "週";
+        if (iconButton(u, "dmin", "minus", (std::string("1") + unit + "減らす").c_str())) {
+          s->setDuration(id, std::max(0.0, r.weeks - step));
+          c.afterEdit();
+        }
+        ImGui::SameLine();
+        field(f, id, "dur", csv::fmtNum(durationValue), std::max(u.m.s(40), half - u.m.s(72)),
+              applier(f, id, [durationDays](AC&, Session& ss, const std::string& k, const std::string& v) {
+                if (auto d = csv::parseDur(v, true); d && *d >= 0) {
+                  ss.setDuration(k, durationDays ? *d / 5.0 : text::jsRound(*d * 2) / 2);
+                }
+              }));
+        ImGui::SameLine();
+        if (iconButton(u, "dplus", "plus", (std::string("1") + unit + "増やす").c_str())) {
+          s->setDuration(id, r.weeks + step);
+          c.afterEdit();
+        }
+        if (!std0 && o.alt.find(s->settings().scenario)) {
+          ImGui::SameLine();
+          if (ImGui::SmallButton("標準に戻す")) {
+            s->removeScenarioValue(id);
+            c.afterEdit();
+          }
+        }
+      } else {
+        ImGui::TextUnformatted((csv::fmtNum(durationValue) + (durationDays ? "営業日" : "週")).c_str());
+      }
     }
   } else {
     ImGui::TextDisabled("配下の %d 件から集計（完了 %d）", r.n, r.nDone);
