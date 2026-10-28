@@ -1,6 +1,6 @@
 # ドキュメント
 
-v1.4.1 時点の実装に合わせた案内です。公開済みの版は [Releases](https://github.com/Hidenori24/cairn/releases)、版ごとの差分は [変更履歴](CHANGELOG.md) で確認できます。
+v1.4.2 時点の実装に合わせた案内です。公開済みの版は [Releases](https://github.com/Hidenori24/cairn/releases)、版ごとの差分は [変更履歴](CHANGELOG.md) で確認できます。
 
 | やりたいこと | 読むもの |
 |---|---|
