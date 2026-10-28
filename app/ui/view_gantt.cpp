@@ -147,7 +147,7 @@ ImVec2 pointAtFrac(const std::vector<ImVec2>& pts, float frac) {
   return pts.empty() ? ImVec2(0, 0) : pts.back();
 }
 
-std::vector<std::string> tipLines(const Session& s, int id) {
+std::vector<std::string> tipLines(const Session& s, int id, bool movable, bool deadlineEditable) {
   const Tree& T = *s.tree();
   const ScheduleRow& r = (*s.rows())[id];
   const Issue& o = s.viewIssues()[id];
@@ -161,6 +161,12 @@ std::vector<std::string> tipLines(const Session& s, int id) {
   if (T.ownDl[id]) L.push_back("期限 " + fmtLong(*T.ownDl[id]));
   if (!o.assignee.empty()) L.push_back("担当 " + o.assignee);
   if (r.waited) L.push_back("担当者の別作業待ち");
+  if (movable && r.leaf) {
+    if (T.kind[id] == Kind::Ms) L.push_back("菱形をドラッグで日付を移動");
+    else L.push_back("バーをドラッグで着手日を移動、右端をドラッグで期間を変更");
+  }
+  if (deadlineEditable && T.ownDl[id] && T.kind[id] != Kind::Ms)
+    L.push_back("期限の菱形をドラッグで期限を変更");
   if (const BaselineCompare* bc = s.baselineCompare(); bc && static_cast<std::size_t>(id) < bc->entries.size())
     for (const std::string& l : planTipLines(*bc, bc->entries[static_cast<std::size_t>(id)])) L.push_back(l);
   if (r.leaf && r.prog) {
@@ -597,18 +603,35 @@ void drawGanttView(Frame& f, ImVec2 size) {
       ImGui::InvisibleButton("##sum", ImVec2(w, u.m.s(12)));
       if (ImGui::IsItemHovered()) hoverTipId = T.ids[id];
     } else if (T.kind[id] == Kind::Ms) {
-      const float x = shape.msX;
+      const float x = shape.msX + (dragIdx == id && u.barDrag.mode == UiState::BarDrag::Mode::Milestone ? dragDelta * ax.px : 0.f);
       diamond(dl, ImVec2(x, cy), u.m.s(6) * 1.2f, r.done ? withAlpha(bc, 0.5f) : bc, risk == Risk::Late ? u.t->late : 0);
       ImGui::SetCursorScreenPos(ImVec2(x - u.m.s(8), cy - u.m.s(8)));
       ImGui::SetNextItemAllowOverlap();
       ImGui::InvisibleButton("##ms", ImVec2(u.m.s(16), u.m.s(16)));
-      if (ImGui::IsItemHovered()) hoverTipId = T.ids[id];
+      const bool msHov = ImGui::IsItemHovered();
+      const bool movable = !r.done && !r.pinned && !u.linkPick.active && !u.ro;
+      if (msHov) {
+        hoverTipId = T.ids[id];
+        if (movable) {
+          ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+          dl->AddCircle(ImVec2(x, cy), u.m.s(10), u.t->accent, 0, u.m.s(1.5f));
+        }
+      }
+      if (movable && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, u.m.s(3.f)) && !u.barDrag.active &&
+          !u.linkDrag.active && !arrowBusy) {
+        u.barDrag.active = true;
+        u.barDrag.id = T.ids[id];
+        u.barDrag.mode = UiState::BarDrag::Mode::Milestone;
+        u.barDrag.startX = ImGui::GetIO().MouseClickedPos[0].x;
+        u.barDrag.origStart = r.asapStart;
+        u.barDrag.origFinish = r.asapFinish;
+      }
     } else {
       const bool movable = !r.done && !r.pinned && !u.linkPick.active && !u.ro;
       Day s0 = r.asapStart, f0 = r.asapFinish;
       if (dragIdx == id) {
-        if (u.barDrag.resize) f0 = std::max(s0, u.barDrag.origFinish + dragDelta);
-        else {
+        if (u.barDrag.mode == UiState::BarDrag::Mode::Resize) f0 = std::max(s0, u.barDrag.origFinish + dragDelta);
+        else if (u.barDrag.mode == UiState::BarDrag::Mode::Move) {
           s0 = u.barDrag.origStart + dragDelta;
           f0 = u.barDrag.origFinish + dragDelta;
         }
@@ -661,13 +684,17 @@ void drawGanttView(Frame& f, ImVec2 size) {
       const bool overHandle = movable && ImGui::GetMousePos().x > b.x - u.m.s(6);
       if (barHov) {
         hoverTipId = T.ids[id];
-        if (movable) ImGui::SetMouseCursor(overHandle ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_Hand);
+        if (movable) {
+          ImGui::SetMouseCursor(overHandle ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_Hand);
+          if (overHandle)
+            dl->AddRectFilled(ImVec2(b.x - u.m.s(2), by0), ImVec2(b.x + u.m.s(2), by1), u.t->accent, u.m.s(2));
+        }
       }
       if (movable && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.f) && !u.barDrag.active &&
           !u.linkDrag.active && !arrowBusy) {
         u.barDrag.active = true;
         u.barDrag.id = T.ids[id];
-        u.barDrag.resize = overHandle;
+        u.barDrag.mode = overHandle ? UiState::BarDrag::Mode::Resize : UiState::BarDrag::Mode::Move;
         u.barDrag.startX = ImGui::GetIO().MouseClickedPos[0].x;
         u.barDrag.origStart = r.asapStart;
         u.barDrag.origFinish = r.asapFinish;
@@ -706,11 +733,30 @@ void drawGanttView(Frame& f, ImVec2 size) {
     }
     // 期限の菱形（白抜き・黒い縁）
     if (shape.hasDeadline) {
-      const float x = shape.dlX;
+      const float x = shape.dlX + (dragIdx == id && u.barDrag.mode == UiState::BarDrag::Mode::Deadline ? dragDelta * ax.px : 0.f);
       diamond(dl, ImVec2(x, cy), u.m.s(6), u.t->surface, u.t->dark ? u.t->ink : IM_COL32(0, 0, 0, 255));
-      if (ImGui::IsMouseHoveringRect(ImVec2(x - u.m.s(6), cy - u.m.s(6)), ImVec2(x + u.m.s(6), cy + u.m.s(6))) &&
-          ImGui::IsWindowHovered())
-        ImGui::SetTooltip("期限 %s", fmtLong(*T.ownDl[id]).c_str());
+      const bool deadlineEditable = !u.ro && !u.linkPick.active && T.kind[id] != Kind::Ms;
+      if (deadlineEditable) {
+        const float grabX = x + u.m.s(9);
+        ImGui::SetCursorScreenPos(ImVec2(grabX - u.m.s(5), cy - u.m.s(9)));
+        ImGui::SetNextItemAllowOverlap();
+        ImGui::InvisibleButton("##deadline", ImVec2(u.m.s(10), u.m.s(18)));
+        const bool deadlineHov = ImGui::IsItemHovered();
+        if (deadlineHov) {
+          hoverTipId = T.ids[id];
+          ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+          dl->AddCircle(ImVec2(x, cy), u.m.s(9), u.t->accent, 0, u.m.s(1.5f));
+        }
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, u.m.s(3.f)) && !u.barDrag.active &&
+            !u.linkDrag.active && !arrowBusy) {
+          u.barDrag.active = true;
+          u.barDrag.id = T.ids[id];
+          u.barDrag.mode = UiState::BarDrag::Mode::Deadline;
+          u.barDrag.startX = ImGui::GetIO().MouseClickedPos[0].x;
+          u.barDrag.origStart = *T.ownDl[id];
+          u.barDrag.origFinish = *T.ownDl[id];
+        }
+      }
     }
     ImGui::PopID();
     ImGui::PopClipRect();
@@ -903,10 +949,14 @@ void drawGanttView(Frame& f, ImVec2 size) {
   if (dragging && dragIdx >= 0) {
     const Day aStart = R[dragIdx].asapStart;
     const int curDays = R[dragIdx].days;
-    if (u.barDrag.resize) {
+    if (u.barDrag.mode == UiState::BarDrag::Mode::Resize) {
       const Day nf = std::max(aStart, u.barDrag.origFinish + dragDelta);
       const int days = std::max(1, workdaysIn(cal, aStart, nf));
       ImGui::SetTooltip("期間 %s週（%d営業日）", csv::fmtNum(days / 5.0).c_str(), days);
+    } else if (u.barDrag.mode == UiState::BarDrag::Mode::Deadline) {
+      ImGui::SetTooltip("期限 %s", fmtLong(u.barDrag.origStart + dragDelta).c_str());
+    } else if (u.barDrag.mode == UiState::BarDrag::Mode::Milestone) {
+      ImGui::SetTooltip("マイルストーン %s", fmtLong(u.barDrag.origFinish + dragDelta).c_str());
     } else {
       ImGui::SetTooltip("着手 %s", fmtLong(u.barDrag.origStart + dragDelta).c_str());
     }
@@ -914,11 +964,18 @@ void drawGanttView(Frame& f, ImVec2 size) {
       const auto bd = u.barDrag;
       u.barDrag = {};
       if (dragDelta != 0) {
-        if (bd.resize) {
+        if (bd.mode == UiState::BarDrag::Mode::Resize) {
           const Day nf = cal.lastWork(std::max(aStart, bd.origFinish + dragDelta));
           const int days = std::max(1, workdaysIn(cal, aStart, nf));
           if (days != curDays) {
             s->setDuration(bd.id, days / 5.0);
+            c.afterEdit();
+          }
+        } else if (bd.mode == UiState::BarDrag::Mode::Deadline) {
+          Day nd = bd.origStart + dragDelta;
+          nd = dragDelta > 0 ? cal.workday(nd - 1, 1) : cal.lastWork(nd);
+          if (nd != bd.origStart) {
+            s->setDeadline(bd.id, nd);
             c.afterEdit();
           }
         } else {
@@ -1252,7 +1309,11 @@ void drawGanttView(Frame& f, ImVec2 size) {
     ImGui::EndTooltip();
     if (hoverEditable) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
   } else if (!hoverTipId.empty() && !u.barDrag.active && !u.linkDrag.active && !u.arrowDrag.active && T.find(hoverTipId) >= 0) {
-    showTip(tipLines(*s, T.find(hoverTipId)));
+    const int tipIdx = T.find(hoverTipId);
+    const ScheduleRow& tipRow = R[tipIdx];
+    const bool movable = !tipRow.done && !tipRow.pinned && !u.linkPick.active && !u.ro;
+    const bool deadlineEditable = !u.ro && !u.linkPick.active && T.kind[tipIdx] != Kind::Ms;
+    showTip(tipLines(*s, tipIdx, movable, deadlineEditable));
   }
   ImGui::EndChild();
 }
