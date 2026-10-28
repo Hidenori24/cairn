@@ -303,8 +303,8 @@ struct UiState {
   std::string scrolledProject;
   std::string lastZoom;
   struct BarDrag {
+    enum class Mode { Move, Resize, Milestone, Deadline } mode = Mode::Move;
     std::string id;
-    bool resize = false;
     float startX = 0;
     Day origStart = 0, origFinish = 0;
     bool active = false;
