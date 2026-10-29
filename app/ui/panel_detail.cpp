@@ -348,7 +348,9 @@ void detailTab(Frame& f, int i) {
       ImGui::GetStateStorage()->SetInt(ImGui::GetID("##calendar-month"), ym.y * 12 + ym.m - 1);
       ImGui::OpenPopup("##calendar-popup");
     }
-    ImGui::SetNextWindowSize(ImVec2(u.m.s(312), 0), ImGuiCond_Appearing);
+    // BeginPopup uses AlwaysAutoResize; reapply the intended width every frame so the
+    // content-based auto-fit does not shrink the calendar after it opens.
+    ImGui::SetNextWindowSize(ImVec2(u.m.s(312), 0), ImGuiCond_Always);
     if (ImGui::BeginPopup("##calendar-popup")) {
       const ImGuiID monthId = ImGui::GetID("##calendar-month");
       const Day today = c.clock().today();
